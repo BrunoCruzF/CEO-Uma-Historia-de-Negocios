@@ -11,6 +11,7 @@ type View =
   | "noticias"
   | "jornada"
   | "portfolio";
+type PageGuideDefinition = { eyebrow: string; title: string; summary: string; actions: string[]; watch: string; firstStep: string };
 type CharacterMemory = {
   id: string;
   week: number;
@@ -569,6 +570,7 @@ type GameState = {
   narrativeDirector?: NarrativeDirectorState;
   tutorialSeenWeeks?: number[];
   tutorialCompleted?: boolean;
+  seenPageGuides?: View[];
   generationProfile?: GenerationProfile;
   mandateReviews?: MandateReview[];
   lastMandateReviewWeek?: number;
@@ -629,6 +631,15 @@ const difficultyProfiles: Record<GameDifficulty, { title: string; description: s
   implacavel: { title: "Implacável", description: "Crises pressionam margens, concorrentes reagem e pessoas toleram menos erros.", stress: 1.28, economyDemand: .965, economyCosts: 1.035, departure: 1.55, rival: .9, reward: 1.3 },
 };
 const narrativeModeLabels: Record<NarrativeDirectorMode, string> = { calma: "Execução tranquila", equilibrio: "Tensão equilibrada", escalada: "Algo está se formando", recuperacao: "Tempo de recuperação", foco: "Conflito em foco" };
+const pageGuides: Record<View, PageGuideDefinition> = {
+  escritorio: { eyebrow: "CENTRO DA OPERAÇÃO", title: "Escritório", summary: "Aqui você acompanha a empresa ativa e toma as decisões que mexem diretamente no caixa e no crescimento.", actions: ["Ajustar preço, marketing e estratégia", "Abrir negociações, buscar capital e responder ao conselho", "Avançar as semanas e observar a operação reagir"], watch: "Lucro e faturamento não são a mesma coisa. Crescer clientes sem margem pode acelerar um prejuízo.", firstStep: "Confira o lucro semanal e mantenha reserva antes de aumentar marketing ou iniciar projetos caros." },
+  pessoas: { eyebrow: "EQUIPE E MEMÓRIA", title: "Pessoas", summary: "Esta página reúne funcionários, salários, estresse, lealdade e tudo que eles lembram sobre sua liderança.", actions: ["Contratar e substituir funcionários", "Negociar salários e conceder descanso", "Entender humor, relações e risco de demissão"], watch: "Funcionários raramente saem por uma única semana ruim. Salário defasado, estresse e promessas quebradas se acumulam.", firstStep: "Procure primeiro quem está mais estressado ou recebe muito abaixo do mercado." },
+  projetos: { eyebrow: "PRODUTOS E APOSTAS", title: "Projetos", summary: "Aqui nascem produtos, melhorias e campanhas. Cada projeto consome capacidade da equipe e carrega qualidade e risco.", actions: ["Criar e acompanhar projetos", "Definir preço, marketing e atualizações de produtos", "Licenciar, vender direitos ou retirar produtos de linha"], watch: "Produtos faturam quando chegam ao mercado. Durante o desenvolvimento, eles consomem caixa e aumentam a carga da equipe.", firstStep: "Evite muitos projetos simultâneos; escolha uma prioridade e acompanhe risco e qualidade." },
+  cidade: { eyebrow: "MERCADO E CONCORRÊNCIA", title: "Mercado", summary: "Esta é a visão externa do jogo: concorrentes, clientes, oportunidades de aquisição e movimentos do setor.", actions: ["Investigar e enfrentar concorrentes", "Comprar empresas ou observar possíveis falências", "Comparar força, produtos e reputação no setor"], watch: "Concorrentes administram caixa e produtos próprios. Um rival em crise pode se recuperar, ser vendido ou virar oportunidade de compra.", firstStep: "Identifique o concorrente mais forte do seu setor antes de alterar preço ou lançar um produto." },
+  noticias: { eyebrow: "O MUNDO REAGE", title: "Noticiário", summary: "As notícias mostram como mercado, clientes, funcionários e rivais interpretam os acontecimentos da sua história.", actions: ["Ler repercussões e comentários do mercado", "Entender quais setores e empresas foram afetados", "Antecipar mudanças de confiança e demanda"], watch: "Uma manchete não é apenas decoração: notícias alteram confiança econômica e podem influenciar as semanas seguintes.", firstStep: "Abra notícias negativas ligadas ao seu setor e leia especialmente o trecho ‘O que observar agora’." },
+  jornada: { eyebrow: "VIDA DO FUNDADOR", title: "Jornada", summary: "Aqui você acompanha a história pessoal do fundador, missões, escolhas de vida e os caminhos possíveis para seu legado.", actions: ["Acompanhar capítulos e missões da carreira", "Equilibrar saúde, família, satisfação e ambição", "Preparar aposentadoria e observar futuros possíveis"], watch: "Construir o maior patrimônio nem sempre produz o melhor final. Família, integridade e sucessão também entram no desfecho.", firstStep: "Veja qual é a próxima missão da jornada e quais aspectos da vida do fundador estão mais baixos." },
+  portfolio: { eyebrow: "SUA HOLDING", title: "Meu grupo", summary: "Esta é a visão do império: empresas fundadas ou adquiridas, CEOs, patrimônio, controle familiar e modo Dinastia.", actions: ["Alternar e administrar empresas da holding", "Definir autonomia, metas e orçamento dos CEOs", "Abrir, vender, fundir empresas e conduzir sucessões"], watch: "Uma empresa delegada continua tomando decisões. Autonomia reduz seu trabalho, mas aumenta o poder político do CEO.", firstStep: "Confira quais empresas estão no lucro e quais CEOs precisam de orientação antes de avançar várias semanas." },
+};
 
 const characterMemory = (
   week: number,
@@ -2216,6 +2227,7 @@ const initialState: GameState = {
   narrativeDirector: { mode: "equilibrio", tension: 28, crisisStreak: 0, quietStreak: 0, lastInterventionWeek: 0, lastReason: "A história está começando." },
   tutorialSeenWeeks: [],
   tutorialCompleted: false,
+  seenPageGuides: [],
   mandateReviews: [],
   lastMandateReviewWeek: 0,
   dynastyEndingReady: false,
@@ -4559,10 +4571,12 @@ export default function Home() {
     | "dynasty-transition"
     | "dynasty-ending"
     | "difficulty"
+    | "page-guide"
     | "help"
     | null
   >(null);
   const [toast, setToast] = useState("");
+  const [pageGuideView, setPageGuideView] = useState<View | null>(null);
   const [companyName, setCompanyName] = useState("");
   const [speed, setSpeed] = useState<0 | 1 | 2>(0);
   const [targetRival, setTargetRival] = useState<Competitor | null>(null);
@@ -4735,6 +4749,7 @@ export default function Home() {
           narrativeDirector: parsed.narrativeDirector ?? { mode: "equilibrio", tension: 35, crisisStreak: 0, quietStreak: 0, lastInterventionWeek: 0, lastReason: "O ritmo será recalculado na próxima semana." },
           tutorialSeenWeeks: parsed.tutorialSeenWeeks ?? (parsed.week > 12 ? [2, 4, 6, 8, 10, 12] : []),
           tutorialCompleted: parsed.tutorialCompleted ?? parsed.week > 12,
+          seenPageGuides: parsed.seenPageGuides ?? [],
           generationProfile: parsed.generationProfile ? { ...parsed.generationProfile, age: parsed.generationProfile.age ?? 42, health: parsed.generationProfile.health ?? 88 } : (parsed.dynastyMode ? generationProfileFor(parsed.playerExecutive ?? parsed.founder, parsed.generation ?? 2, parsed.heirs?.find((heir: Heir) => heir.name === (parsed.playerExecutive ?? parsed.founder))?.style ?? "crescimento", parsed.dynastyStartedWeek ?? parsed.week, 42) : undefined),
           mandateReviews: parsed.mandateReviews ?? [],
           lastMandateReviewWeek: parsed.lastMandateReviewWeek ?? parsed.dynastyStartedWeek ?? 0,
@@ -5344,6 +5359,16 @@ export default function Home() {
     if (advice.action === "mercado") setView("cidade");
     if (advice.action === "estrategia") setView("escritorio");
     setDialog(null);
+  };
+
+  const navigateToView = (target: View, reopenGuide = false) => {
+    setView(target);
+    const firstVisit = !(game.seenPageGuides ?? []).includes(target);
+    if (firstVisit || reopenGuide) {
+      setPageGuideView(target);
+      setDialog("page-guide");
+      if (firstVisit) setGame((state) => ({ ...state, seenPageGuides: [...new Set([...(state.seenPageGuides ?? []), target])] }));
+    }
   };
 
   const storyBeat = (next: GameState, company: Company, valuation: number) => {
@@ -9841,7 +9866,7 @@ export default function Home() {
         <button
           className="wordmark"
           onClick={() =>
-            setView(operationalAccess ? "escritorio" : "portfolio")
+            navigateToView(operationalAccess ? "escritorio" : "portfolio")
           }
         >
           <b>CEO</b>
@@ -9935,7 +9960,7 @@ export default function Home() {
                   : undefined
               }
               className={view === id ? "active" : ""}
-              onClick={() => setView(id)}
+              onClick={() => navigateToView(id)}
             >
               {label}
             </button>
@@ -9948,7 +9973,7 @@ export default function Home() {
       {game.news[0] && (
         <button
           className={`news-ticker ${game.news[0].impact}`}
-          onClick={() => setView("noticias")}
+          onClick={() => navigateToView("noticias")}
         >
           <span>PLANTÃO</span>
           <b>{game.news[0].headline}</b>
@@ -10004,14 +10029,14 @@ export default function Home() {
               </button>
               <button
                 className="hotspot team"
-                onClick={() => setView("pessoas")}
+                onClick={() => navigateToView("pessoas")}
               >
                 <i>{active.employees.length}</i>
                 <span>Conversar com a equipe</span>
               </button>
               <button
                 className="hotspot board"
-                onClick={() => setView("projetos")}
+                onClick={() => navigateToView("projetos")}
               >
                 <i>
                   {active.projects.filter((p) => p.status === "ativo").length}
@@ -10020,7 +10045,7 @@ export default function Home() {
               </button>
               <button
                 className="hotspot city"
-                onClick={() => setView("cidade")}
+                onClick={() => navigateToView("cidade")}
               >
                 <i>↗</i>
                 <span>Observar o mercado</span>
@@ -12018,7 +12043,7 @@ export default function Home() {
             <section className="dynasty-future"><small>O FUTURO DEPOIS DE VOCÊ</small><h3>O legado de {game.founder} chegou até a geração {game.dynastyEnding.founderLegacyEndsGeneration}</h3><p>{game.dynastyEnding.futureNarrative}</p><div><span><small>ANOS SIMULADOS</small><b>{game.dynastyEnding.futureYears}</b></span><span><small>VALOR NO FUTURO</small><b>{compact.format(game.dynastyEnding.futureValue)}</b></span><span><small>EMPRESAS</small><b>{game.dynastyEnding.futureCompanies}</b></span><span><small>PESSOAS IMPACTADAS</small><b>{game.dynastyEnding.futurePeople}</b></span></div></section>
             {game.dynastyEnding.secretEndingTitle && <section className="secret-dynasty-ending"><small>FINAL SECRETO DESCOBERTO</small><h3>{game.dynastyEnding.secretEndingTitle}</h3><p>{game.dynastyEnding.secretEndingNarrative}</p></section>}
             <section><h3>Presidentes que escreveram essa história</h3>{[...(game.formerPresidents ?? []), { name: currentLeader, generation: game.generation ?? 1, legacy: "Conduziu o capítulo final.", status: "aliado" }].map((president) => <article key={`${president.name}-${president.generation}`}><b>G{president.generation}</b><div><h4>{president.name}</h4><p>{president.legacy}</p></div></article>)}</section>
-            <footer><p>Este save fica registrado como concluído. Você pode consultar a holding e a crônica, mas o tempo não avançará.</p><button onClick={() => { setDialog(null); setView("jornada"); }}>Ver o legado completo</button></footer>
+            <footer><p>Este save fica registrado como concluído. Você pode consultar a holding e a crônica, mas o tempo não avançará.</p><button onClick={() => { setDialog(null); navigateToView("jornada"); }}>Ver o legado completo</button></footer>
           </div>
         </GameModal>
       )}
@@ -12409,6 +12434,17 @@ export default function Home() {
               <b>4</b>Venda empresas e reinvista em novos setores.
             </li>
           </ol>
+          <section className="help-page-links"><small>GUIAS DE CADA PÁGINA</small><p>Você pode reabrir qualquer apresentação quando quiser.</p><div>{(Object.keys(pageGuides) as View[]).map((guide) => <button onClick={() => navigateToView(guide, true)} key={guide}>{pageGuides[guide].title}</button>)}</div></section>
+        </GameModal>
+      )}
+      {dialog === "page-guide" && pageGuideView && (
+        <GameModal onClose={() => { setDialog(null); setPageGuideView(null); }} wide>
+          <div className={`page-guide-room guide-${pageGuideView}`}>
+            <header><div><small>{pageGuides[pageGuideView].eyebrow} · GUIA RÁPIDO</small><h2>{pageGuides[pageGuideView].title}</h2><p>{pageGuides[pageGuideView].summary}</p></div><span>{(Object.keys(pageGuides) as View[]).indexOf(pageGuideView) + 1}<small>de 7 áreas</small></span></header>
+            <section className="page-guide-actions"><small>O QUE VOCÊ FAZ AQUI</small><div>{pageGuides[pageGuideView].actions.map((action, index) => <article key={action}><b>{index + 1}</b><p>{action}</p></article>)}</div></section>
+            <div className="page-guide-insights"><article className="watch"><small>PRESTE ATENÇÃO</small><p>{pageGuides[pageGuideView].watch}</p></article><article className="start"><small>PRIMEIRO PASSO RECOMENDADO</small><p>{pageGuides[pageGuideView].firstStep}</p></article></div>
+            <footer><p>Este resumo aparece somente na primeira visita. O botão <b>?</b> permite reabrir todos os guias.</p><button onClick={() => { setDialog(null); setPageGuideView(null); }}>Entendi. Explorar {pageGuides[pageGuideView].title}</button></footer>
+          </div>
         </GameModal>
       )}
       {toast && <div className="game-toast">{toast}</div>}
