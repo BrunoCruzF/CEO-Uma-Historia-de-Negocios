@@ -9495,7 +9495,7 @@ export default function Home() {
                 <span><small>EMPRESAS</small><b>{game.companies.length}</b></span>
                 <span><small>VENDIDAS</small><b>{game.companies.filter((company) => company.sold).length}</b></span>
                 <span><small>FALÊNCIAS</small><b>{game.companies.filter((company) => company.bankrupt).length}</b></span>
-                <span><small>PRODUTOS</small><b>{game.companies.reduce((total, company) => total + company.products.length, 0)}</b></span>
+                <span><small>PRODUTOS</small><b>{game.companies.reduce((total, company) => total + (company.projects ?? []).filter((project) => project.kind === "produto").length, 0)}</b></span>
                 <span><small>LEGADO</small><b>{game.legacy}</b></span>
               </div>
             </section>
