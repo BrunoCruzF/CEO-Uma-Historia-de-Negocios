@@ -389,6 +389,36 @@ type PoliticalArc = {
   support: number;
   stage: "rumores" | "campanha" | "votacao";
 };
+type GenerationArcKind = "guerra-familiar" | "aquisicao-hostil" | "fraude-ceo" | "produto-declinio" | "pressao-venda" | "escandalo-fundador";
+type GenerationNarrativeArc = {
+  id: string;
+  generation: number;
+  kind: GenerationArcKind;
+  title: string;
+  antagonist: string;
+  companyId?: number;
+  summary: string;
+  chapter: number;
+  status: "ativo" | "resolvido";
+  power: number;
+  trust: number;
+  risk: number;
+  startedWeek: number;
+  lastChapterWeek: number;
+  decisions: string[];
+  outcome?: string;
+  outcomeTone?: "vitoria" | "acordo" | "derrota";
+};
+type GenerationArcRecord = {
+  id: string;
+  generation: number;
+  title: string;
+  antagonist: string;
+  outcome: string;
+  tone: "vitoria" | "acordo" | "derrota";
+  endedWeek: number;
+  decisions: string[];
+};
 type GenerationProfile = {
   leader: string;
   generation: number;
@@ -501,6 +531,8 @@ type GameState = {
   formerPresidents?: FormerPresident[];
   lastDynastyTransition?: DynastyTransition;
   politicalArc?: PoliticalArc;
+  generationArc?: GenerationNarrativeArc;
+  generationArcHistory?: GenerationArcRecord[];
   generationProfile?: GenerationProfile;
   mandateReviews?: MandateReview[];
   lastMandateReviewWeek?: number;
@@ -2133,6 +2165,7 @@ const initialState: GameState = {
   outsideFamilyEquity: 0,
   dynastyHistory: [],
   formerPresidents: [],
+  generationArcHistory: [],
   mandateReviews: [],
   lastMandateReviewWeek: 0,
   dynastyEndingReady: false,
@@ -3004,6 +3037,167 @@ function dynastyStoryMessage(state: GameState): StoryMessage {
       { label: "Cobrar resultados antes de fazer discursos", result: "A liderança escolheu desempenho em vez de simbolismo.", effect: (game) => ({ ...game, dynastyLegitimacy: clamp((game.dynastyLegitimacy ?? 45) + 4), familyUnity: clamp((game.familyUnity ?? 70) - 2), lastDynastyEventWeek: game.week }) },
       { label: "Usar a imagem do fundador", tone: "risk", result: "O nome do fundador trouxe apoio, mas reforçou dúvidas sobre autonomia.", effect: (game) => ({ ...game, dynastyLegitimacy: clamp((game.dynastyLegitimacy ?? 45) + 5), founderHealth: clamp((game.founderHealth ?? 90) - 3), lastDynastyEventWeek: game.week }) },
     ],
+  };
+}
+
+function createGenerationArc(state: GameState): GenerationNarrativeArc {
+  const generation = state.generation ?? 2;
+  const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+  const company = operating.find((item) => item.id === state.activeCompanyId) ?? operating[0];
+  const relatives = (state.heirs ?? []).filter((heir) => heir.name !== (state.playerExecutive ?? state.founder) && heir.status !== "rompido");
+  const relative = [...relatives].sort((a, b) => (b.ambition + (b.resentment ?? 0)) - (a.ambition + (a.resentment ?? 0)))[0];
+  const rival = state.competitors.find((competitor) => competitor.id === state.nemesisId) ?? state.competitors[0];
+  const ambitiousCEO = [...operating].filter((item) => item.ceo !== (state.playerExecutive ?? state.founder)).sort((a, b) => (b.ceoAmbition ?? 0) - (a.ceoAmbition ?? 0))[0];
+  const project = company?.projects.find((item) => item.kind === "produto" && (item.lifecycle === "declinio" || item.lifecycle === "maturidade")) ?? company?.projects.find((item) => item.kind === "produto");
+  const kinds: GenerationArcKind[] = ["guerra-familiar", "aquisicao-hostil", "fraude-ceo", "produto-declinio", "pressao-venda", "escandalo-fundador"];
+  const kind = kinds[Math.abs(generation - 2) % kinds.length];
+  const details: Record<GenerationArcKind, { title: string; antagonist: string; summary: string; companyId?: number }> = {
+    "guerra-familiar": { title: "A guerra pelo sobrenome", antagonist: relative?.name ?? "Conselho da família", summary: `${relative?.name ?? "Uma ala da família"} começou a reunir herdeiros e executivos para disputar o rumo da holding.` },
+    "aquisicao-hostil": { title: "Cerco à holding", antagonist: rival?.name ?? "Consórcio concorrente", summary: `${rival?.name ?? "Um grupo rival"} iniciou uma ofensiva para conquistar clientes, executivos e participação na holding.` },
+    "fraude-ceo": { title: "O caixa que não existe", antagonist: ambitiousCEO?.ceo ?? "CEO da subsidiária", companyId: ambitiousCEO?.id ?? company?.id, summary: `Números inconsistentes colocaram ${ambitiousCEO?.ceo ?? "um CEO"} e a gestão da ${ambitiousCEO?.name ?? company?.name ?? "principal empresa"} sob suspeita.` },
+    "produto-declinio": { title: "O fim de um ícone", antagonist: project?.name ?? "Produto histórico", companyId: company?.id, summary: `${project?.name ?? "O produto que construiu a reputação do grupo"} entrou em declínio e ameaça arrastar a empresa consigo.` },
+    "pressao-venda": { title: "Quanto vale o legado?", antagonist: "Bloco de investidores", companyId: company?.id, summary: "Investidores e familiares começaram a pressionar pela venda de ativos enquanto ainda existe uma oferta atraente." },
+    "escandalo-fundador": { title: "A sombra do fundador", antagonist: state.founder, summary: `Uma decisão antiga de ${state.founder} voltou à imprensa e colocou reputação, família e história em conflito.` },
+  };
+  const selected = details[kind];
+  return {
+    id: `generation-arc-${generation}-${state.week}`,
+    generation,
+    kind,
+    title: selected.title,
+    antagonist: selected.antagonist,
+    companyId: selected.companyId,
+    summary: selected.summary,
+    chapter: 1,
+    status: "ativo",
+    power: 48,
+    trust: 52,
+    risk: 32,
+    startedWeek: state.week,
+    lastChapterWeek: state.week - 8,
+    decisions: [],
+  };
+}
+
+function generationArcChapter(arc: GenerationNarrativeArc) {
+  const chapters: Record<GenerationArcKind, { subject: string; body: string }[]> = {
+    "guerra-familiar": [
+      { subject: "Há reuniões da família sem você", body: `${arc.antagonist} reuniu herdeiros e três executivos. Ainda não há rebelião aberta, mas já existe um projeto alternativo de poder.` },
+      { subject: "A disputa chegou às subsidiárias", body: `Aliados de ${arc.antagonist} estão oferecendo proteção a CEOs em troca de apoio numa futura votação do conselho.` },
+      { subject: "A imprensa descobriu a divisão", body: "O mercado agora trata a sucessão como uma guerra. Clientes querem garantias e investidores começaram a escolher lados." },
+      { subject: "O conselho exige uma definição", body: `A família votará o futuro de ${arc.antagonist} e da presidência. Tudo o que você fez nos capítulos anteriores pesará agora.` },
+    ],
+    "aquisicao-hostil": [
+      { subject: "Seu rival está comprando influência", body: `${arc.antagonist} abordou acionistas, clientes e dois executivos da holding. A ofensiva ainda pode ser contida.` },
+      { subject: "Uma subsidiária recebeu proposta secreta", body: "O rival ofereceu capital e autonomia em troca de uma ruptura com o grupo. O CEO quer uma resposta sua." },
+      { subject: "A oferta chegou ao mercado", body: `${arc.antagonist} apresentou a holding como mal administrada e prometeu pagar um prêmio pelo controle.` },
+      { subject: "A tomada de controle começou", body: "Acionistas decidirão entre sua estratégia e a oferta rival. Caixa, confiança e risco acumulado definirão o resultado." },
+    ],
+    "fraude-ceo": [
+      { subject: "A margem não fecha", body: `Auditores encontraram contratos sem lastro na gestão de ${arc.antagonist}. Pode ser erro, fraude ou tentativa de esconder prejuízo.` },
+      { subject: "Um funcionário trouxe documentos", body: "Planilhas internas indicam metas manipuladas. O denunciante teme retaliação e exige proteção." },
+      { subject: "O CEO tenta controlar a narrativa", body: `${arc.antagonist} convocou executivos e diz que a presidência está procurando um culpado para seus próprios erros.` },
+      { subject: "O relatório final chegou", body: "O conselho exige punição, acordo ou absolvição. Sua credibilidade dependerá das provas e relações construídas." },
+    ],
+    "produto-declinio": [
+      { subject: "O produto perdeu relevância", body: `${arc.antagonist} vende menos a cada semana. A equipe ainda acredita numa recuperação, mas o caixa começa a sentir.` },
+      { subject: "A equipe se divide sobre o futuro", body: "Veteranos querem preservar o produto; novos talentos defendem substituí-lo antes que a marca envelheça." },
+      { subject: "Um concorrente oferece licenciamento", body: "A proposta preservaria receita e reduziria controle. Recusar significa apostar sozinho na reinvenção." },
+      { subject: "Chegou a hora de decidir o destino do ícone", body: `A próxima decisão definirá se ${arc.antagonist} renasce, vira propriedade de terceiros ou sai definitivamente de linha.` },
+    ],
+    "pressao-venda": [
+      { subject: "A família quer liquidez", body: "Um bloco de parentes afirma que patrimônio no papel não paga seus projetos pessoais e exige venda ou dividendos." },
+      { subject: "Investidores aumentaram a proposta", body: "O preço é atraente, mas inclui cláusulas que reduzem a autonomia e podem desmontar equipes." },
+      { subject: "Executivos ameaçam sair", body: "Sem clareza sobre a venda, CEOs e talentos começaram a negociar proteção individual com os compradores." },
+      { subject: "A proposta final está na mesa", body: "Você precisa definir o que não está à venda, o que pode ser negociado e quanto controle deseja preservar." },
+    ],
+    "escandalo-fundador": [
+      { subject: "Um documento antigo vazou", body: `Uma assinatura de ${arc.antagonist} aparece numa decisão controversa. A autenticidade ainda é discutida.` },
+      { subject: "A família exige proteção do sobrenome", body: "Alguns herdeiros querem silêncio; outros acreditam que esconder o passado destruirá a próxima geração." },
+      { subject: "Funcionários pedem uma posição pública", body: "A crise deixou de ser apenas familiar. Equipes, clientes e imprensa querem saber quais valores comandam a holding hoje." },
+      { subject: "O legado será reescrito", body: `Você decidirá como a história lembrará ${arc.antagonist} — e se a holding amadureceu ou permaneceu prisioneira do fundador.` },
+    ],
+  };
+  return chapters[arc.kind][Math.min(3, arc.chapter - 1)];
+}
+
+type ArcChoiceEffects = { cash?: number; family?: number; legitimacy?: number; reputation?: number; outsideEquity?: number; companyCash?: number; morale?: number; board?: number };
+
+function applyGenerationArcChoice(game: GameState, arc: GenerationNarrativeArc, decision: string, power: number, trust: number, risk: number, effects: ArcChoiceEffects, final: boolean): GameState {
+  const nextPower = clamp(arc.power + power);
+  const nextTrust = clamp(arc.trust + trust);
+  const nextRisk = clamp(arc.risk + risk);
+  const score = nextPower * .45 + nextTrust * .35 + (100 - nextRisk) * .2;
+  const tone: GenerationArcRecord["tone"] = score >= 68 ? "vitoria" : score >= 48 ? "acordo" : "derrota";
+  const outcome = tone === "vitoria"
+    ? `${game.playerExecutive ?? game.founder} venceu o conflito e saiu politicamente mais forte.`
+    : tone === "acordo"
+      ? "O conflito terminou em um acordo imperfeito: a holding sobreviveu, mas concessões continuarão cobrando seu preço."
+      : `${arc.antagonist} impôs sua narrativa e a presidência terminou o arco enfraquecida.`;
+  const updatedArc: GenerationNarrativeArc = {
+    ...arc,
+    power: nextPower,
+    trust: nextTrust,
+    risk: nextRisk,
+    chapter: final ? 4 : arc.chapter + 1,
+    status: final ? "resolvido" : "ativo",
+    lastChapterWeek: game.week,
+    decisions: [...arc.decisions, decision],
+    outcome: final ? outcome : undefined,
+    outcomeTone: final ? tone : undefined,
+  };
+  const companyId = arc.companyId ?? game.activeCompanyId;
+  const changed: GameState = {
+    ...game,
+    personalCash: Math.max(0, game.personalCash + (effects.cash ?? 0)),
+    familyUnity: clamp((game.familyUnity ?? 70) + (effects.family ?? 0) + (final ? tone === "vitoria" ? 5 : tone === "derrota" ? -7 : 1 : 0)),
+    dynastyLegitimacy: clamp((game.dynastyLegitimacy ?? 50) + (effects.legitimacy ?? 0) + (final ? tone === "vitoria" ? 8 : tone === "derrota" ? -9 : 2 : 0)),
+    reputation: clamp(game.reputation + (effects.reputation ?? 0) + (final ? tone === "vitoria" ? 5 : tone === "derrota" ? -6 : 1 : 0)),
+    outsideFamilyEquity: clamp((game.outsideFamilyEquity ?? 0) + (effects.outsideEquity ?? 0)),
+    companies: game.companies.map((company) => company.id === companyId ? {
+      ...company,
+      cash: Math.max(0, company.cash + (effects.companyCash ?? 0)),
+      boardSupport: clamp((company.boardSupport ?? 50) + (effects.board ?? 0)),
+      employees: company.employees.map((employee) => ({ ...employee, morale: clamp(employee.morale + (effects.morale ?? 0)) })),
+    } : company),
+    generationArc: updatedArc,
+  };
+  if (!final) return changed;
+  const record: GenerationArcRecord = { id: arc.id, generation: arc.generation, title: arc.title, antagonist: arc.antagonist, outcome, tone, endedWeek: game.week, decisions: updatedArc.decisions };
+  return {
+    ...changed,
+    generationArcHistory: [record, ...(game.generationArcHistory ?? [])].slice(0, 12),
+    dynastyHistory: [`Semana ${game.week}: ${arc.title} terminou em ${tone === "vitoria" ? "vitória" : tone === "acordo" ? "acordo" : "derrota"}.`, ...(game.dynastyHistory ?? [])].slice(0, 20),
+    news: [{ id: Date.now(), week: game.week, category: "negocios", headline: `${arc.title}: ${tone === "vitoria" ? "a presidência venceu" : tone === "acordo" ? "um acordo encerrou a crise" : "a liderança saiu derrotada"}`, body: outcome, impact: tone === "vitoria" ? "positivo" : tone === "derrota" ? "negativo" : "neutro" }, ...game.news].slice(0, 60),
+  };
+}
+
+function generationArcMessage(state: GameState, arc: GenerationNarrativeArc): StoryMessage {
+  const chapter = generationArcChapter(arc);
+  const final = arc.chapter >= 4;
+  const strategies: Record<GenerationArcKind, [string, string, number, number, number, ArcChoiceEffects][]> = {
+    "guerra-familiar": [["Negociar espaço sem entregar o comando", "Você abriu uma negociação com limites claros.", -2, 11, -5, { family: 6, legitimacy: 1 }], ["Construir maioria no conselho", "A presidência organizou sua própria coalizão.", 12, -2, 5, { legitimacy: 5, cash: -50000, board: 5 }], ["Afastar os aliados do rival", "A reação agressiva intimidou aliados, mas aprofundou ressentimentos.", 15, -13, 13, { family: -9, reputation: -2 }]],
+    "aquisicao-hostil": [["Recomprar influência · R$ 150 mil", "A holding recomprou espaço antes que o rival avançasse.", 14, 1, -4, { cash: -150000, legitimacy: 3 }], ["Firmar pacto com clientes e CEOs", "Uma frente de aliados prometeu resistir à aquisição.", 4, 14, -3, { companyCash: -50000, morale: 5, board: 5 }], ["Lançar uma contraofensiva pública", "A rivalidade virou uma batalha aberta no mercado.", 12, -7, 14, { reputation: -3, companyCash: -30000 }]],
+    "fraude-ceo": [["Auditoria independente · R$ 60 mil", "Auditores ganharam autonomia e proteção.", 6, 13, -9, { cash: -60000, reputation: 3, board: 4 }], ["Confrontar o CEO em particular", "O CEO recebeu uma chance de explicar e corrigir os números.", 3, 7, 3, { legitimacy: 1 }], ["Controlar o vazamento e ganhar tempo", "A informação foi contida, mas o risco futuro aumentou.", 8, -10, 18, { reputation: -3, morale: -4 }]],
+    "produto-declinio": [["Financiar uma nova versão · R$ 120 mil", "A equipe recebeu recursos para tentar reinventar o produto.", 8, 12, 8, { cash: -120000, companyCash: 90000, morale: 7 }], ["Negociar licenciamento", "A marca poderá sobreviver com menor controle e risco.", 2, 8, -10, { companyCash: 50000, outsideEquity: 2 }], ["Preparar a retirada do produto", "A holding começou a transferir clientes e talentos para novas apostas.", 7, -5, -4, { companyCash: 25000, morale: -3 }]],
+    "pressao-venda": [["Rejeitar e recomprar ações · R$ 130 mil", "A presidência reafirmou que o controle não está à venda.", 15, 2, 5, { cash: -130000, outsideEquity: -4, family: -3 }], ["Negociar venda parcial", "A proposta foi redesenhada para preservar parte do controle.", 3, 9, -7, { cash: 90000, outsideEquity: 5, family: 4 }], ["Aceitar a lógica dos investidores", "A holding priorizou liquidez e abriu espaço para capital externo.", -4, 5, 2, { cash: 180000, outsideEquity: 9, legitimacy: -3 }]],
+    "escandalo-fundador": [["Publicar tudo com transparência", "A holding assumiu o passado e prometeu reparação.", 1, 15, -8, { reputation: 7, family: -7, legitimacy: 6 }], ["Proteger a família e investigar em silêncio", "A apuração começou longe da imprensa.", 5, 4, 5, { family: 5, cash: -45000 }], ["Negar e atacar os acusadores", "A família fechou fileiras, mas apostou sua reputação na negação.", 12, -12, 17, { family: 4, reputation: -8 }]],
+  };
+  return {
+    id: `${arc.id}-chapter-${arc.chapter}`,
+    from: arc.antagonist,
+    role: `Arco da geração ${arc.generation} · capítulo ${arc.chapter} de 4`,
+    initials: arc.antagonist.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
+    color: "#7a3948",
+    subject: chapter.subject,
+    body: `${chapter.body}\n\nSuas decisões anteriores deixaram poder em ${Math.round(arc.power)}%, confiança em ${Math.round(arc.trust)}% e risco em ${Math.round(arc.risk)}%.`,
+    choices: strategies[arc.kind].map(([label, result, power, trust, risk, effects]) => ({
+      label: final ? `Decisão final: ${label.toLowerCase()}` : label,
+      tone: risk >= 12 ? "risk" : trust >= 10 ? "good" : undefined,
+      hint: `Poder ${power >= 0 ? "+" : ""}${power} · confiança ${trust >= 0 ? "+" : ""}${trust} · risco ${risk >= 0 ? "+" : ""}${risk}`,
+      result,
+      effect: (game) => applyGenerationArcChoice(game, arc, label, power, trust, risk, effects, final),
+    })),
   };
 }
 
@@ -4180,7 +4374,7 @@ export default function Home() {
   const [selectedFactionId, setSelectedFactionId] = useState<string | null>(null);
   const [annualPriorityChoice, setAnnualPriorityChoice] = useState<AnnualPriority>("crescimento");
   const [holdingTab, setHoldingTab] = useState<"ceo" | "integridade" | "capital" | "societario">("ceo");
-  const [dynastyTab, setDynastyTab] = useState<"visao" | "familia" | "poder" | "sucessao" | "cronica">("visao");
+  const [dynastyTab, setDynastyTab] = useState<"visao" | "conflito" | "familia" | "poder" | "sucessao" | "cronica">("visao");
 
   useEffect(() => {
     const saved = localStorage.getItem("ceo-historia-v2");
@@ -4321,6 +4515,8 @@ export default function Home() {
           })),
           lastDynastyTransition: parsed.lastDynastyTransition,
           politicalArc: parsed.politicalArc,
+          generationArc: parsed.generationArc,
+          generationArcHistory: parsed.generationArcHistory ?? [],
           generationProfile: parsed.generationProfile ? { ...parsed.generationProfile, age: parsed.generationProfile.age ?? 42, health: parsed.generationProfile.health ?? 88 } : (parsed.dynastyMode ? generationProfileFor(parsed.playerExecutive ?? parsed.founder, parsed.generation ?? 2, parsed.heirs?.find((heir: Heir) => heir.name === (parsed.playerExecutive ?? parsed.founder))?.style ?? "crescimento", parsed.dynastyStartedWeek ?? parsed.week, 42) : undefined),
           mandateReviews: parsed.mandateReviews ?? [],
           lastMandateReviewWeek: parsed.lastMandateReviewWeek ?? parsed.dynastyStartedWeek ?? 0,
@@ -6457,8 +6653,25 @@ export default function Home() {
         (c) => c.id === current.activeCompanyId,
       )!;
       const activeMetrics = companyMetrics(activeCompany, economyRoll.economy);
+      let generationArc = current.generationArc;
+      const currentGeneration = current.generation ?? 2;
+      const generationAlreadyTold = (current.generationArcHistory ?? []).some((arc) => arc.generation === currentGeneration);
+      if (
+        current.dynastyMode &&
+        !current.dynastyConcluded &&
+        !generationAlreadyTold &&
+        (!generationArc || generationArc.generation !== currentGeneration)
+      ) generationArc = createGenerationArc({ ...current, week: nextWeek, companies, competitors });
+      const generationArcDecision =
+        generationArc?.status === "ativo" &&
+        nextWeek - generationArc.lastChapterWeek >= 7 &&
+        current.unread.length === 0
+          ? generationArcMessage({ ...current, week: nextWeek, companies, competitors, generationArc }, generationArc)
+          : null;
       const dynastyMessage =
         current.dynastyMode &&
+        !generationArcDecision &&
+        generationArc?.status !== "ativo" &&
         nextWeek - (current.lastDynastyEventWeek ?? current.dynastyStartedWeek ?? 0) >= 7 &&
         current.unread.length === 0 &&
         Math.random() < 0.32
@@ -6960,6 +7173,7 @@ export default function Home() {
         formerPresidents,
         generationProfile,
         politicalArc,
+        generationArc,
         mandateReviews,
         lastMandateReviewWeek,
         dynastyEndingReady,
@@ -6983,6 +7197,8 @@ export default function Home() {
           ? [...current.unread, leaderDeathDecision]
           : politicalArcDecision
           ? [...current.unread, politicalArcDecision]
+          : generationArcDecision
+          ? [...current.unread, generationArcDecision]
           : dynastyMessage
           ? [...current.unread, dynastyMessage]
           : familyMessage
@@ -7029,6 +7245,12 @@ export default function Home() {
       else if (politicalArcDecision)
         setTimeout(() => {
           setSelectedMessage(politicalArcDecision);
+          setDialog("inbox");
+          setSpeed(0);
+        }, 100);
+      else if (generationArcDecision)
+        setTimeout(() => {
+          setSelectedMessage(generationArcDecision);
           setDialog("inbox");
           setSpeed(0);
         }, 100);
@@ -11377,7 +11599,7 @@ export default function Home() {
             <nav className="room-tabs" aria-label="Áreas do modo dinastia">
               {([[
                 "visao", "Visão geral"
-              ], ["familia", "Família"], ["poder", "Poder"], ["sucessao", "Sucessão"], ["cronica", "Crônica"]] as const).map(([id, label]) => (
+              ], ["conflito", "Conflito"], ["familia", "Família"], ["poder", "Poder"], ["sucessao", "Sucessão"], ["cronica", "Crônica"]] as const).map(([id, label]) => (
                 <button className={dynastyTab === id ? "active" : ""} onClick={() => setDynastyTab(id)} key={id}>{label}</button>
               ))}
             </nav>
@@ -11399,6 +11621,16 @@ export default function Home() {
               {!!game.mandateReviews?.length && <div className="mandate-review-list"><small>AVALIAÇÕES DO CONSELHO</small>{game.mandateReviews.slice(0, 3).map((review) => <article key={`${review.week}-${review.leader}`}><b>{review.score}%</b><div><h4>{review.verdict}</h4><p>Semana {review.week} · {review.profitCompanies} empresas lucrativas · legitimidade {review.legitimacy}% · família {review.familyUnity}%</p></div></article>)}</div>}
               {game.dynastyEndingReady && !game.dynastyConcluded && <div className="dynasty-ending-call"><div><small>FINAL OPCIONAL DISPONÍVEL</small><h3>Você decide quando esta crônica termina</h3><p>A partir da 4ª geração, você pode escrever o final ou continuar jogando por quantas gerações quiser. O epílogo projetará o futuro conforme família, patrimônio, empresas, controle e união.</p></div><button onClick={concludeDynasty}>Escrever o final da Dinastia</button></div>}
               {game.dynastyConcluded && game.dynastyEnding && <button className="reopen-dynasty-ending" onClick={() => setDialog("dynasty-ending")}>Reabrir final: {game.dynastyEnding.title}</button>}
+            </section>}
+            {dynastyTab === "conflito" && <section className="generation-arc-room room-tab-panel">
+              {game.generationArc ? <>
+                <header><div><small>ARCO CENTRAL · GERAÇÃO {game.generationArc.generation}</small><h3>{game.generationArc.title}</h3><p>{game.generationArc.summary}</p></div><span className={game.generationArc.status}>{game.generationArc.status === "ativo" ? `Capítulo ${game.generationArc.chapter} de 4` : "Concluído"}</span></header>
+                <div className="arc-antagonist"><small>FORÇA QUE SE OPÕE A VOCÊ</small><b>{game.generationArc.antagonist}</b><p>{game.generationArc.status === "ativo" ? "A próxima conversa aparece conforme o tempo avança. Suas escolhas financeiras, políticas e familiares formarão o desfecho." : game.generationArc.outcome}</p></div>
+                <div className="arc-score"><div><small>PODER</small><b>{Math.round(game.generationArc.power)}%</b><span><i style={{ width: `${game.generationArc.power}%` }} /></span></div><div><small>CONFIANÇA</small><b>{Math.round(game.generationArc.trust)}%</b><span><i style={{ width: `${game.generationArc.trust}%` }} /></span></div><div><small>RISCO ACUMULADO</small><b>{Math.round(game.generationArc.risk)}%</b><span className="risk"><i style={{ width: `${game.generationArc.risk}%` }} /></span></div></div>
+                <div className="arc-chapters">{[1, 2, 3, 4].map((chapter) => <div className={chapter < game.generationArc!.chapter || game.generationArc!.status === "resolvido" ? "done" : chapter === game.generationArc!.chapter ? "current" : "locked"} key={chapter}><b>{chapter}</b><span>{chapter === 1 ? "O sinal" : chapter === 2 ? "A escalada" : chapter === 3 ? "A ruptura" : "O desfecho"}</span></div>)}</div>
+                {!!game.generationArc.decisions.length && <div className="arc-decisions"><small>SUAS DECISÕES NESTA HISTÓRIA</small>{game.generationArc.decisions.map((decision, index) => <p key={`${decision}-${index}`}><b>{index + 1}</b>{decision}</p>)}</div>}
+              </> : <div className="arc-empty"><small>PRÓXIMA HISTÓRIA</small><h3>O conflito desta geração ainda está se formando</h3><p>Avance uma semana para que personagens, empresas e decisões atuais definam o arco central.</p></div>}
+              {!!game.generationArcHistory?.length && <div className="arc-history"><small>CONFLITOS QUE MARCARAM A DINASTIA</small>{game.generationArcHistory.slice(0, 5).map((arc) => <article className={arc.tone} key={arc.id}><b>G{arc.generation}</b><div><h4>{arc.title}</h4><p>{arc.outcome}</p></div></article>)}</div>}
             </section>}
             {dynastyTab === "familia" && <div className="dynasty-columns room-tab-panel">
               <section className="family-tree-section">
