@@ -33,9 +33,17 @@ type BusinessPartner = {
   trust: number;
   dependency: number;
   weeksLeft: number;
-  status: "ativo" | "negociacao" | "encerrado";
+  status: "ativo" | "negociacao" | "proposta" | "disputa" | "encerrado";
   lastEvent?: string;
+  proposalType?: "novo" | "renovacao" | "exclusividade" | "concorrente";
+  proposedValue?: number;
+  proposedWeeks?: number;
+  proposalExpiresWeek?: number;
+  disputeReason?: string;
+  disputeLevel?: number;
+  lastNegotiatedBy?: string;
 };
+type StaffAlert = { id: string; companyId: number; companyName: string; employeeName: string; role: string; reason: "demissao" | "desligamento"; week: number; responsible: string; headcountAfter: number; resolved?: boolean };
 type FactionAgenda = "crescimento" | "seguranca" | "inovacao" | "pessoas" | "familia" | "retorno";
 type HoldingFaction = {
   id: string;
@@ -485,6 +493,7 @@ type GameState = {
   dynastyEndingReady?: boolean;
   dynastyConcluded?: boolean;
   dynastyEnding?: DynastyEnding;
+  staffAlerts?: StaffAlert[];
   lastDynastyEventWeek?: number;
   completedDynastyGoals?: string[];
   recentNewsTopics?: string[];
@@ -629,6 +638,31 @@ function createBusinessPartners(sector: Sector, seed = 1): BusinessPartner[] {
     status: "ativo",
     lastEvent: "Contrato em andamento dentro das condições negociadas.",
   }));
+}
+
+const proposalPartnerNames: Record<Sector, { clients: [string, string][]; suppliers: [string, string][] }> = {
+  Tecnologia: { clients: [["Grupo MedNova", "Helena Sá"], ["Finaxis", "Otávio Reis"], ["Rede Prisma", "Laura Couto"], ["Instituto Atlas", "Marcos Neri"]], suppliers: [["CloudForge", "Rafael Simões"], ["SecureLayer", "Tânia Braga"], ["DataCore", "Ivo Mendes"], ["LinkWave", "Paula Rios"]] },
+  Alimentação: { clients: [["Rede Mesa Brasil", "Lúcia Teles"], ["Hotéis Estação", "Renato Paz"], ["Empório Nacional", "Alice Nunes"], ["Clube Gourmet", "Vitor Diniz"]], suppliers: [["Campo Nobre", "Sérgio Vale"], ["Embalapack", "Marta Cruz"], ["FrioCerto", "Denis Luz"], ["Safra Sul", "Carla Pires"]] },
+  Varejo: { clients: [["Shopping Aurora", "Marina Leal"], ["Clube Urbano", "Heitor Lima"], ["Marketplace Uno", "Bianca Faria"], ["Rede Ponto", "Caio Luz"]], suppliers: [["Importadora Arco", "Joana Prado"], ["CentroLog", "Hugo Sales"], ["Fábrica Norte", "Nina Vaz"], ["ExpressHub", "Pedro Paiva"]] },
+  Agência: { clients: [["Banco Vereda", "Lara Moura"], ["Grupo Horizonte", "Danilo Serra"], ["Fundação Viva", "Cecília Ramos"], ["Marca Lume", "Arthur Reis"]], suppliers: [["Estúdio Sonora", "Ravi Campos"], ["Mídia Flow", "Olívia Cruz"], ["Produtora Cena", "Tiago Neves"], ["Banco de Imagens Uno", "Sofia Melo"]] },
+};
+
+function createPartnerProposal(company: Company, week: number, kind: BusinessPartner["kind"]): BusinessPartner {
+  const pool = kind === "cliente" ? proposalPartnerNames[company.sector].clients : proposalPartnerNames[company.sector].suppliers;
+  const available = pool.filter(([name]) => !(company.partners ?? []).some((partner) => partner.name === name));
+  const chosen = (available.length ? available : pool)[(week + company.id * 3) % (available.length || pool.length)];
+  const seed = week * 11 + company.id * 17 + (kind === "cliente" ? 3 : 7);
+  const weeklyValue = kind === "cliente" ? 11000 + seed % 17000 : 3200 + seed % 7200;
+  return {
+    id: `proposal-${company.id}-${week}-${kind}`,
+    name: chosen[0], representative: chosen[1], kind,
+    personality: (["leal", "exigente", "oportunista", "conservador", "inovador"] as BusinessPartner["personality"][])[seed % 5],
+    weeklyValue, proposedValue: weeklyValue, proposedWeeks: 12 + seed % 14,
+    trust: 48 + seed % 30, dependency: 22 + seed % 48, weeksLeft: 0,
+    status: "proposta", proposalType: seed % 4 === 0 ? "exclusividade" : seed % 3 === 0 ? "concorrente" : "novo",
+    proposalExpiresWeek: week + 4,
+    lastEvent: `${chosen[1]} apresentou uma proposta válida por quatro semanas.`,
+  };
 }
 
 function syncHoldingFactions(state: GameState, sourceCompanies = state.companies): HoldingFaction[] {
@@ -1791,6 +1825,7 @@ function ceoHireProposalMessage(company: Company, candidate: Employee, reason: s
         };
       }),
       news: accepts ? [{ id: Date.now() + candidate.id, week: state.week, category: "pessoas" as const, headline: `${candidate.name} reforça a ${company.name}`, body: `${company.ceo} convenceu a holding a contratar um profissional de ${candidate.role.toLowerCase()} por ${money.format(offeredSalary)} mensais.`, impact: "positivo" as const }, ...state.news].slice(0, 60) : state.news,
+      staffAlerts: accepts ? (state.staffAlerts ?? []).map((alert) => alert.companyId === company.id && !alert.resolved ? { ...alert, resolved: true } : alert) : state.staffAlerts,
       log: [accepts ? `${candidate.name} aceitou entrar na ${company.name} por ${money.format(offeredSalary)} mensais.` : `${candidate.name} recusou a contraproposta de ${money.format(offeredSalary)} mensais.`, ...state.log].slice(0, 40),
     };
   };
@@ -1806,6 +1841,47 @@ function ceoHireProposalMessage(company: Company, candidate: Employee, reason: s
       { label: `Aprovar contratação · ${money.format(candidate.salary)}/mês`, tone: "good", hint: "R$ 9 mil de integração · contratação garantida", result: `${company.ceo} recebeu autorização para fechar a contratação.`, effect: (state) => hireCandidate(state) },
       { label: `Oferecer ${money.format(Math.round((candidate.salary * .88) / 100) * 100)}/mês`, hint: "Economiza na folha · existe risco de recusa", result: `${company.ceo} apresentará uma contraproposta ao candidato.`, effect: (state) => hireCandidate(state, true) },
       { label: "Não contratar agora", tone: "risk", hint: "Preserva o caixa · CEO e equipe podem se frustrar", result: `${company.ceo} terá de operar com a equipe atual.`, effect: (state) => ({ ...state, companies: state.companies.map((item) => item.id !== company.id ? item : ({ ...item, ceoTrust: clamp((item.ceoTrust ?? 65) - 4), ceoLoyalty: clamp((item.ceoLoyalty ?? 65) - 2), ceoHireCooldown: 8, ceoLastDecision: `Teve a contratação de ${candidate.name} recusada`, ceoHistory: [`Semana ${state.week}: contratação para ${candidate.role} recusada pela holding.`, ...(item.ceoHistory ?? [])].slice(0, 8), ceoMemories: addCharacterMemory(item.ceoMemories, characterMemory(state.week, "contratacao", "Você recusou o reforço que considerei necessário para cumprir minha meta.", "magoado", -6, 72)) })) }) },
+    ],
+  };
+}
+
+type PartnerStrategy = "aceitar" | "equilibrio" | "pressionar" | "relacionamento" | "encerrar";
+
+function resolvePartnerStrategy(partner: BusinessPartner, strategy: PartnerStrategy, power: number, actor: string): BusinessPartner {
+  if (strategy === "encerrar") return { ...partner, status: "encerrado", weeksLeft: 0, trust: clamp(partner.trust - 20), lastNegotiatedBy: actor, lastEvent: `${actor} encerrou o contrato durante a negociação.` };
+  if (strategy === "relacionamento") return { ...partner, status: "ativo", weeksLeft: Math.max(16, partner.proposedWeeks ?? partner.weeksLeft + 6), trust: clamp(partner.trust + 13), weeklyValue: partner.proposedValue ?? partner.weeklyValue, disputeLevel: 0, lastNegotiatedBy: actor, lastEvent: `${actor} cedeu em pontos menores para construir uma relação duradoura.` };
+  if (strategy === "aceitar") return { ...partner, status: "ativo", weeksLeft: partner.proposedWeeks ?? 16, weeklyValue: partner.proposedValue ?? partner.weeklyValue, trust: clamp(partner.trust + 5), disputeLevel: 0, lastNegotiatedBy: actor, lastEvent: `${actor} aceitou a proposta comercial apresentada.` };
+  if (strategy === "equilibrio") return { ...partner, status: "ativo", weeksLeft: 18, weeklyValue: Math.round((partner.proposedValue ?? partner.weeklyValue) * (partner.kind === "cliente" ? 1.03 : 1.02)), trust: clamp(partner.trust + 3), disputeLevel: 0, lastNegotiatedBy: actor, lastEvent: `${actor} fechou uma renovação equilibrada para os dois lados.` };
+  const threshold = partner.personality === "exigente" ? 65 : partner.personality === "oportunista" ? 60 : 53;
+  const success = power >= threshold;
+  return success
+    ? { ...partner, status: "ativo", weeksLeft: Math.max(14, partner.proposedWeeks ?? partner.weeksLeft), weeklyValue: Math.round((partner.proposedValue ?? partner.weeklyValue) * (partner.kind === "cliente" ? 1.14 : .88)), trust: clamp(partner.trust - 9), disputeLevel: 0, lastNegotiatedBy: actor, lastEvent: `${actor} impôs condições melhores, mas deixou desgaste na mesa.` }
+    : { ...partner, status: "disputa", weeksLeft: 0, trust: clamp(partner.trust - 14), disputeLevel: clamp((partner.disputeLevel ?? 20) + 25), disputeReason: partner.kind === "cliente" ? "O cliente acusa a empresa de tentar alterar preço e escopo unilateralmente." : "O fornecedor rejeitou cortes e ameaça suspender entregas.", lastNegotiatedBy: actor, lastEvent: `A pressão de ${actor} fracassou e virou uma disputa contratual.` };
+}
+
+function ceoContractProposalMessage(company: Company, partner: BusinessPartner, strategy: PartnerStrategy, power: number): StoryMessage {
+  const actor = company.ceo ?? "CEO";
+  const apply = (state: GameState, chosen: PartnerStrategy): GameState => ({
+    ...state,
+    companies: state.companies.map((item) => item.id !== company.id ? item : ({
+      ...item,
+      cash: item.cash - (chosen === "relacionamento" ? 15000 : 0),
+      partners: (item.partners ?? []).map((candidate) => candidate.id === partner.id ? resolvePartnerStrategy(candidate, chosen, power, actor) : candidate),
+      ceoTrust: clamp((item.ceoTrust ?? 65) + (chosen === strategy ? 4 : chosen === "encerrar" ? -3 : 1)),
+      ceoLastDecision: `${chosen === "pressionar" ? "Pressionou" : chosen === "encerrar" ? "Rompeu" : "Negociou"} contrato com ${partner.name}`,
+      ceoHistory: [`Semana ${state.week}: ${actor} conduziu negociação com ${partner.name}.`, ...(item.ceoHistory ?? [])].slice(0, 8),
+    })),
+    news: [{ id: Date.now() + partner.id.length, week: state.week, category: "negocios", headline: `${actor} fecha negociação com ${partner.name}`, body: `A estratégia de ${chosen} alterou valor, prazo, confiança e risco do contrato da ${company.name}.`, impact: chosen === "pressionar" ? "neutro" : chosen === "encerrar" ? "negativo" : "positivo" }, ...state.news].slice(0, 60),
+  });
+  return {
+    id: `ceo-contract-${company.id}-${partner.id}`,
+    from: actor, role: `CEO da ${company.name}`, initials: actor.split(" ").map((part) => part[0]).join("").slice(0, 2), color: "#6f86a8",
+    subject: `${partner.name} colocou o contrato na mesa`,
+    body: `${partner.representative} representa um ${partner.kind} de perfil ${partner.personality}. Minha recomendação é ${strategy === "pressionar" ? "usar nossa força para melhorar as condições" : strategy === "relacionamento" ? "ceder agora para proteger a relação" : strategy === "aceitar" ? "aceitar antes que a proposta expire" : "buscar um acordo equilibrado"}. Estimo nosso poder de negociação em ${Math.round(power)}%.`,
+    choices: [
+      { label: `Seguir recomendação: ${strategy}`, tone: "good", result: `${actor} recebeu autorização para conduzir a estratégia recomendada.`, effect: (state) => apply(state, strategy) },
+      { label: "Exigir acordo equilibrado", result: "O CEO recebeu limites para fechar um acordo sem confronto.", effect: (state) => apply(state, "equilibrio") },
+      { label: "Mandar pressionar", tone: "risk", hint: "Pode melhorar muito o acordo ou iniciar uma disputa", result: "O CEO levou condições duras para a mesa.", effect: (state) => apply(state, "pressionar") },
     ],
   };
 }
@@ -2047,6 +2123,7 @@ const initialState: GameState = {
   lastMandateReviewWeek: 0,
   dynastyEndingReady: false,
   dynastyConcluded: false,
+  staffAlerts: [],
   lastDynastyEventWeek: 0,
   completedDynastyGoals: [],
   recentNewsTopics: [],
@@ -2673,6 +2750,7 @@ function employeeCrisisMessage(
         effect: (s) => ({
           ...s,
           reputation: Math.max(0, s.reputation - 3),
+          staffAlerts: [{ id: `staff-${companyId}-${employee.id}-${s.week}`, companyId, companyName: s.companies.find((company) => company.id === companyId)?.name ?? "Empresa", employeeName: employee.name, role: employee.role, reason: "demissao", week: s.week, responsible: s.companies.find((company) => company.id === companyId)?.ceo ?? s.playerExecutive ?? s.founder, headcountAfter: Math.max(0, (s.companies.find((company) => company.id === companyId)?.employees.length ?? 1) - 1) }, ...(s.staffAlerts ?? [])].slice(0, 20),
           companies: s.companies.map((c) =>
             c.id !== companyId
               ? c
@@ -4182,6 +4260,7 @@ export default function Home() {
           dynastyEndingReady: parsed.dynastyEndingReady ?? false,
           dynastyConcluded: parsed.dynastyConcluded ?? false,
           dynastyEnding: parsed.dynastyEnding,
+          staffAlerts: parsed.staffAlerts ?? [],
           lastDynastyEventWeek: parsed.lastDynastyEventWeek ?? 0,
           completedDynastyGoals: parsed.completedDynastyGoals ?? [],
           recentNewsTopics: parsed.recentNewsTopics ?? [],
@@ -4339,6 +4418,7 @@ export default function Home() {
     : [];
   const latestActiveReport = game.weeklyReports?.[0]?.companies.find((report) => report.companyId === game.activeCompanyId) ?? null;
   const selectedPartner = active?.partners?.find((partner) => partner.id === selectedPartnerId) ?? null;
+  const pendingStaffAlerts = (game.staffAlerts ?? []).filter((alert) => !alert.resolved);
   const [leadershipTitle, leadershipDescription] = leadershipArchetype(game.leadershipIdentity);
   const selectedFaction = (game.factions ?? []).find((faction) => faction.id === selectedFactionId) ?? game.factions?.[0] ?? null;
   const currentAnnualSnapshot = annualSnapshot(game);
@@ -4484,13 +4564,27 @@ export default function Home() {
     setTimeout(() => setToast(""), 2600);
   };
 
-  const partnerAction = (action: "renovar" | "pressionar" | "relacionamento" | "encerrar") => {
+  const openStaffReplacement = (alert: StaffAlert) => {
+    const company = game.companies.find((item) => item.id === alert.companyId);
+    if (!company) return;
+    setGame((state) => ({ ...state, activeCompanyId: company.id }));
+    if (company.ceo === currentLeader) {
+      setView("pessoas");
+      setDialog("hire");
+    } else {
+      setHoldingCompanyId(company.id);
+      setView("portfolio");
+      setDialog("holding-company");
+    }
+  };
+
+  const partnerAction = (action: "aceitar" | "renovar" | "pressionar" | "relacionamento" | "encerrar") => {
     if (!active || !selectedPartner || !isCEO) return;
     if (action === "relacionamento" && active.cash < 20000) return;
     const identity = game.leadershipIdentity ?? initialLeadershipIdentity;
     const negotiationPower = identity.negociacao * 0.45 + identity.integridade * 0.2 + selectedPartner.trust * 0.35;
     const pressureSuccess = negotiationPower >= (selectedPartner.personality === "exigente" ? 63 : selectedPartner.personality === "oportunista" ? 58 : 52);
-    const changes: Partial<Record<IdentityDimension, number>> = action === "renovar"
+    const changes: Partial<Record<IdentityDimension, number>> = action === "renovar" || action === "aceitar"
       ? { prudencia: 2, negociacao: 1 }
       : action === "pressionar"
         ? { negociacao: 3, agressividade: 2, pessoas: -1 }
@@ -4505,16 +4599,13 @@ export default function Home() {
         reputation: clamp(company.reputation + (action === "encerrar" ? -2 : action === "relacionamento" ? 1 : 0)),
         partners: (company.partners ?? []).map((partner) => {
           if (partner.id !== selectedPartner.id) return partner;
-          if (action === "encerrar") return { ...partner, status: "encerrado" as const, weeksLeft: 0, trust: clamp(partner.trust - 22), lastEvent: "Você encerrou o contrato unilateralmente." };
-          if (action === "relacionamento") return { ...partner, status: "ativo" as const, weeksLeft: Math.max(partner.weeksLeft, 8) + 4, trust: clamp(partner.trust + 15), lastEvent: "A liderança investiu pessoalmente na relação." };
-          if (action === "renovar") return { ...partner, status: "ativo" as const, weeksLeft: 18, trust: clamp(partner.trust + 4), weeklyValue: Math.round(partner.weeklyValue * (partner.kind === "cliente" ? 1.03 : 1.04)), lastEvent: "Contrato renovado em condições equilibradas." };
-          if (!pressureSuccess) return { ...partner, status: "negociacao" as const, trust: clamp(partner.trust - 10), lastEvent: "A pressão foi recusada e a relação ficou sob risco." };
-          return { ...partner, status: "ativo" as const, weeksLeft: Math.max(12, partner.weeksLeft), trust: clamp(partner.trust - 7), weeklyValue: Math.round(partner.weeklyValue * (partner.kind === "cliente" ? 1.12 : 0.9)), lastEvent: partner.kind === "cliente" ? "Você conquistou um contrato maior, mas desgastou a relação." : "Você reduziu o custo do fornecimento, mas perdeu confiança." };
+          const strategy: PartnerStrategy = action === "aceitar" ? "aceitar" : action === "renovar" ? "equilibrio" : action;
+          return resolvePartnerStrategy(partner, strategy, negotiationPower, currentLeader);
         }),
       })),
       news: [{
         id: Date.now(), week: state.week, category: "negocios",
-        headline: action === "encerrar" ? `${active.name} rompe contrato com ${selectedPartner.name}` : `${active.name} renegocia acordo com ${selectedPartner.name}`,
+        headline: action === "encerrar" ? `${active.name} rompe contrato com ${selectedPartner.name}` : action === "aceitar" ? `${active.name} aceita proposta de ${selectedPartner.name}` : `${active.name} renegocia acordo com ${selectedPartner.name}`,
         body: action === "pressionar" && !pressureSuccess ? "A contraparte recusou as condições e a relação comercial entrou em risco." : `A decisão de ${action} alterou valores, confiança e dependência entre as empresas.`,
         impact: action === "relacionamento" || (action === "pressionar" && pressureSuccess) ? "positivo" : action === "encerrar" || (action === "pressionar" && !pressureSuccess) ? "negativo" : "neutro",
       }, ...state.news].slice(0, 60),
@@ -4983,6 +5074,7 @@ export default function Home() {
       let holdingDividends = 0;
       let ceoProposalMessage: StoryMessage | null = null;
       const newAuditCases: AuditCase[] = [];
+      const newStaffAlerts: StaffAlert[] = [];
 
       let companies = current.companies.map((company) => {
         if (company.sold || company.bankrupt || company.closed) return company;
@@ -5460,7 +5552,7 @@ export default function Home() {
         let employees = evolvedEmployees.filter((e) => {
           const leaves =
             e.loyalty < 18 && (e.weeks ?? 0) > 8 && Math.random() < 0.24;
-          if (leaves)
+          if (leaves) {
             weeklyNews.push({
               id: Date.now() + e.id,
               week: nextWeek,
@@ -5469,8 +5561,19 @@ export default function Home() {
               body: `A saída de ${e.role.toLowerCase()} ocorre após semanas de desgaste e deve afetar projetos em andamento.`,
               impact: "negativo",
             });
+            newStaffAlerts.push({ id: `staff-${company.id}-${e.id}-${nextWeek}`, companyId: company.id, companyName: company.name, employeeName: e.name, role: e.role, reason: "demissao", week: nextWeek, responsible: company.ceo ?? controlledExecutive, headcountAfter: Math.max(0, evolvedEmployees.length - 1) });
+          }
           return !leaves;
         });
+        if (delegated && company.autonomy === "independente" && employees.length > 3 && (nextWeek + company.id) % 24 === 0) {
+          const dismissal = [...employees].sort((a, b) => a.skill + a.morale * .35 - (b.skill + b.morale * .35))[0];
+          if (dismissal && (dismissal.skill < 58 || dismissal.morale < 30)) {
+            employees = employees.filter((employee) => employee.id !== dismissal.id);
+            newStaffAlerts.push({ id: `staff-${company.id}-${dismissal.id}-${nextWeek}`, companyId: company.id, companyName: company.name, employeeName: dismissal.name, role: dismissal.role, reason: "desligamento", week: nextWeek, responsible: company.ceo ?? "CEO", headcountAfter: employees.length });
+            ceoLastDecision = `Desligou ${dismissal.name} por baixo desempenho`;
+            weeklyNews.push({ id: Date.now() + dismissal.id + 21, week: nextWeek, category: "pessoas", headline: `${company.ceo} desliga ${dismissal.name} da ${company.name}`, body: `O CEO usou sua autonomia para encerrar o vínculo por desempenho. A posição entrou em revisão para possível reposição.`, impact: "negativo" });
+          }
+        }
         if (
           employees.length > 1 &&
           activePressure > 64 &&
@@ -5764,15 +5867,38 @@ export default function Home() {
           }
         }
         const publicIdentity = current.leadershipIdentity ?? initialLeadershipIdentity;
-        const partners = (company.partners ?? createBusinessPartners(company.sector, company.id)).map((partner) => {
-          if (partner.status !== "ativo") return partner;
+        let partners = (company.partners ?? createBusinessPartners(company.sector, company.id)).map((partner) => {
+          if (partner.status === "encerrado") return partner;
+          if (partner.status === "proposta" && nextWeek > (partner.proposalExpiresWeek ?? nextWeek + 1)) return { ...partner, status: "encerrado" as const, lastEvent: "A proposta expirou sem resposta e a contraparte procurou outra empresa." };
+          if (["negociacao", "proposta", "disputa"].includes(partner.status)) {
+            if (!delegated || (company.ceoTenure ?? 0) < 2) return partner;
+            const strategy: PartnerStrategy = ceoStyle === "pessoas"
+              ? "relacionamento"
+              : ceoStyle === "eficiencia" && partner.kind === "fornecedor"
+                ? "pressionar"
+                : ceoStyle === "crescimento" && partner.kind === "cliente"
+                  ? "pressionar"
+                  : partner.status === "proposta" && (partner.proposalType === "exclusividade" || partner.personality === "inovador")
+                    ? "aceitar"
+                    : "equilibrio";
+            const power = clamp((company.ceoReputation ?? 60) * .3 + (company.ceoTrust ?? 60) * .2 + partner.trust * .25 + company.reputation * .15 + (strategy === "pressionar" ? company.ceoAmbition ?? 50 : company.ceoLoyalty ?? 60) * .1);
+            if (company.autonomy === "independente" && (nextWeek + partner.id.length) % 3 === 0) {
+              const negotiated = resolvePartnerStrategy(partner, strategy, power, company.ceo ?? "CEO");
+              weeklyNews.push({ id: Date.now() + partner.id.length * 47, week: nextWeek, category: "negocios", headline: `${company.ceo} negocia ${partner.kind === "cliente" ? "conta" : "fornecimento"} com ${partner.name}`, body: `${company.ceo} escolheu ${strategy} com poder de barganha estimado em ${Math.round(power)}%. ${negotiated.lastEvent}`, impact: negotiated.status === "disputa" ? "negativo" : "positivo" });
+              ceoLastDecision = `${strategy} com ${partner.name}`;
+              return negotiated;
+            }
+            if (!ceoProposalMessage && current.unread.length === 0 && (nextWeek + partner.id.length) % 3 === 0) ceoProposalMessage = ceoContractProposalMessage({ ...company, ceoStyle }, partner, strategy, power);
+            return partner;
+          }
           const weeksLeft = Math.max(0, partner.weeksLeft - 1);
           const identityTrust = partner.kind === "cliente"
             ? (publicIdentity.integridade - 50) / 180 + (publicIdentity.visao - 50) / 260
             : (publicIdentity.negociacao - 50) / 240 + (publicIdentity.prudencia - 50) / 220;
-          if (partner.trust < 24 && Math.random() < 0.08) {
-            weeklyNews.push({ id: Date.now() + partner.id.length * 73, week: nextWeek, category: "negocios", headline: `${partner.name} suspende acordo com ${company.name}`, body: `A confiança caiu para ${Math.round(partner.trust)}%. A dependência de ${partner.dependency}% amplia o impacto da ruptura.`, impact: "negativo" });
-            return { ...partner, status: "negociacao" as const, weeksLeft: 0, lastEvent: "A baixa confiança levou à suspensão do contrato." };
+          if (partner.trust < 30 && Math.random() < 0.1) {
+            const disputeLevel = clamp(30 + partner.dependency * .45);
+            weeklyNews.push({ id: Date.now() + partner.id.length * 73, week: nextWeek, category: "negocios", headline: `${partner.name} abre disputa contratual com ${company.name}`, body: `A confiança caiu para ${Math.round(partner.trust)}%. A contraparte contesta preço, prazo ou escopo e ameaça suspender o acordo.`, impact: "negativo" });
+            return { ...partner, status: "disputa" as const, weeksLeft: 0, disputeLevel, disputeReason: partner.kind === "cliente" ? "O cliente contesta entregas e exige desconto antes de renovar." : "O fornecedor exige reajuste e ameaça interromper o fornecimento.", lastEvent: "A baixa confiança transformou a renovação em disputa contratual." };
           }
           if (partner.personality === "oportunista" && nextWeek % 8 === company.id % 8 && ["inflacao", "recessao", "credito"].includes(economyRoll.economy.cycle)) {
             const weeklyValue = Math.round(partner.weeklyValue * (partner.kind === "fornecedor" ? 1.08 : .94));
@@ -5791,6 +5917,22 @@ export default function Home() {
           }
           return { ...partner, weeksLeft, trust: clamp(partner.trust + identityTrust) };
         });
+        const openPartnerCount = partners.filter((partner) => partner.status !== "encerrado").length;
+        if (openPartnerCount < 7 && (nextWeek + company.id) % 13 === 0) {
+          const kind: BusinessPartner["kind"] = (nextWeek + company.id) % 2 === 0 ? "cliente" : "fornecedor";
+          const proposal = createPartnerProposal({ ...company, partners }, nextWeek, kind);
+          const proposalPower = clamp((company.ceoReputation ?? company.reputation) * .35 + proposal.trust * .3 + (company.ceoTrust ?? 60) * .2 + company.reputation * .15);
+          const suggested: PartnerStrategy = ceoStyle === "crescimento" && kind === "cliente" ? "aceitar" : ceoStyle === "eficiencia" && kind === "fornecedor" ? "pressionar" : ceoStyle === "pessoas" ? "relacionamento" : "equilibrio";
+          if (delegated && company.autonomy === "independente") {
+            const negotiated = resolvePartnerStrategy(proposal, suggested, proposalPower, company.ceo ?? "CEO");
+            partners = [...partners, negotiated];
+            weeklyNews.push({ id: Date.now() + company.id + 2040, week: nextWeek, category: "negocios", headline: `${proposal.name} procura a ${company.name} com nova proposta`, body: `${company.ceo} negociou diretamente e escolheu ${suggested}. ${negotiated.lastEvent}`, impact: negotiated.status === "disputa" ? "negativo" : "positivo" });
+          } else {
+            partners = [...partners, proposal];
+            weeklyNews.push({ id: Date.now() + company.id + 2050, week: nextWeek, category: "negocios", headline: `${proposal.name} apresenta proposta à ${company.name}`, body: `${proposal.representative} oferece ${kind === "cliente" ? "receita" : "fornecimento"} de ${money.format(proposal.proposedValue ?? proposal.weeklyValue)} por semana. A oferta expira em quatro semanas.`, impact: "neutro" });
+            if (!ceoProposalMessage && current.unread.length === 0) ceoProposalMessage = ceoContractProposalMessage({ ...company, partners, ceoStyle, ceo: company.ceo ?? controlledExecutive }, proposal, suggested, proposalPower);
+          }
+        }
         return {
           ...company,
           cash: nextCash,
@@ -6746,6 +6888,10 @@ export default function Home() {
         mandateReviews,
         lastMandateReviewWeek,
         dynastyEndingReady,
+        staffAlerts: [...newStaffAlerts, ...(current.staffAlerts ?? [])].map((alert) => {
+          const alertCompany = companies.find((company) => company.id === alert.companyId);
+          return !alert.resolved && alertCompany && alertCompany.employees.length > (alert.headcountAfter ?? alertCompany.employees.length) ? { ...alert, resolved: true } : alert;
+        }).slice(0, 20),
         factions,
         factionHistory: hostileFaction ? [`Semana ${nextWeek}: ${hostileFaction.name} iniciou oposição.`, ...(current.factionHistory ?? [])].slice(0, 16) : current.factionHistory,
         annualPlan,
@@ -6912,9 +7058,21 @@ export default function Home() {
       }],
       workforceTarget: Math.max(c.workforceTarget ?? c.employees.length, c.employees.length + 1),
     }));
-    setGame((state) => evolveIdentity(state, { pessoas: 1 }, `contratação de ${candidate.name}`));
+    setGame((state) => evolveIdentity({ ...state, staffAlerts: (state.staffAlerts ?? []).map((alert) => alert.companyId === active.id && !alert.resolved ? { ...alert, resolved: true } : alert) }, { pessoas: 1 }, `contratação de ${candidate.name}`));
     setDialog(null);
     notify(`${candidate.name} aceitou sua proposta.`);
+  };
+
+  const dismissEmployee = (employee: Employee) => {
+    if (!active || !isCEO || active.employees.length <= 1) return;
+    setGame((state) => ({
+      ...state,
+      reputation: clamp(state.reputation - 2),
+      companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, employees: company.employees.filter((person) => person.id !== employee.id), workforceTarget: Math.max(2, (company.workforceTarget ?? company.employees.length) - 1), reputation: clamp(company.reputation - 2) })),
+      staffAlerts: [{ id: `staff-${active.id}-${employee.id}-${state.week}`, companyId: active.id, companyName: active.name, employeeName: employee.name, role: employee.role, reason: "desligamento", week: state.week, responsible: currentLeader, headcountAfter: active.employees.length - 1 }, ...(state.staffAlerts ?? [])].slice(0, 20),
+      news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${employee.name} é desligado da ${active.name}`, body: `${currentLeader} decidiu encerrar o vínculo de ${employee.role.toLowerCase()}. A empresa precisará decidir se elimina a posição ou busca reposição.`, impact: "negativo" }, ...state.news].slice(0, 60),
+    }));
+    notify(`${employee.name} foi desligado. Um alerta de equipe foi criado.`);
   };
 
   const negotiateSalary = () => {
@@ -9206,6 +9364,7 @@ export default function Home() {
           <small>Ver noticiário ›</small>
         </button>
       )}
+      {!!pendingStaffAlerts.length && <div className="staff-alert-bar"><div><small>VAGA ABERTA · {pendingStaffAlerts[0].reason === "demissao" ? "PEDIDO DE DEMISSÃO" : "DESLIGAMENTO"}</small><b>{pendingStaffAlerts[0].employeeName} deixou a {pendingStaffAlerts[0].companyName}</b><span>{pendingStaffAlerts[0].role} · reposição sob responsabilidade de {pendingStaffAlerts[0].responsible}</span></div><button onClick={() => openStaffReplacement(pendingStaffAlerts[0])}>{game.companies.find((company) => company.id === pendingStaffAlerts[0].companyId)?.ceo === currentLeader ? "Abrir mercado de talentos" : "Cobrar CEO responsável"}</button>{pendingStaffAlerts.length > 1 && <i>+{pendingStaffAlerts.length - 1} vagas</i>}</div>}
 
       {view === "escritorio" && active && operationalAccess && (
         <section className="office-stage">
@@ -9406,6 +9565,7 @@ export default function Home() {
                   >
                     Negociar
                   </button>
+                  <button className="danger-action" disabled={!isCEO || active.employees.length <= 1} onClick={() => dismissEmployee(e)}>Demitir</button>
                 </div>
               </article>
             ))}
@@ -9540,9 +9700,9 @@ export default function Home() {
             <div className="partner-grid">
               {(active.partners ?? []).map((partner) => <article className={`${partner.kind} ${partner.status}`} key={partner.id}>
                 <header><span>{partner.kind}</span><small>{partner.status}</small></header><h4>{partner.name}</h4><p>{partner.representative} · perfil {partner.personality}</p>
-                <div className="partner-value"><small>{partner.kind === "cliente" ? "RECEITA SEMANAL" : "CUSTO SEMANAL"}</small><b>{money.format(partner.weeklyValue)}</b></div>
-                <div className="partner-stats"><span>Confiança <b>{Math.round(partner.trust)}%</b></span><span>Dependência <b>{Math.round(partner.dependency)}%</b></span><span>Prazo <b>{partner.weeksLeft} sem.</b></span></div>
-                <em>{partner.lastEvent}</em><button disabled={!isCEO} onClick={() => { setSelectedPartnerId(partner.id); setDialog("partner"); }}>{partner.status === "negociacao" ? "Renegociar contrato" : "Gerir relação"}</button>
+                <div className="partner-value"><small>{partner.status === "proposta" ? "VALOR PROPOSTO" : partner.kind === "cliente" ? "RECEITA SEMANAL" : "CUSTO SEMANAL"}</small><b>{money.format(partner.proposedValue ?? partner.weeklyValue)}</b></div>
+                <div className="partner-stats"><span>Confiança <b>{Math.round(partner.trust)}%</b></span><span>Dependência <b>{Math.round(partner.dependency)}%</b></span><span>{partner.status === "proposta" ? "Expira" : "Prazo"} <b>{partner.status === "proposta" ? `S${partner.proposalExpiresWeek}` : `${partner.weeksLeft} sem.`}</b></span></div>
+                {partner.status === "disputa" && <strong className="contract-fight">DISPUTA {Math.round(partner.disputeLevel ?? 0)}%</strong>}<em>{partner.lastEvent}</em><button disabled={!isCEO} onClick={() => { setSelectedPartnerId(partner.id); setDialog("partner"); }}>{!isCEO ? `Sob gestão de ${active.ceo}` : partner.status === "proposta" ? "Analisar proposta" : ["negociacao", "disputa"].includes(partner.status) ? "Renegociar contrato" : "Gerir relação"}</button>
               </article>)}
             </div>
           </section>
@@ -10164,10 +10324,11 @@ export default function Home() {
       {dialog === "partner" && selectedPartner && active && (
         <GameModal onClose={() => { setDialog(null); setSelectedPartnerId(null); }} wide>
           <div className="partner-room">
-            <header><div><small>{selectedPartner.kind.toUpperCase()} ESTRATÉGICO · {selectedPartner.status.toUpperCase()}</small><h2>{selectedPartner.name}</h2><p>{selectedPartner.representative} negocia com perfil {selectedPartner.personality}. Sua identidade como {leadershipTitle.toLowerCase()} influencia a confiança e a força do acordo.</p></div><b>{money.format(selectedPartner.weeklyValue)}<span>{selectedPartner.kind === "cliente" ? "receita" : "custo"}/semana</span></b></header>
+            <header><div><small>{selectedPartner.kind.toUpperCase()} ESTRATÉGICO · {selectedPartner.status.toUpperCase()}</small><h2>{selectedPartner.name}</h2><p>{selectedPartner.representative} negocia com perfil {selectedPartner.personality}. Sua identidade como {leadershipTitle.toLowerCase()} influencia a confiança e a força do acordo.</p></div><b>{money.format(selectedPartner.proposedValue ?? selectedPartner.weeklyValue)}<span>{selectedPartner.status === "proposta" ? "valor proposto" : selectedPartner.kind === "cliente" ? "receita" : "custo"}/semana</span></b></header>
             <div className="partner-negotiation-facts"><div><small>CONFIANÇA</small><b>{Math.round(selectedPartner.trust)}%</b></div><div><small>DEPENDÊNCIA</small><b>{Math.round(selectedPartner.dependency)}%</b></div><div><small>CONTRATO</small><b>{selectedPartner.weeksLeft} sem.</b></div><div><small>SEU PODER DE NEGOCIAÇÃO</small><b>{Math.round((game.leadershipIdentity?.negociacao ?? 50) * .45 + (game.leadershipIdentity?.integridade ?? 50) * .2 + selectedPartner.trust * .35)}%</b></div></div>
-            <p className="partner-last-event">“{selectedPartner.lastEvent}”</p>
+            {selectedPartner.status === "disputa" && <div className="contract-dispute-room"><small>CONFLITO CONTRATUAL · NÍVEL {Math.round(selectedPartner.disputeLevel ?? 0)}%</small><p>{selectedPartner.disputeReason}</p></div>}<p className="partner-last-event">“{selectedPartner.lastEvent}”{selectedPartner.lastNegotiatedBy && <small> Última negociação: {selectedPartner.lastNegotiatedBy}</small>}</p>
             <section className="partner-decisions">
+              {selectedPartner.status === "proposta" && <button onClick={() => partnerAction("aceitar")}><b>Aceitar proposta</b><span>{selectedPartner.proposedWeeks} semanas · ativa imediatamente a nova conta ou fornecimento.</span></button>}
               <button onClick={() => partnerAction("renovar")}><b>Renovar com equilíbrio</b><span>18 semanas · confiança +4 · pequeno reajuste contratual.</span></button>
               <button onClick={() => partnerAction("pressionar")}><b>Pressionar por condições melhores</b><span>{selectedPartner.kind === "cliente" ? "+12% de receita" : "−10% de custo"} se funcionar; reduz confiança e pode ser recusado.</span></button>
               <button disabled={active.cash < 20000} onClick={() => partnerAction("relacionamento")}><b>Investir na relação · R$ 20 mil</b><span>Confiança +15 · amplia prazo · fortalece sua imagem humana.</span></button>
@@ -11432,6 +11593,9 @@ export default function Home() {
                   <div><small>EQUIPE SOB GESTÃO</small><b>{holdingCompany.employees.length} de {holdingCompany.workforceTarget ?? Math.max(3, holdingCompany.employees.length)} planejados</b></div>
                   <div><small>PRÓXIMA ANÁLISE DE PESSOAS</small><b>{(holdingCompany.ceoHireCooldown ?? 0) > 0 ? `em ${holdingCompany.ceoHireCooldown} semanas` : "disponível"}</b></div>
                   <p>{holdingCompany.autonomy === "independente" ? `${holdingCompany.ceo} repõe vagas com uma reserva menor e contrata para expansão quando houver sobrecarga e caixa para oito meses de salário.` : holdingCompany.autonomy === "supervisionada" ? `${holdingCompany.ceo} apresentará o candidato, salário e motivo; reposições entram na análise prioritária.` : `${holdingCompany.ceo} pode pedir autorização para repor uma saída; contratações de expansão continuam sob seu controle direto.`}</p>
+                  <div><small>CONTRATOS ATIVOS</small><b>{(holdingCompany.partners ?? []).filter((partner) => partner.status === "ativo").length}</b></div>
+                  <div><small>NA MESA / EM DISPUTA</small><b>{(holdingCompany.partners ?? []).filter((partner) => ["proposta", "negociacao", "disputa"].includes(partner.status)).length}</b></div>
+                  <p>{holdingCompany.autonomy === "independente" ? `${holdingCompany.ceo} negocia clientes e fornecedores sozinho, escolhendo entre pressão, relacionamento e equilíbrio conforme seu estilo.` : `${holdingCompany.ceo} analisará poder de barganha e apresentará uma estratégia antes de fechar propostas ou disputas.`}</p>
                 </div>}
                 {holdingCompany.ceoHiddenIssue && <p className="hidden-issue">Sinal de alerta: existem inconsistências no relatório. Auditoria estimada em {holdingCompany.ceoHiddenWeeks} semanas.</p>}
                 {holdingCompany.ceo !== currentLeader && <div className="ceo-oversight"><button disabled={holdingCompany.cash < 25000} onClick={recognizeCompanyCEO}>Promover a sócio executivo · R$ 25 mil</button><button disabled={holdingCompany.cash < 20000} onClick={() => ceoOversightAction("auditoria")}>Auditar relatórios · R$ 20 mil</button><button disabled={holdingCompany.cash < 35000} onClick={() => ceoOversightAction("conselho")}>Articular conselho · R$ 35 mil</button><button className="danger-action" onClick={() => appointCompanyCEO(currentLeader)}>Demitir CEO e assumir</button></div>}
