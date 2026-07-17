@@ -2685,3 +2685,174 @@ button {
 
 .page-actions{display:flex;gap:7px;flex-wrap:wrap}.dynasty-room{padding:38px;background:#e7ded0}.dynasty-title{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;border-bottom:2px solid #2b232d;padding-bottom:18px}.dynasty-title small,.dynasty-room section>header small,.dynasty-history>small{font:800 7px var(--font-geist-mono);letter-spacing:.15em;color:#704c75}.dynasty-title h2{margin:7px 0;font:400 34px Georgia,serif}.dynasty-title p{max-width:680px;margin:0;color:#655d62;font-size:10px}.dynasty-title>span{padding:9px 11px;background:#2b232d;color:#fff;font:700 8px var(--font-geist-mono)}.dynasty-scoreboard{display:grid;grid-template-columns:repeat(4,1fr);margin:20px 0;background:#2b232d;color:#fff}.dynasty-scoreboard>div{padding:16px;border-right:1px solid rgba(255,255,255,.12)}.dynasty-scoreboard small{display:block;font:700 7px var(--font-geist-mono);letter-spacing:.11em;color:#aaa}.dynasty-scoreboard b{display:block;margin:7px 0 4px;font:800 20px var(--font-geist-mono);color:#d5af78}.dynasty-scoreboard span{font:italic 9px Georgia,serif;color:#bbb}.dynasty-room section{margin-top:12px;padding:18px;border:1px solid #b9ad9e;background:#f1e9dd}.dynasty-room section>header h3{margin:5px 0 13px;font:400 21px Georgia,serif}.generation-goals{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.generation-goals button{display:flex;min-height:90px;flex-direction:column;text-align:left;border:1px solid #b7aa9b;background:#fff8ee;padding:11px}.generation-goals button.active{background:#2b232d;color:#fff;border-top:4px solid #d5af78}.generation-goals b{font:400 14px Georgia,serif}.generation-goals span{margin-top:7px;font-size:8px;line-height:1.45;color:#756d66}.generation-goals button.active span{color:#ccc}.dynasty-progress{display:flex;align-items:center;gap:10px;margin-top:11px}.dynasty-progress>span{height:7px;flex:1;background:#d2c7ba}.dynasty-progress i{display:block;height:100%;background:#704c75}.dynasty-progress b{font:800 7px var(--font-geist-mono)}.dynasty-columns{display:grid;grid-template-columns:1.15fr .85fr;gap:10px}.family-tree-list{display:grid;gap:6px}.family-tree-list>article{padding:11px;border:1px solid #c2b6a7;background:#fff9ef}.family-tree-list>article.leader{border-left:5px solid #704c75}.family-tree-list>article.afastado{opacity:.7;border-style:dashed}.family-person{display:flex;align-items:center;gap:10px}.family-person>span{display:flex;width:34px;height:34px;align-items:center;justify-content:center;border-radius:50%;background:#2b232d;color:#fff;font:800 8px var(--font-geist-mono)}.family-person small{font:700 6px var(--font-geist-mono);color:#7e6c7f}.family-person h4{margin:3px 0;font:400 17px Georgia,serif}.family-person p{margin:0;font-size:8px;color:#777;text-transform:capitalize}.family-power{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:9px}.family-power span{padding:6px;background:#e9e0d4;font:7px var(--font-geist-mono)}.family-power b{float:right}.founder-estate{display:grid!important;grid-template-columns:1fr auto!important;align-items:center}.founder-estate small,.founder-estate span{font:700 7px var(--font-geist-mono);color:#766b62}.founder-estate b{grid-row:1/3;grid-column:2;font:800 24px var(--font-geist-mono);color:#704c75}.will-options{display:grid;gap:6px}.will-options button{display:flex;flex-direction:column;text-align:left;border:1px solid #b9ac9d;background:#fff8ee;padding:10px}.will-options button.active{background:#2b232d;color:#fff}.will-options button:disabled{opacity:.55}.will-options b{font:700 9px var(--font-geist-mono)}.will-options span{margin-top:4px;font-size:8px;color:#776e66}.will-options button.active span{color:#ccc}.founder-legacy-section>p{font:10px/1.55 Georgia,serif;color:#635b55}.founder-note{margin-top:12px;padding:13px;border-left:4px solid #704c75;background:#ded2c4}.founder-note small{font:800 7px var(--font-geist-mono);color:#704c75}.founder-note p{margin:6px 0 0;font:italic 12px Georgia,serif}.family-council-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.family-council-actions button{display:flex;min-height:75px;flex-direction:column;text-align:left;border:1px solid #6d6259;background:transparent;padding:10px}.family-council-actions button:disabled{opacity:.3}.family-council-actions b{font:700 8px var(--font-geist-mono)}.family-council-actions span{margin-top:6px;font-size:8px;color:#766d65}.next-generation-empty,.generation-handoff{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:13px;background:#ded4c7}.next-generation-empty p,.generation-handoff p{margin:0;font:italic 10px Georgia,serif}.next-generation-empty button,.generation-handoff button{padding:11px 14px;border:0;background:#704c75;color:#fff;font:800 7px var(--font-geist-mono)}.next-generation-empty button:disabled,.generation-handoff button:disabled{opacity:.3}.successor-candidates{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:8px}.successor-candidates article{padding:13px;border:1px solid #b8ac9e;background:#fff9ef}.successor-candidates article.selected{border-top:4px solid #704c75}.successor-candidates small{font:700 7px var(--font-geist-mono);color:#704c75}.successor-candidates h4{margin:5px 0;font:400 18px Georgia,serif}.successor-candidates p{font-size:8px}.successor-candidates article>div{height:6px;background:#d3c8bb}.successor-candidates i{display:block;height:100%;background:#704c75}.successor-candidates footer{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:9px}.successor-candidates button{padding:7px 3px;border:1px solid #7a6f65;background:transparent;font:700 7px var(--font-geist-mono)}.successor-candidates button:disabled{opacity:.3}.dynasty-history p{margin:7px 0;padding-bottom:7px;border-bottom:1px solid #c9bdaf;font:10px Georgia,serif}
 @media(max-width:720px){.dynasty-room{padding:23px 12px}.dynasty-title{display:block}.dynasty-title>span{display:inline-block;margin-top:12px}.dynasty-scoreboard,.generation-goals,.dynasty-columns,.family-council-actions,.successor-candidates{grid-template-columns:1fr}.family-council-actions button{min-height:auto}.next-generation-empty,.generation-handoff{align-items:flex-start;flex-direction:column}.next-generation-empty button,.generation-handoff button{width:100%}}
+
+/* Comfortable reading mode for information-heavy game rooms */
+.game-modal {
+  max-height: calc(100vh - 32px);
+  font-size: 14px;
+}
+.game-modal.wide {
+  width: min(920px, calc(100vw - 32px));
+}
+.game-modal small {
+  font-size: 10px;
+  line-height: 1.35;
+}
+.game-modal p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.game-modal label {
+  font-size: 12px;
+  line-height: 1.45;
+}
+.game-modal button:not(.close-modal),
+.game-modal select,
+.game-modal input {
+  min-height: 40px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.game-modal button b {
+  font-size: 12px;
+}
+.game-modal button span {
+  font-size: 11px;
+  line-height: 1.45;
+}
+.holding-room,
+.dynasty-room,
+.founder-finale-room,
+.legacy-room {
+  padding: 30px;
+}
+.holding-room > header p,
+.dynasty-title p,
+.executive-profile p,
+.holding-sections p,
+.founder-finale-room > header p,
+.career-album article span,
+.founder-finale-actions p,
+.family-person p,
+.founder-legacy-section > p,
+.dynasty-history p {
+  font-size: 13px;
+  line-height: 1.55;
+}
+.ceo-command small,
+.ceo-history > small,
+.ceo-product-pipeline small,
+.integrity-heading small,
+.audit-case > header small,
+.dynasty-title small,
+.dynasty-room section > header small,
+.dynasty-history > small,
+.founder-finale-room > header small,
+.career-album > header small,
+.founder-verdict small {
+  font-size: 10px;
+}
+.ceo-command span,
+.ceo-history span,
+.character-memories p,
+.audit-case > p,
+.audit-case > em,
+.family-person p,
+.family-memory span,
+.founder-note p,
+.dynasty-history p,
+.career-album article strong,
+.career-album article span {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.policy-buttons span,
+.generation-goals span,
+.will-options span,
+.family-council-actions span,
+.successor-candidates p {
+  font-size: 11px;
+}
+.audit-facts span,
+.family-power span,
+.founder-life-balance span {
+  font-size: 10px;
+}
+.audit-facts b,
+.family-power b,
+.founder-life-balance b,
+.founder-final-stats b {
+  font-size: 13px;
+}
+.room-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  gap: 6px;
+  margin: 18px 0 0;
+  padding: 10px;
+  overflow-x: auto;
+  background: rgba(238, 230, 215, 0.96);
+  border: 1px solid #bdb4a5;
+  box-shadow: 0 8px 18px rgba(23, 38, 47, 0.08);
+  backdrop-filter: blur(8px);
+}
+.room-tabs button {
+  flex: 1 0 max-content;
+  border: 1px solid #8f877a;
+  background: transparent;
+  color: #514b44;
+  padding: 10px 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.room-tabs button.active {
+  border-color: #17262f;
+  background: #17262f;
+  color: #fff;
+}
+.room-tab-panel {
+  grid-column: 1 / -1;
+  animation: room-tab-enter 0.18s ease-out;
+}
+.holding-sections {
+  grid-template-columns: 1fr;
+  margin-top: 10px;
+}
+.holding-sections section,
+.dynasty-room section {
+  padding: 24px;
+}
+@keyframes room-tab-enter {
+  from { opacity: 0; transform: translateY(5px); }
+}
+@media (max-width: 720px) {
+  .game-modal-bg { padding: 0; }
+  .game-modal,
+  .game-modal.wide {
+    width: 100%;
+    max-height: 100vh;
+    min-height: 100vh;
+  }
+  .holding-room,
+  .dynasty-room,
+  .founder-finale-room,
+  .legacy-room {
+    padding: 22px 14px 36px;
+  }
+  .room-tabs {
+    margin-inline: -4px;
+  }
+  .holding-sections section,
+  .dynasty-room section {
+    padding: 18px 14px;
+  }
+  .policy-buttons,
+  .ceo-product-pipeline {
+    grid-template-columns: 1fr;
+  }
+  .ceo-product-pipeline p {
+    grid-column: auto;
+  }
+}

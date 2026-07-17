@@ -3699,6 +3699,8 @@ export default function Home() {
   const [selectedPartnerId, setSelectedPartnerId] = useState<string | null>(null);
   const [selectedFactionId, setSelectedFactionId] = useState<string | null>(null);
   const [annualPriorityChoice, setAnnualPriorityChoice] = useState<AnnualPriority>("crescimento");
+  const [holdingTab, setHoldingTab] = useState<"ceo" | "integridade" | "capital" | "societario">("ceo");
+  const [dynastyTab, setDynastyTab] = useState<"visao" | "familia" | "poder" | "sucessao" | "cronica">("visao");
 
   useEffect(() => {
     const saved = localStorage.getItem("ceo-historia-v2");
@@ -7358,6 +7360,7 @@ export default function Home() {
 
   const openHoldingCompany = (company: Company) => {
     setHoldingCompanyId(company.id);
+    setHoldingTab("ceo");
     setTransferTargetId(
       game.companies.find(
         (c) => c.id !== company.id && !c.sold && !c.bankrupt && !c.closed,
@@ -10538,7 +10541,14 @@ export default function Home() {
               <div><small>CONTROLE FAMILIAR</small><b>{familyControl}%</b><span>{game.outsideFamilyEquity ?? 0}% fora da família</span></div>
               <div><small>FUNDADOR</small><b>{game.founderDeceased ? "Legado" : `${Math.round(game.founderHealth ?? 0)}%`}</b><span>{game.founderDeceased ? "testamento executado" : "saúde e influência"}</span></div>
             </div>
-            <section className="generation-project">
+            <nav className="room-tabs" aria-label="Áreas do modo dinastia">
+              {([[
+                "visao", "Visão geral"
+              ], ["familia", "Família"], ["poder", "Poder"], ["sucessao", "Sucessão"], ["cronica", "Crônica"]] as const).map(([id, label]) => (
+                <button className={dynastyTab === id ? "active" : ""} onClick={() => setDynastyTab(id)} key={id}>{label}</button>
+              ))}
+            </nav>
+            {dynastyTab === "visao" && <section className="generation-project room-tab-panel">
               <header><small>PROJETO DA GERAÇÃO</small><h3>Como esta geração quer ser lembrada?</h3></header>
               <div className="generation-goals">
                 {([
@@ -10551,8 +10561,8 @@ export default function Home() {
                 ))}
               </div>
               <div className="dynasty-progress"><span><i style={{ width: `${dynastyGoalProgress}%` }} /></span><b>{dynastyGoalProgress}% do projeto</b></div>
-            </section>
-            <div className="dynasty-columns">
+            </section>}
+            {dynastyTab === "familia" && <div className="dynasty-columns room-tab-panel">
               <section className="family-tree-section">
                 <header><small>FAMÍLIA E PODER</small><h3>Mapa da dinastia</h3></header>
                 <div className="family-tree-list">
@@ -10581,8 +10591,8 @@ export default function Home() {
                 </div>
                 <div className="founder-note"><small>ÚLTIMA POSIÇÃO DO FUNDADOR</small><p>{game.founderDeceased ? "O futuro agora pertence inteiramente às novas gerações." : (game.familyUnity ?? 70) < 45 ? "Vocês estão transformando meu legado em uma disputa de sobrenome." : "Uma empresa sobrevive quando a família aprende a separar afeto, competência e poder."}</p></div>
               </section>
-            </div>
-            <section className="family-council-section">
+            </div>}
+            {dynastyTab === "poder" && <section className="family-council-section room-tab-panel">
               <header><small>CONSELHO DE FAMÍLIA</small><h3>Decisões para proteger ou concentrar poder</h3></header>
               <div className="family-council-actions">
                 <button disabled={game.personalCash < 100000} onClick={() => familyCouncilAction("dividendos")}><b>Pagar dividendos familiares</b><span>R$ 100 mil · reduz ressentimento.</span></button>
@@ -10590,8 +10600,8 @@ export default function Home() {
                 <button disabled={game.personalCash < 200000 || (game.outsideFamilyEquity ?? 0) < 5} onClick={() => familyCouncilAction("recomprar")}><b>Recomprar 5% externo</b><span>R$ 200 mil · recupera controle.</span></button>
                 <button disabled={game.personalCash < 80000} onClick={() => familyCouncilAction("governanca")}><b>Protocolo de governança</b><span>R$ 80 mil · fortalece legitimidade.</span></button>
               </div>
-            </section>
-            <section className="next-generation-section">
+            </section>}
+            {dynastyTab === "sucessao" && <section className="next-generation-section room-tab-panel">
               <header><small>PRÓXIMA GERAÇÃO</small><h3>A dinastia precisa sobreviver ao líder atual</h3></header>
               {!nextGenerationCandidates.length ? (
                 <div className="next-generation-empty"><p>{dynastyTenure < 40 ? `A próxima geração poderá entrar no plano após 40 semanas. Faltam ${40 - dynastyTenure}.` : "É hora de apresentar os próximos descendentes ao conselho."}</p><button disabled={dynastyTenure < 40} onClick={introduceNextGeneration}>Apresentar próxima geração</button></div>
@@ -10605,8 +10615,8 @@ export default function Home() {
                   <div className="generation-handoff"><p>{!selectedNextLeader ? "Escolha quem será preparado para assumir." : selectedNextLeader.readiness < 60 ? `${selectedNextLeader.name} precisa chegar a 60% de prontidão.` : dynastyTenure < 80 ? `A geração atual precisa completar 80 semanas. Faltam ${80 - dynastyTenure}.` : "A transição está pronta e será definitiva."}</p><button disabled={!selectedNextLeader || selectedNextLeader.readiness < 60 || dynastyTenure < 80} onClick={advanceDynastyGeneration}>Transferir para geração {(game.generation ?? 2) + 1}</button></div>
                 </>
               )}
-            </section>
-            <section className="dynasty-history"><small>CRÔNICA DA FAMÍLIA</small>{(game.dynastyHistory ?? []).slice(0, 8).map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</section>
+            </section>}
+            {dynastyTab === "cronica" && <section className="dynasty-history room-tab-panel"><small>CRÔNICA DA FAMÍLIA</small>{(game.dynastyHistory ?? []).slice(0, 8).map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</section>}
           </div>
         </GameModal>
       )}
@@ -10719,8 +10729,15 @@ export default function Home() {
               <div><small>TEMPO NO CARGO</small><b>{holdingCompany.ceoTenure ?? 0} sem.</b></div>
               <div><small>ÚLTIMA DECISÃO</small><span>{holdingCompany.ceoLastDecision}</span></div>
             </div>
+            <nav className="room-tabs" aria-label="Áreas da empresa">
+              {([[
+                "ceo", "CEO e equipe"
+              ], ["integridade", "Integridade"], ["capital", "Capital e sinergia"], ["societario", "Societário"]] as const).map(([id, label]) => (
+                <button className={holdingTab === id ? "active" : ""} onClick={() => setHoldingTab(id)} key={id}>{label}</button>
+              ))}
+            </nav>
             <div className="holding-sections">
-              <section className="ceo-leadership">
+              {holdingTab === "ceo" && <section className="ceo-leadership room-tab-panel">
                 <h3>CEO, meta e autonomia</h3>
                 <label>
                   Comando da empresa
@@ -10795,8 +10812,8 @@ export default function Home() {
                   {holdingCompany.ceoMemories.slice(0, 4).map((memory) => <p className={memory.value >= 0 ? "positive" : "negative"} key={memory.id}><i>{memory.feeling}</i> “{memory.text}” <span>semana {memory.week} · força {memory.strength}%</span></p>)}
                 </div>}
                 <div className="ceo-history"><small>HISTÓRICO DE DECISÕES</small>{(holdingCompany.ceoHistory ?? []).slice(0, 4).map((item, index) => <span key={`${item}-${index}`}>{item}</span>)}</div>
-              </section>
-              <section className="integrity-center">
+              </section>}
+              {holdingTab === "integridade" && <section className="integrity-center room-tab-panel">
                 <div className="integrity-heading">
                   <div>
                     <small>COMPLIANCE E INVESTIGAÇÃO</small>
@@ -10844,8 +10861,8 @@ export default function Home() {
                       ))}
                   </div>
                 )}
-              </section>
-              <section>
+              </section>}
+              {holdingTab === "capital" && <section className="room-tab-panel">
                 <h3>Capital e dividendos</h3>
                 <label>
                   Valor da operação
@@ -10891,8 +10908,8 @@ export default function Home() {
                     <option value="35">35% do lucro</option>
                   </select>
                 </label>
-              </section>
-              <section>
+              </section>}
+              {holdingTab === "capital" && <section className="room-tab-panel">
                 <h3>Sinergia do grupo</h3>
                 <p>
                   Serviços compartilhados reduzem custos semanais, mas exigem R$
@@ -10944,8 +10961,8 @@ export default function Home() {
                 >
                   Transferir {money.format(transferAmount)}
                 </button>
-              </section>
-              <section className="corporate-actions">
+              </section>}
+              {holdingTab === "societario" && <section className="corporate-actions room-tab-panel">
                 <h3>Decisões societárias</h3>
                 <div className="holding-action-grid">
                   <button
@@ -10961,7 +10978,7 @@ export default function Home() {
                 <button className="danger-action" onClick={closeHoldingCompany}>
                   Encerrar operação voluntariamente
                 </button>
-              </section>
+              </section>}
             </div>
           </div>
         </GameModal>
