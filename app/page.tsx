@@ -14,7 +14,7 @@ type View =
 type CharacterMemory = {
   id: string;
   week: number;
-  kind: "contratacao" | "salario" | "cuidado" | "conflito" | "reconhecimento" | "poder" | "familia" | "resultado";
+  kind: "contratacao" | "salario" | "cuidado" | "conflito" | "reconhecimento" | "poder" | "familia" | "resultado" | "produto" | "sucessao";
   text: string;
   feeling: "grato" | "confiante" | "cauteloso" | "magoado" | "ressentido" | "orgulhoso";
   value: number;
@@ -108,6 +108,9 @@ type Project = {
   royaltyRevenue?: number;
   lawsuitWeeks?: number;
   legalOpponent?: string;
+  proposedByEmployeeId?: number;
+  proposedByEmployeeName?: string;
+  estimatedSuccess?: number;
 };
 type OngoingEffect = {
   id: string;
@@ -284,9 +287,17 @@ type WeeklyReport = {
   headline: string;
   companies: CompanyWeeklyReport[];
 };
+type WeeklyAdvice = {
+  tone: "positivo" | "atencao" | "urgente";
+  title: string;
+  detail: string;
+  action: "estrategia" | "pessoas" | "projetos" | "mercado" | "nenhuma";
+  actionLabel: string;
+};
 type MessageChoice = {
   label: string;
   tone?: "good" | "risk";
+  hint?: string;
   result: string;
   effect: (state: GameState) => GameState;
 };
@@ -1526,6 +1537,94 @@ function ceoProductProposalMessage(company: Company, product: Project): StoryMes
       { label: `Aprovar o projeto · ${money.format(product.budget)}`, tone: "good", result: `${company.ceo} recebeu autorização para desenvolver ${product.name}.`, effect: (state) => startProduct(state) },
       { label: "Autorizar somente um piloto", result: "O plano foi reduzido a um piloto mais barato e menos arriscado.", effect: (state) => startProduct(state, true) },
       { label: "Recusar o produto", tone: "risk", result: `${company.ceo} recebeu a ordem de manter o foco na operação atual.`, effect: (state) => ({ ...state, companies: state.companies.map((item) => item.id !== company.id ? item : ({ ...item, ceoTrust: clamp((item.ceoTrust ?? 65) - 4), ceoLoyalty: clamp((item.ceoLoyalty ?? 65) - 3), ceoProductCooldown: 10, ceoLastDecision: `Teve a proposta ${product.name} recusada`, ceoHistory: [`Semana ${state.week}: proposta de ${product.name} recusada pela holding.`, ...(item.ceoHistory ?? [])].slice(0, 8), ceoMemories: addCharacterMemory(item.ceoMemories, characterMemory(state.week, "produto", "Você recusou o produto que eu considerava importante para minha estratégia.", "frustrado", -7, 72)) })) }) },
+    ],
+  };
+}
+
+function employeeProductIdeaMessage(
+  employee: Employee,
+  company: Company,
+  economy: Economy,
+  week: number,
+): StoryMessage {
+  const ideaNames: Record<Sector, string[]> = {
+    Tecnologia: ["Projeto Faísca", "Nexo Pocket", "Assistente Aurora", "Central Pulse"],
+    Alimentação: ["Caixa Surpresa", "Menu da Madrugada", "Clube do Sabor", "Receita Secreta"],
+    Varejo: ["Coleção Bastidores", "Clube Achados", "Linha Virada", "Provador em Casa"],
+    Agência: ["Campanha Sem Reunião", "Estúdio Relâmpago", "Marca em 7 Dias", "Projeto Holofote"],
+  };
+  const name = ideaNames[company.sector][(week + employee.id) % ideaNames[company.sector].length];
+  const baseSuccess = Math.round(clamp(
+    employee.skill * .48 +
+      employee.morale * .18 +
+      employee.loyalty * .1 +
+      employee.relation * .12 +
+      economy.confidence * .12 -
+      7,
+    22,
+    86,
+  ));
+  const budget = Math.round((11000 + employee.skill * 260) / 1000) * 1000;
+  const recurring = Math.round((6500 + employee.skill * 175) / 500) * 500;
+  const makeProject = (pilot: boolean): Project => {
+    const successChance = clamp(baseSuccess + (pilot ? 9 : 0), 20, 92);
+    const promising = Math.random() * 100 <= successChance;
+    return {
+      id: Date.now() + employee.id + week,
+      name: pilot ? `${name} · protótipo` : name,
+      progress: pilot ? 12 : 0,
+      quality: promising ? 58 + Math.round(employee.skill / 8) : 34 + Math.round(employee.skill / 12),
+      budget: pilot ? Math.round(budget * .55) : budget,
+      reward: promising ? Math.round(recurring * 2.1) : Math.round(recurring * .7),
+      risk: promising ? Math.max(14, 52 - Math.round(successChance / 2)) : Math.min(82, 102 - successChance),
+      status: "ativo",
+      kind: "produto",
+      recurring: promising ? recurring : Math.round(recurring * .32),
+      lifecycle: "desenvolvimento",
+      marketStage: "lancamento",
+      marketWeeks: 0,
+      productPrice: company.price,
+      productMarketing: 0,
+      version: 1,
+      patented: false,
+      rightsOwned: 100,
+      royaltyRevenue: 0,
+      proposedByEmployeeId: employee.id,
+      proposedByEmployeeName: employee.name,
+      estimatedSuccess: Math.round(successChance),
+    };
+  };
+  const accept = (state: GameState, pilot: boolean): GameState => {
+    const project = makeProject(pilot);
+    return {
+      ...state,
+      companies: state.companies.map((item) => item.id !== company.id ? item : ({
+        ...item,
+        cash: item.cash - project.budget,
+        projects: [...item.projects, project],
+        employees: item.employees.map((person) => person.id !== employee.id ? person : ({
+          ...person,
+          morale: clamp(person.morale + (pilot ? 5 : 10)),
+          loyalty: clamp(person.loyalty + (pilot ? 4 : 8)),
+          relation: clamp(person.relation + (pilot ? 5 : 10)),
+          memories: addCharacterMemory(person.memories, characterMemory(state.week, "produto", pilot ? "Você permitiu que eu provasse minha ideia em pequena escala." : "Você confiou na minha ideia e colocou recursos para transformá-la em produto.", pilot ? "confiante" : "orgulhoso", pilot ? 6 : 11, pilot ? 68 : 86)),
+        })),
+      })),
+      news: [{ id: Date.now() + project.id, week: state.week, category: "pessoas", headline: `${employee.name} convence ${company.name} a testar ${project.name}`, body: `A ideia nasceu dentro da equipe e recebeu ${money.format(project.budget)}. A estimativa interna apontava ${Math.round(project.estimatedSuccess ?? baseSuccess)}% de chance de sucesso.`, impact: "neutro" as const }, ...state.news].slice(0, 60),
+    };
+  };
+  return {
+    id: `employee-product-${company.id}-${employee.id}-${week}`,
+    from: employee.name,
+    role: `${employee.role} · ${company.name}`,
+    initials: employee.initials,
+    color: employee.color,
+    subject: `Eu tive uma ideia: ${name}`,
+    body: `Preparei uma proposta de ${money.format(budget)}. Pelos testes iniciais, vejo ${baseSuccess}% de chance de dar certo e ${100 - baseSuccess}% de dar errado. Se funcionar, pode gerar cerca de ${money.format(recurring)} por semana. Helena disse que a coragem da ideia é inversamente proporcional ao número de slides.`,
+    choices: [
+      { label: `Apostar na ideia · ${money.format(budget)}`, tone: "good", hint: `${baseSuccess}% de sucesso · melhora forte na relação`, result: `${employee.name} recebeu sinal verde para transformar a ideia em produto.`, effect: (state) => accept(state, false) },
+      { label: `Pedir um protótipo · ${money.format(Math.round(budget * .55))}`, hint: `${Math.min(92, baseSuccess + 9)}% de sucesso · ganho moderado de confiança`, result: `${employee.name} poderá provar a ideia com menos dinheiro e risco.`, effect: (state) => accept(state, true) },
+      { label: "Não vamos fazer isso", tone: "risk", hint: "Sem custo · moral, lealdade e relação podem cair", result: `${employee.name} guardou a apresentação — e não pareceu feliz com a decisão.`, effect: (state) => ({ ...state, companies: state.companies.map((item) => item.id !== company.id ? item : ({ ...item, employees: item.employees.map((person) => person.id !== employee.id ? person : ({ ...person, morale: clamp(person.morale - 6), loyalty: clamp(person.loyalty - 5), relation: clamp(person.relation - 7), memories: addCharacterMemory(person.memories, characterMemory(state.week, "produto", "Você recusou a ideia em que eu acreditava sem me dar espaço para testá-la.", "magoado", -9, 78)) })) })) }) },
     ],
   };
 }
@@ -3335,6 +3434,39 @@ const formatIndicatorValue = (value: number, format: IndicatorChange["format"]) 
       ? `${Math.round(value)}%`
       : Math.round(value).toLocaleString("pt-BR");
 
+function buildWeeklyAdvice(report: CompanyWeeklyReport, company: Company): WeeklyAdvice[] {
+  const indicator = (key: IndicatorChange["key"]) => report.indicators.find((item) => item.key === key);
+  const revenue = indicator("revenue");
+  const profit = indicator("profit");
+  const cash = indicator("cash");
+  const customers = indicator("customers");
+  const stress = indicator("stress");
+  const morale = indicator("morale");
+  const advice: WeeklyAdvice[] = [];
+  if (revenue && revenue.delta < -Math.max(2500, Math.abs(revenue.before) * .04)) {
+    advice.push({ tone: "urgente", title: `O faturamento caiu ${money.format(Math.abs(revenue.delta))}`, detail: company.marketing < 5000 ? "Seu marketing está baixo. Aumente aos poucos e observe clientes antes de fazer uma aposta grande." : "Marketing já existe; revise o preço e confira se a equipe consegue atender a demanda.", action: "estrategia", actionLabel: "Revisar preço e marketing" });
+  }
+  if (profit && profit.after < 0) {
+    advice.push({ tone: "urgente", title: `A operação perdeu ${money.format(Math.abs(profit.after))}`, detail: company.debt > 0 ? "Dívida e custos estão consumindo o resultado. Evite outro projeto caro até recuperar margem." : "A receita não está pagando equipe, marketing e estrutura. Crescer agora pode ampliar o prejuízo.", action: "estrategia", actionLabel: "Abrir estratégia" });
+  }
+  if (customers && customers.delta < 0) {
+    advice.push({ tone: "atencao", title: `${Math.abs(Math.round(customers.delta))} clientes saíram nesta semana`, detail: "Confira reputação, preço e produtos concorrentes antes de simplesmente aumentar anúncios.", action: "mercado", actionLabel: "Observar o mercado" });
+  }
+  if (stress && (stress.after >= 72 || stress.delta >= 4)) {
+    advice.push({ tone: stress.after >= 84 ? "urgente" : "atencao", title: `A equipe está com ${Math.round(stress.after)}% de estresse`, detail: "Descanso pontual, menos projetos simultâneos ou uma conversa salarial custam menos que uma saída inesperada.", action: "pessoas", actionLabel: "Conversar com a equipe" });
+  }
+  if (cash && cash.after < 50000) {
+    advice.push({ tone: cash.after < 0 ? "urgente" : "atencao", title: `O caixa caiu para ${money.format(cash.after)}`, detail: "Preserve liquidez. Pause novas apostas e procure capital apenas se houver um plano claro para pagar ou crescer.", action: "estrategia", actionLabel: "Proteger o caixa" });
+  }
+  if (!company.projects.some((project) => project.status === "ativo") && (company.productRevenue ?? 0) < 10000 && company.cash >= 70000) {
+    advice.push({ tone: "positivo", title: "Sua equipe tem espaço para uma nova aposta", detail: "Não há projeto ativo e o caixa permite estudar um produto sem colocar a operação inteira em risco.", action: "projetos", actionLabel: "Avaliar novo projeto" });
+  }
+  if (!advice.length || (revenue && revenue.delta > 0 && profit && profit.after >= 0 && morale && morale.after >= 60)) {
+    advice.push({ tone: "positivo", title: "A empresa está respondendo bem", detail: "Não mude tudo por ansiedade. Preserve o que funcionou e acompanhe a próxima semana antes de acelerar.", action: "nenhuma", actionLabel: "Continuar a semana" });
+  }
+  return advice.slice(0, 3);
+}
+
 function makeOpeningMessage(): StoryMessage {
   return {
     id: "opening",
@@ -3693,6 +3825,12 @@ export default function Home() {
     ?? selectedWeeklyReport?.companies.find((report) => report.companyId === game.activeCompanyId)
     ?? selectedWeeklyReport?.companies[0]
     ?? null;
+  const advisedCompany = selectedCompanyReport
+    ? game.companies.find((company) => company.id === selectedCompanyReport.companyId) ?? null
+    : null;
+  const weeklyAdvice = selectedCompanyReport && advisedCompany
+    ? buildWeeklyAdvice(selectedCompanyReport, advisedCompany)
+    : [];
   const latestActiveReport = game.weeklyReports?.[0]?.companies.find((report) => report.companyId === game.activeCompanyId) ?? null;
   const selectedPartner = active?.partners?.find((partner) => partner.id === selectedPartnerId) ?? null;
   const [leadershipTitle, leadershipDescription] = leadershipArchetype(game.leadershipIdentity);
@@ -4086,6 +4224,16 @@ export default function Home() {
         ? s
         : { ...s, unread: [...s.unread, message] },
     );
+
+  const followWeeklyAdvice = (advice: WeeklyAdvice) => {
+    if (advisedCompany)
+      setGame((state) => ({ ...state, activeCompanyId: advisedCompany.id }));
+    if (advice.action === "pessoas") setView("pessoas");
+    if (advice.action === "projetos") setView("projetos");
+    if (advice.action === "mercado") setView("cidade");
+    if (advice.action === "estrategia") setView("escritorio");
+    setDialog(null);
+  };
 
   const storyBeat = (next: GameState, company: Company, valuation: number) => {
     if (next.week === 4)
@@ -4702,6 +4850,9 @@ export default function Home() {
             ceoCustomerBoost,
         );
         const evolvedEmployees = company.employees.map((e) => {
+          const creditedProduct = newlyCompleted.find(
+            (project) => project.proposedByEmployeeId === e.id,
+          );
           const payGap = e.salary / Math.max(1, e.market);
           const onLeave = (e.leaveWeeks ?? 0) > 0;
           const workload =
@@ -4744,22 +4895,38 @@ export default function Home() {
                 careerStagnation +
                 (Math.random() * 2 - 1) +
                 effectValue("moraleDelta") +
-                ceoMoraleBoost,
+                ceoMoraleBoost +
+                (creditedProduct ? 9 : 0),
             ),
             loyalty: clamp(
               e.loyalty +
                 (company.culture === "Pessoas" ? 0.6 : 0) -
                 careerStagnation -
-                (stress > 82 ? 1 : 0),
+                (stress > 82 ? 1 : 0) +
+                (creditedProduct ? 7 : 0),
             ),
             relation: clamp(
               e.relation +
                 (company.culture === "Pessoas" ? 0.5 : 0) +
-                (Math.random() - 0.5),
+                (Math.random() - 0.5) +
+                (creditedProduct ? 6 : 0),
             ),
             stress: clamp(
               stress + effectValue("stressDelta") - ceoStressRelief,
             ),
+            memories: creditedProduct
+              ? addCharacterMemory(
+                  e.memories,
+                  characterMemory(
+                    nextWeek,
+                    "produto",
+                    `Minha ideia, ${creditedProduct.name}, chegou ao mercado com meu nome ligado ao projeto.`,
+                    "orgulhoso",
+                    12,
+                    90,
+                  ),
+                )
+              : e.memories,
           };
         });
         const employees = evolvedEmployees.filter((e) => {
@@ -5553,6 +5720,32 @@ export default function Home() {
         Math.random() < 0.2 + Math.max(0, -characterMemoryScore(crisisEmployee.memories, nextWeek)) / 120
           ? employeeCrisisMessage(crisisEmployee, activeCompany.id)
           : null;
+      const ideaEmployee = activeCompany.employees
+        .filter((employee) =>
+          (employee.leaveWeeks ?? 0) === 0 &&
+          employee.skill >= 42 &&
+          employee.loyalty >= 32 &&
+          !employee.memories?.some((memory) => memory.kind === "produto" && nextWeek - memory.week < 32),
+        )
+        .sort((a, b) => b.skill + b.relation / 2 - (a.skill + a.relation / 2))[0];
+      const employeeIdeaMessage =
+        !dynastyMessage &&
+        !familyMessage &&
+        !personalMessage &&
+        !nemesisMessage &&
+        !politicalMessage &&
+        !ceoProposalMessage &&
+        !employeeMessage &&
+        activeCompany.ceo === controlledExecutive &&
+        activeCompany.cash >= 65000 &&
+        activeCompany.projects.filter((project) => project.kind === "produto" && project.status === "ativo").length === 0 &&
+        ideaEmployee &&
+        nextWeek >= 8 &&
+        (nextWeek + activeCompany.id) % 13 === 0 &&
+        current.unread.length === 0 &&
+        Math.random() < .68
+          ? employeeProductIdeaMessage(ideaEmployee, activeCompany, economyRoll.economy, nextWeek)
+          : null;
       const narrativeMessage =
         !dynastyMessage &&
         !familyMessage &&
@@ -5561,6 +5754,7 @@ export default function Home() {
         !politicalMessage &&
         !ceoProposalMessage &&
         !employeeMessage &&
+        !employeeIdeaMessage &&
         nextWeek >= 5 &&
         nextWeek - (current.lastNarrativeWeek ?? 0) >= 6 &&
         current.unread.length === 0 &&
@@ -5889,6 +6083,8 @@ export default function Home() {
           ? [...current.unread, ceoProposalMessage]
           : employeeMessage
           ? [...current.unread, employeeMessage]
+          : employeeIdeaMessage
+          ? [...current.unread, employeeIdeaMessage]
           : narrativeMessage
             ? [...current.unread, narrativeMessage]
             : current.unread,
@@ -5949,6 +6145,12 @@ export default function Home() {
       else if (employeeMessage)
         setTimeout(() => {
           setSelectedMessage(employeeMessage);
+          setDialog("inbox");
+          setSpeed(0);
+        }, 100);
+      else if (employeeIdeaMessage)
+        setTimeout(() => {
+          setSelectedMessage(employeeIdeaMessage);
           setDialog("inbox");
           setSpeed(0);
         }, 100);
@@ -8174,7 +8376,7 @@ export default function Home() {
             setReportCompanyId(game.activeCompanyId);
             setDialog("weekly-report");
           }}>
-            Por que mudou? {latestActiveReport?.severity === "critico" && <i>!</i>}
+            Conselho da semana {latestActiveReport?.severity === "critico" && <i>!</i>}
           </button>
           <div className="time-controls" aria-label="Velocidade do tempo">
             <button
@@ -8374,7 +8576,7 @@ export default function Home() {
               setSelectedReportWeek(game.weeklyReports?.[0]?.week ?? null);
               setReportCompanyId(active.id);
               setDialog("weekly-report");
-            }}>Entender os indicadores{latestActiveReport?.severity === "critico" ? " · atenção" : ""}</button>
+            }}>Ver sugestão da semana{latestActiveReport?.severity === "critico" ? " · atenção" : ""}</button>
             {!active.sold && !active.bankrupt && isCEO && (
               <div className="emergency-actions">
                 <button onClick={() => setDialog("recovery")}>
@@ -9195,34 +9397,23 @@ export default function Home() {
       )}
       {dialog === "weekly-report" && selectedWeeklyReport && selectedCompanyReport && (
         <GameModal onClose={() => setDialog(null)} wide>
-          <div className="weekly-report-room">
-            <header className="report-title">
-              <div><small>RELATÓRIO EXPLICÁVEL · SEMANA {selectedWeeklyReport.week}</small><h2>{selectedWeeklyReport.headline}</h2><p>Cada número mostra o valor anterior, o atual e os fatores que realmente participaram da mudança.</p></div>
+          <div className="weekly-advice-room">
+            <header className="weekly-advice-title">
+              <div className="advisor-avatar">HD</div>
+              <div><small>CONSELHO DA SEMANA {selectedWeeklyReport.week}</small><h2>{selectedCompanyReport.severity === "critico" ? "Temos algo importante para resolver." : selectedCompanyReport.severity === "atencao" ? "Eu olharia isto antes de avançar." : "A empresa está respirando. Não complique."}</h2><p>{selectedCompanyReport.summary}</p></div>
               <span className={`report-severity ${selectedCompanyReport.severity}`}>{selectedCompanyReport.severity}</span>
             </header>
-            <nav className="report-history" aria-label="Histórico de relatórios">
-              {(game.weeklyReports ?? []).slice(0, 10).map((report) => <button className={selectedWeeklyReport.week === report.week ? "active" : ""} onClick={() => setSelectedReportWeek(report.week)} key={report.week}>S{report.week}</button>)}
-            </nav>
-            <section className="economy-explanation">
-              <div><small>ECONOMIA</small><b>{selectedWeeklyReport.economyBefore} <i>→</i> {selectedWeeklyReport.economyAfter}</b></div>
-              <div><small>CONFIANÇA DO MERCADO</small><b>{selectedWeeklyReport.confidenceBefore} <i>→</i> {selectedWeeklyReport.confidenceAfter}</b><span>{selectedWeeklyReport.confidenceAfter - selectedWeeklyReport.confidenceBefore > 0 ? "+" : ""}{selectedWeeklyReport.confidenceAfter - selectedWeeklyReport.confidenceBefore} pontos</span></div>
-              <p>Economia afeta demanda, custos, juros, faturamento e valor de todas as empresas — mesmo quando você não toma nenhuma decisão.</p>
-            </section>
-            {selectedWeeklyReport.companies.length > 1 && <nav className="report-company-tabs">
-              {selectedWeeklyReport.companies.map((report) => <button className={`${report.companyId === selectedCompanyReport.companyId ? "active" : ""} ${report.severity}`} onClick={() => setReportCompanyId(report.companyId)} key={report.companyId}><b>{report.companyName}</b><span>{report.severity}</span></button>)}
+            {selectedWeeklyReport.companies.length > 1 && <nav className="advice-company-tabs">
+              {selectedWeeklyReport.companies.map((report) => <button className={report.companyId === selectedCompanyReport.companyId ? "active" : ""} onClick={() => setReportCompanyId(report.companyId)} key={report.companyId}>{report.companyName}</button>)}
             </nav>}
-            <div className="report-company-summary"><small>LEITURA EXECUTIVA · {selectedCompanyReport.companyName.toUpperCase()}</small><p>{selectedCompanyReport.summary}</p></div>
-            <section className="indicator-explanations">
-              {selectedCompanyReport.indicators.map((indicator) => {
-                const favorable = indicator.delta === 0 ? "neutral" : indicator.key === "stress" ? indicator.delta < 0 ? "good" : "bad" : indicator.delta > 0 ? "good" : "bad";
-                return <article className={favorable} key={indicator.key}>
-                  <header><div><small>{indicator.label}</small><b>{formatIndicatorValue(indicator.after, indicator.format)}</b></div><span>{indicator.delta > 0 ? "+" : ""}{formatIndicatorValue(indicator.delta, indicator.format)}</span></header>
-                  <div className="indicator-comparison"><span>Antes <b>{formatIndicatorValue(indicator.before, indicator.format)}</b></span><i>→</i><span>Agora <b>{formatIndicatorValue(indicator.after, indicator.format)}</b></span></div>
-                  <div className="indicator-reasons"><small>POR QUE MUDOU</small>{indicator.reasons.map((reason, index) => <div className={reason.direction} key={`${reason.title}-${index}`}><i>{reason.direction === "positivo" ? "+" : reason.direction === "negativo" ? "−" : "•"}</i><p><b>{reason.title}</b><span>{reason.detail}</span></p></div>)}</div>
-                </article>;
-              })}
+            <section className="advisor-quote"><b>Helena:</b> “Você não precisa entender nove gráficos. Precisa decidir qual incêndio merece o extintor primeiro.”</section>
+            <section className="weekly-advice-grid">
+              {weeklyAdvice.map((advice) => <article className={advice.tone} key={advice.title}><small>{advice.tone === "urgente" ? "FAÇA AGORA" : advice.tone === "atencao" ? "VALE OLHAR" : "BOA OPORTUNIDADE"}</small><h3>{advice.title}</h3><p>{advice.detail}</p><button onClick={() => followWeeklyAdvice(advice)}>{advice.actionLabel}</button></article>)}
             </section>
-            <footer className="report-legend"><b>Como usar:</b> observe primeiro os fatores repetidos em vários indicadores. Uma economia fraca pode reduzir clientes, faturamento, lucro, caixa e valuation ao mesmo tempo; corrigir somente preços talvez não resolva a causa principal.</footer>
+            <section className="weekly-pulse">
+              {selectedCompanyReport.indicators.filter((item) => ["revenue", "profit", "customers", "stress"].includes(item.key)).map((item) => <div key={item.key}><small>{item.label}</small><b>{formatIndicatorValue(item.after, item.format)}</b><span className={item.key === "stress" ? item.delta > 0 ? "bad" : "good" : item.delta < 0 ? "bad" : "good"}>{item.delta > 0 ? "+" : ""}{formatIndicatorValue(item.delta, item.format)}</span></div>)}
+            </section>
+            <footer className="weekly-advice-footer"><span>Economia: <b>{selectedWeeklyReport.economyAfter}</b></span><span>Confiança do mercado: <b>{selectedWeeklyReport.confidenceAfter}/100</b></span><button onClick={() => setDialog(null)}>Entendi. Voltar ao jogo.</button></footer>
           </div>
         </GameModal>
       )}
@@ -9274,7 +9465,7 @@ export default function Home() {
                         onClick={() => chooseMessage(c)}
                       >
                         {c.label}
-                        <span>Você descobrirá as consequências depois.</span>
+                        <span>{c.hint ?? "Você descobrirá as consequências depois."}</span>
                       </button>
                     ))}
                   </div>
