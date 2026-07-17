@@ -182,6 +182,7 @@ type Company = {
   ceoRivalCompanyId?: number;
   ceoDemandCooldown?: number;
   ceoProductCooldown?: number;
+  ceoHireCooldown?: number;
   partners?: BusinessPartner[];
 };
 type CapitalProvider = {
@@ -1541,6 +1542,115 @@ function ceoProductProposalMessage(company: Company, product: Project): StoryMes
   };
 }
 
+const ceoHireNames = [
+  "André Luz", "Camila Torres", "Diego Nunes", "Elisa Moraes", "Felipe Vidal",
+  "Giovana Reis", "Hugo Pires", "Iara Campos", "João Valente", "Karina Alves",
+  "Lucas Serra", "Marina Dutra", "Nicolas Barreto", "Olívia Teles", "Pedro Lins",
+  "Renata Paiva", "Samuel Faria", "Talita Neves", "Vinícius Porto", "Yasmin Leal",
+];
+
+function createCEOHireCandidate(company: Company, week: number, style: CEOStyle): Employee {
+  const roles: Record<CEOStyle, string[]> = {
+    crescimento: ["Comercial", "Marketing", "Parcerias"],
+    eficiencia: ["Financeiro", "Operações", "Controladoria"],
+    inovacao: ["Engenharia", "Produto", "Pesquisa"],
+    pessoas: ["Pessoas e Cultura", "Atendimento", "Desenvolvimento Humano"],
+  };
+  const traits: Record<CEOStyle, string[]> = {
+    crescimento: ["Persuasivo", "Competitivo", "Incansável"],
+    eficiencia: ["Analítico", "Disciplinado", "Cauteloso"],
+    inovacao: ["Inventivo", "Curioso", "Visionário"],
+    pessoas: ["Empático", "Conciliador", "Inspirador"],
+  };
+  const ambitions: Record<CEOStyle, string[]> = {
+    crescimento: ["Quer liderar uma expansão", "Busca bônus por resultado"],
+    eficiencia: ["Quer organizar uma operação complexa", "Busca estabilidade e autonomia"],
+    inovacao: ["Quer assinar um produto importante", "Busca liberdade para experimentar"],
+    pessoas: ["Quer construir uma cultura admirada", "Busca formar novos líderes"],
+  };
+  const seed = week * 7 + company.id * 11 + company.employees.length * 3;
+  const availableNames = ceoHireNames.filter((name) => !company.employees.some((employee) => employee.name === name));
+  const namePool = availableNames.length ? availableNames : ceoHireNames;
+  const name = namePool[seed % namePool.length];
+  const role = roles[style][seed % roles[style].length];
+  const skill = 70 + (seed % 22);
+  const market = Math.round((3900 + skill * 38 + (style === "inovacao" ? 700 : 0)) / 100) * 100;
+  const salary = Math.round((market * (0.91 + (seed % 5) / 100)) / 100) * 100;
+  return {
+    id: Date.now() + company.id * 1000 + week,
+    name,
+    initials: name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
+    role,
+    salary,
+    market,
+    skill,
+    morale: 76 + (seed % 11),
+    loyalty: 58 + (seed % 25),
+    trait: traits[style][seed % traits[style].length],
+    ambition: ambitions[style][seed % ambitions[style].length],
+    color: ["#6f86a8", "#a8758a", "#6f9b82", "#b28a59", "#7d72ad"][seed % 5],
+    relation: 52,
+    stress: 14 + (seed % 9),
+    weeks: 0,
+    warnings: 0,
+    leaveWeeks: 0,
+  };
+}
+
+function ceoHireProposalMessage(company: Company, candidate: Employee, reason: string): StoryMessage {
+  const hireCandidate = (state: GameState, negotiated = false): GameState => {
+    const offeredSalary = negotiated ? Math.round((candidate.salary * .88) / 100) * 100 : candidate.salary;
+    const accepts = !negotiated || Math.random() < clamp(.72 + (company.reputation - 50) / 180 - (candidate.skill - 75) / 160);
+    return {
+      ...state,
+      companies: state.companies.map((item) => {
+        if (item.id !== company.id || item.employees.some((employee) => employee.name === candidate.name)) return item;
+        if (!accepts) return {
+          ...item,
+          ceoTrust: clamp((item.ceoTrust ?? 65) - 1),
+          ceoHireCooldown: 5,
+          ceoLastDecision: `${candidate.name} recusou a contraproposta da holding`,
+          ceoHistory: [`Semana ${state.week}: contraproposta de ${money.format(offeredSalary)} recusada por ${candidate.name}.`, ...(item.ceoHistory ?? [])].slice(0, 8),
+        };
+        return {
+          ...item,
+          cash: item.cash - 9000,
+          employees: [...item.employees, {
+            ...candidate,
+            salary: offeredSalary,
+            morale: negotiated ? clamp(candidate.morale - 3) : candidate.morale,
+            loyalty: negotiated ? clamp(candidate.loyalty - 4) : candidate.loyalty,
+            relation: negotiated ? 46 : 55,
+            memories: [characterMemory(state.week, "contratacao", negotiated ? "Aceitei entrar depois de uma negociação dura com a holding." : `A holding aprovou minha contratação indicada por ${company.ceo}.`, negotiated ? "cauteloso" : "confiante", negotiated ? 1 : 5, 68)],
+          }],
+          ceoTrust: clamp((item.ceoTrust ?? 65) + (negotiated ? 1 : 4)),
+          ceoLoyalty: clamp((item.ceoLoyalty ?? 65) + (negotiated ? 0 : 2)),
+          ceoHireCooldown: 12,
+          ceoLastDecision: `Contratou ${candidate.name} para ${candidate.role}`,
+          ceoHistory: [`Semana ${state.week}: ${candidate.name} contratado para ${candidate.role} por ${money.format(offeredSalary)} mensais.`, ...(item.ceoHistory ?? [])].slice(0, 8),
+          ceoMemories: addCharacterMemory(item.ceoMemories, characterMemory(state.week, "contratacao", negotiated ? "Você negociou minha indicação, mas permitiu reforçar a equipe." : "Você confiou na pessoa que indiquei para reforçar a equipe.", negotiated ? "cauteloso" : "grato", negotiated ? 2 : 7, 70)),
+        };
+      }),
+      news: accepts ? [{ id: Date.now() + candidate.id, week: state.week, category: "pessoas" as const, headline: `${candidate.name} reforça a ${company.name}`, body: `${company.ceo} convenceu a holding a contratar um profissional de ${candidate.role.toLowerCase()} por ${money.format(offeredSalary)} mensais.`, impact: "positivo" as const }, ...state.news].slice(0, 60) : state.news,
+      log: [accepts ? `${candidate.name} aceitou entrar na ${company.name} por ${money.format(offeredSalary)} mensais.` : `${candidate.name} recusou a contraproposta de ${money.format(offeredSalary)} mensais.`, ...state.log].slice(0, 40),
+    };
+  };
+  return {
+    id: `ceo-hire-${company.id}-${candidate.id}`,
+    from: company.ceo ?? "CEO",
+    role: `CEO da ${company.name}`,
+    initials: (company.ceo ?? "CEO").split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
+    color: "#6f86a8",
+    subject: `Quero contratar ${candidate.name}`,
+    body: `${reason} Encontrei ${candidate.name}, ${candidate.trait.toLowerCase()}, com competência ${candidate.skill}% para ${candidate.role}. A pretensão é ${money.format(candidate.salary)} por mês, abaixo do valor de mercado de ${money.format(candidate.market)}. Helena lembra que “candidato perfeito” costuma durar até a segunda-feira de integração.`,
+    choices: [
+      { label: `Aprovar contratação · ${money.format(candidate.salary)}/mês`, tone: "good", hint: "R$ 9 mil de integração · contratação garantida", result: `${company.ceo} recebeu autorização para fechar a contratação.`, effect: (state) => hireCandidate(state) },
+      { label: `Oferecer ${money.format(Math.round((candidate.salary * .88) / 100) * 100)}/mês`, hint: "Economiza na folha · existe risco de recusa", result: `${company.ceo} apresentará uma contraproposta ao candidato.`, effect: (state) => hireCandidate(state, true) },
+      { label: "Não contratar agora", tone: "risk", hint: "Preserva o caixa · CEO e equipe podem se frustrar", result: `${company.ceo} terá de operar com a equipe atual.`, effect: (state) => ({ ...state, companies: state.companies.map((item) => item.id !== company.id ? item : ({ ...item, ceoTrust: clamp((item.ceoTrust ?? 65) - 4), ceoLoyalty: clamp((item.ceoLoyalty ?? 65) - 2), ceoHireCooldown: 8, ceoLastDecision: `Teve a contratação de ${candidate.name} recusada`, ceoHistory: [`Semana ${state.week}: contratação para ${candidate.role} recusada pela holding.`, ...(item.ceoHistory ?? [])].slice(0, 8), ceoMemories: addCharacterMemory(item.ceoMemories, characterMemory(state.week, "contratacao", "Você recusou o reforço que considerei necessário para cumprir minha meta.", "magoado", -6, 72)) })) }) },
+    ],
+  };
+}
+
 function employeeProductIdeaMessage(
   employee: Employee,
   company: Company,
@@ -1715,6 +1825,8 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
     ceoReputation: 65,
     ceoEquity: 0,
     ceoDemandCooldown: 0,
+    ceoProductCooldown: 0,
+    ceoHireCooldown: 0,
     partners: createBusinessPartners(sector, id),
   };
 }
@@ -3753,6 +3865,8 @@ export default function Home() {
             ceoAllianceCompanyId: c.ceoAllianceCompanyId,
             ceoRivalCompanyId: c.ceoRivalCompanyId,
             ceoDemandCooldown: c.ceoDemandCooldown ?? 0,
+            ceoProductCooldown: c.ceoProductCooldown ?? 0,
+            ceoHireCooldown: c.ceoHireCooldown ?? 0,
             partners: c.partners ?? createBusinessPartners(c.sector, c.id),
             projects: c.projects.map((p) => ({
               ...p,
@@ -4529,6 +4643,10 @@ export default function Home() {
           0,
           (company.ceoProductCooldown ?? 0) - 1,
         );
+        let ceoHireCooldown = Math.max(
+          0,
+          (company.ceoHireCooldown ?? 0) - 1,
+        );
         let ceoAllianceCompanyId = company.ceoAllianceCompanyId;
         let ceoRivalCompanyId = company.ceoRivalCompanyId;
         let ceoLastDecision =
@@ -4929,7 +5047,7 @@ export default function Home() {
               : e.memories,
           };
         });
-        const employees = evolvedEmployees.filter((e) => {
+        let employees = evolvedEmployees.filter((e) => {
           const leaves =
             e.loyalty < 18 && (e.weeks ?? 0) > 8 && Math.random() < 0.24;
           if (leaves)
@@ -4962,6 +5080,67 @@ export default function Home() {
             body: `${first.name} e ${second.name} divergiram sobre prioridades. A liderança terá de reconstruir a confiança.`,
             impact: "negativo",
           });
+        }
+        const activeProjectCount = nextProjects.filter((project) => project.status === "ativo").length;
+        const marketProductCount = nextProjects.filter((project) => project.kind === "produto" && project.lifecycle === "mercado").length;
+        const demandDivisor = company.sector === "Agência" ? 18 : company.sector === "Alimentação" ? 700 : company.sector === "Varejo" ? 450 : 180;
+        const targetTeamSize = Math.min(10, Math.max(3, 2 + activeProjectCount * 2 + Math.floor(marketProductCount / 2) + Math.floor(company.customers / demandDivisor)));
+        const averageStress = employees.length ? employees.reduce((sum, employee) => sum + (employee.stress ?? 0), 0) / employees.length : 100;
+        const hireReason = employees.length < 3
+          ? "A equipe ficou pequena demais para sustentar a operação."
+          : averageStress > 58
+            ? `O estresse médio chegou a ${Math.round(averageStress)}% e precisamos dividir a carga.`
+            : activeProjectCount >= Math.max(1, Math.ceil(employees.length / 2))
+              ? `Temos ${activeProjectCount} projetos ativos para uma equipe de ${employees.length} pessoas.`
+              : "A demanda cresceu além da capacidade segura da equipe.";
+        const plannedHire = createCEOHireCandidate({ ...company, employees }, nextWeek, ceoStyle);
+        const hiringReserve = 45000 + plannedHire.salary * 8 + 9000;
+        const canHire =
+          delegated &&
+          (company.ceoTenure ?? 0) >= 4 &&
+          ceoHireCooldown === 0 &&
+          employees.length < targetTeamSize &&
+          employees.length < 10 &&
+          company.cash - ceoExtraCost >= hiringReserve &&
+          (cm.profit >= -plannedHire.salary || employees.length < 3) &&
+          (averageStress > 58 || activeProjectCount >= Math.max(1, Math.ceil(employees.length / 2)) || employees.length < 3) &&
+          (nextWeek + company.id) % (ceoStyle === "crescimento" ? 9 : ceoStyle === "pessoas" ? 10 : 12) === 0;
+        if (canHire && company.autonomy === "independente") {
+          const badHireChance = .08 + (ceoTrust < 45 ? .08 : 0) + (ceoStyle === "crescimento" ? .03 : 0);
+          const badHire = Math.random() < badHireChance;
+          const autonomousHire = {
+            ...plannedHire,
+            skill: badHire ? Math.max(48, plannedHire.skill - 22) : plannedHire.skill,
+            morale: badHire ? 64 : plannedHire.morale,
+            loyalty: badHire ? 45 : plannedHire.loyalty,
+            trait: badHire ? "Boa entrevista, execução incerta" : plannedHire.trait,
+            memories: [characterMemory(nextWeek, "contratacao", `${company.ceo} me contratou com autonomia para reforçar a ${company.name}.`, "confiante", 4, 70)],
+          };
+          employees = [...employees, autonomousHire];
+          ceoExtraCost += 9000;
+          ceoHireCooldown = 12;
+          ceoInfluence = clamp(ceoInfluence + 1);
+          ceoTrust = clamp(ceoTrust + (badHire ? -3 : 1));
+          ceoLastDecision = `Contratou ${autonomousHire.name} para ${autonomousHire.role}`;
+          ceoHistory = [`Semana ${nextWeek}: contratou ${autonomousHire.name} para ${autonomousHire.role} por ${money.format(autonomousHire.salary)} mensais.`, ...ceoHistory].slice(0, 8);
+          weeklyNews.push({
+            id: Date.now() + company.id + autonomousHire.id,
+            week: nextWeek,
+            category: "pessoas",
+            headline: `${company.ceo} reforça a equipe da ${company.name}`,
+            body: `${hireReason} Com autonomia independente, o CEO contratou ${autonomousHire.name} para ${autonomousHire.role} por ${money.format(autonomousHire.salary)} mensais.${badHire ? " Nos bastidores, alguns gestores questionam se a boa entrevista se converterá em entrega." : " A equipe recebeu o reforço com expectativa positiva."}`,
+            impact: badHire ? "neutro" : "positivo",
+          });
+        } else if (
+          canHire &&
+          company.autonomy === "supervisionada" &&
+          !ceoProposalMessage &&
+          current.unread.length === 0
+        ) {
+          ceoProposalMessage = ceoHireProposalMessage({ ...company, ceoStyle }, plannedHire, hireReason);
+          ceoHireCooldown = 5;
+          ceoLastDecision = `Solicitou autorização para contratar ${plannedHire.name}`;
+          ceoHistory = [`Semana ${nextWeek}: pediu reforço para ${plannedHire.role}.`, ...ceoHistory].slice(0, 8);
         }
         const exposedProduct = nextProjects.find(
           (p) =>
@@ -5227,6 +5406,7 @@ export default function Home() {
           ceoReputation,
           ceoDemandCooldown,
           ceoProductCooldown,
+          ceoHireCooldown,
           ceoAllianceCompanyId,
           ceoRivalCompanyId,
           ceoTenure: delegated ? (company.ceoTenure ?? 0) + 1 : 0,
@@ -10583,10 +10763,10 @@ export default function Home() {
                       <b>{policy}</b>
                       <span>
                         {policy === "centralizada"
-                          ? "CEO recomenda; holding decide."
+                          ? "Você mantém produtos e contratações sob controle direto."
                           : policy === "supervisionada"
-                            ? "CEO propõe produtos e aguarda aprovação."
-                            : "CEO cria produtos sozinho, com mais velocidade e risco."}
+                            ? "CEO propõe produtos e candidatos; você aprova ou negocia."
+                            : "CEO cria produtos e contrata sozinho, com limites e risco."}
                       </span>
                     </button>
                   ))}
@@ -10595,6 +10775,9 @@ export default function Home() {
                   <div><small>PIPELINE AUTÔNOMO</small><b>{holdingCompany.projects.filter((project) => project.kind === "produto" && project.status === "ativo").length} em desenvolvimento</b></div>
                   <div><small>PRODUTOS FATURANDO</small><b>{holdingCompany.projects.filter((project) => project.kind === "produto" && project.lifecycle === "mercado").length}</b></div>
                   <p>{holdingCompany.autonomy === "independente" ? `${holdingCompany.ceo} pode iniciar novos produtos dentro do orçamento sem pedir permissão.` : `${holdingCompany.ceo} enviará uma proposta quando enxergar espaço para um novo produto.`}{(holdingCompany.ceoProductCooldown ?? 0) > 0 ? ` Nova análise em aproximadamente ${holdingCompany.ceoProductCooldown} semanas.` : " O pipeline está disponível para uma nova análise."}</p>
+                  <div><small>EQUIPE SOB GESTÃO</small><b>{holdingCompany.employees.length} funcionários</b></div>
+                  <div><small>PRÓXIMA ANÁLISE DE PESSOAS</small><b>{(holdingCompany.ceoHireCooldown ?? 0) > 0 ? `em ${holdingCompany.ceoHireCooldown} semanas` : "disponível"}</b></div>
+                  <p>{holdingCompany.autonomy === "independente" ? `${holdingCompany.ceo} pode contratar quando houver sobrecarga, caixa para oito meses de salário e espaço na equipe.` : holdingCompany.autonomy === "supervisionada" ? `${holdingCompany.ceo} apresentará o candidato, salário e motivo; você poderá aprovar, negociar ou recusar.` : "Contratações continuam sob seu controle direto enquanto a gestão estiver centralizada."}</p>
                 </div>}
                 {holdingCompany.ceoHiddenIssue && <p className="hidden-issue">Sinal de alerta: existem inconsistências no relatório. Auditoria estimada em {holdingCompany.ceoHiddenWeeks} semanas.</p>}
                 {holdingCompany.ceo !== currentLeader && <div className="ceo-oversight"><button disabled={holdingCompany.cash < 25000} onClick={recognizeCompanyCEO}>Promover a sócio executivo · R$ 25 mil</button><button disabled={holdingCompany.cash < 20000} onClick={() => ceoOversightAction("auditoria")}>Auditar relatórios · R$ 20 mil</button><button disabled={holdingCompany.cash < 35000} onClick={() => ceoOversightAction("conselho")}>Articular conselho · R$ 35 mil</button><button className="danger-action" onClick={() => appointCompanyCEO(currentLeader)}>Demitir CEO e assumir</button></div>}
