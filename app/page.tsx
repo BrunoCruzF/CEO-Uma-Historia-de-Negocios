@@ -335,6 +335,15 @@ type GenerationMission = {
   completedWeek?: number;
 };
 type AchievementUnlock = { id: string; week: number; generation: number; title: string };
+type NarrativeDirectorMode = "calma" | "equilibrio" | "escalada" | "recuperacao" | "foco";
+type NarrativeDirectorState = {
+  mode: NarrativeDirectorMode;
+  tension: number;
+  crisisStreak: number;
+  quietStreak: number;
+  lastInterventionWeek: number;
+  lastReason: string;
+};
 type MessageChoice = {
   label: string;
   tone?: "good" | "risk";
@@ -557,6 +566,9 @@ type GameState = {
   generationArcHistory?: GenerationArcRecord[];
   generationMissions?: GenerationMission[];
   achievements?: AchievementUnlock[];
+  narrativeDirector?: NarrativeDirectorState;
+  tutorialSeenWeeks?: number[];
+  tutorialCompleted?: boolean;
   generationProfile?: GenerationProfile;
   mandateReviews?: MandateReview[];
   lastMandateReviewWeek?: number;
@@ -616,6 +628,7 @@ const difficultyProfiles: Record<GameDifficulty, { title: string; description: s
   executivo: { title: "Executivo", description: "A experiência equilibrada: decisões difíceis sem punições artificiais.", stress: 1, economyDemand: 1, economyCosts: 1, departure: 1, rival: 0, reward: 1 },
   implacavel: { title: "Implacável", description: "Crises pressionam margens, concorrentes reagem e pessoas toleram menos erros.", stress: 1.28, economyDemand: .965, economyCosts: 1.035, departure: 1.55, rival: .9, reward: 1.3 },
 };
+const narrativeModeLabels: Record<NarrativeDirectorMode, string> = { calma: "Execução tranquila", equilibrio: "Tensão equilibrada", escalada: "Algo está se formando", recuperacao: "Tempo de recuperação", foco: "Conflito em foco" };
 
 const characterMemory = (
   week: number,
@@ -2200,6 +2213,9 @@ const initialState: GameState = {
   generationArcHistory: [],
   generationMissions: [],
   achievements: [],
+  narrativeDirector: { mode: "equilibrio", tension: 28, crisisStreak: 0, quietStreak: 0, lastInterventionWeek: 0, lastReason: "A história está começando." },
+  tutorialSeenWeeks: [],
+  tutorialCompleted: false,
   mandateReviews: [],
   lastMandateReviewWeek: 0,
   dynastyEndingReady: false,
@@ -4305,6 +4321,103 @@ function buildWeeklyDigest(report: WeeklyReport | null, companies: Company[]): W
   return chosen.slice(0, 3);
 }
 
+function evolveNarrativeDirector(previous: NarrativeDirectorState | undefined, state: GameState, weeklyNews: NewsItem[], staffAlerts: StaffAlert[]): NarrativeDirectorState {
+  const before = previous ?? { mode: "equilibrio" as const, tension: 30, crisisStreak: 0, quietStreak: 0, lastInterventionWeek: 0, lastReason: "A história está começando." };
+  const negative = weeklyNews.filter((item) => item.impact === "negativo").length + staffAlerts.length;
+  const positive = weeklyNews.filter((item) => item.impact === "positivo").length;
+  const activeCrises = (state.auditCases ?? []).filter((item) => ["suspeita", "investigando", "comprovada"].includes(item.status)).length + (state.politicalArc ? 1 : 0);
+  const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+  const fragileCash = operating.some((company) => company.cash < 45000);
+  const crisisWeek = negative >= 2 || staffAlerts.length > 0 || activeCrises >= 2;
+  const quietWeek = negative === 0 && positive === 0 && state.generationArc?.status !== "ativo";
+  const crisisStreak = crisisWeek ? before.crisisStreak + 1 : Math.max(0, before.crisisStreak - 1);
+  const quietStreak = quietWeek ? before.quietStreak + 1 : 0;
+  const tension = clamp(before.tension * .62 + negative * 14 + activeCrises * 7 - positive * 5 + (fragileCash ? 9 : 0));
+  const mode: NarrativeDirectorMode = state.generationArc?.status === "ativo"
+    ? "foco"
+    : crisisStreak >= 2 || tension >= 76 || fragileCash
+      ? "recuperacao"
+      : quietStreak >= 3 || tension < 18
+        ? "escalada"
+        : tension < 34
+          ? "calma"
+          : "equilibrio";
+  const lastReason = mode === "foco"
+    ? `O conflito “${state.generationArc?.title}” está conduzindo os acontecimentos.`
+    : mode === "recuperacao"
+      ? fragileCash ? "O caixa de uma empresa está vulnerável; novos choques serão menos frequentes." : "Crises consecutivas pedem espaço para reação e reorganização."
+      : mode === "escalada"
+        ? "As últimas semanas tiveram poucas decisões; uma nova oportunidade ou rivalidade se aproxima."
+        : mode === "calma"
+          ? "A história entrou numa pausa curta para você executar sua estratégia."
+          : "Problemas e oportunidades estão em equilíbrio.";
+  return { ...before, mode, tension: Math.round(tension), crisisStreak, quietStreak, lastReason };
+}
+
+function directorInterventionMessage(state: GameState, director: NarrativeDirectorState): StoryMessage {
+  const company = state.companies.find((item) => item.id === state.activeCompanyId) ?? state.companies[0];
+  if (director.mode === "recuperacao") return {
+    id: `director-recovery-${state.week}`,
+    from: "Helena Duarte",
+    role: "Mentora · leitura do momento",
+    initials: "HD",
+    color: "#668477",
+    subject: "Você não precisa apagar três incêndios ao mesmo tempo",
+    body: `${director.lastReason} Vou segurar assuntos secundários por algumas semanas. Escolha o que a ${company.name} precisa proteger primeiro.`,
+    choices: [
+      { label: "Proteger as pessoas", result: "A agenda foi reduzida e as equipes ganharam espaço para respirar.", effect: (game) => ({ ...game, narrativeDirector: { ...director, lastInterventionWeek: game.week }, companies: game.companies.map((item) => ({ ...item, employees: item.employees.map((employee) => ({ ...employee, stress: clamp((employee.stress ?? 25) - 8), morale: clamp(employee.morale + 3) })) })) }) },
+      { label: "Proteger o caixa", result: "Despesas discricionárias foram reduzidas para preservar liquidez.", effect: (game) => ({ ...game, narrativeDirector: { ...director, lastInterventionWeek: game.week }, companies: game.companies.map((item) => item.id === company.id ? { ...item, marketing: Math.max(0, item.marketing - 2500), cash: item.cash + 18000 } : item) }) },
+      { label: "Manter o ritmo", tone: "risk", result: "Você recusou a pausa e manteve a pressão sobre a organização.", effect: (game) => ({ ...game, narrativeDirector: { ...director, mode: "equilibrio", tension: clamp(director.tension + 8), lastInterventionWeek: game.week }, reputation: clamp(game.reputation + 2) }) },
+    ],
+  };
+  return {
+    id: `director-opportunity-${state.week}`,
+    from: "Helena Duarte",
+    role: "Mentora · oportunidade da semana",
+    initials: "HD",
+    color: "#b57c47",
+    subject: "O silêncio do mercado abriu uma janela",
+    body: `${director.lastReason} A ${company.name} pode usar este momento para criar movimento antes que um concorrente o faça.`,
+    choices: [
+      { label: "Campanha focada · R$ 30 mil", result: "A empresa ocupou o espaço com uma campanha rápida.", effect: (game) => ({ ...game, narrativeDirector: { ...director, mode: "equilibrio", tension: 38, quietStreak: 0, lastInterventionWeek: game.week }, companies: game.companies.map((item) => item.id === company.id ? { ...item, cash: item.cash - 30000, marketing: item.marketing + 4500, customers: Math.round(item.customers * 1.05) } : item) }) },
+      { label: "Ouvir funcionários sobre produtos", result: "A equipe ganhou confiança para trazer ideias nas próximas semanas.", effect: (game) => ({ ...game, narrativeDirector: { ...director, mode: "equilibrio", tension: 32, quietStreak: 0, lastInterventionWeek: game.week }, companies: game.companies.map((item) => item.id === company.id ? { ...item, employees: item.employees.map((employee) => ({ ...employee, loyalty: clamp(employee.loyalty + 4), relation: clamp(employee.relation + 3) })) } : item) }) },
+      { label: "Não criar movimento artificial", result: "Você preservou caixa e deixou a estratégia amadurecer.", effect: (game) => ({ ...game, narrativeDirector: { ...director, mode: "calma", tension: 24, quietStreak: 0, lastInterventionWeek: game.week }, legacy: game.legacy + 1 }) },
+    ],
+  };
+}
+
+function tutorialNarrativeMessage(state: GameState, week: number): StoryMessage | null {
+  const company = state.companies.find((item) => item.id === state.activeCompanyId) ?? state.companies[0];
+  const employee = company.employees[0];
+  const project = company.projects.find((item) => item.status === "ativo") ?? company.projects[0];
+  const base = { id: `tutorial-${week}`, from: "Helena Duarte", role: `Mentora · semana ${week} de 12`, initials: "HD", color: "#efad55" };
+  if (week === 2) return { ...base, subject: "Primeiro, aprenda a sobreviver", body: "Preço, marketing e caixa formam o pulmão da empresa. Faturar mais não significa lucrar mais: toda decisão precisa caber por várias semanas, não apenas hoje.", choices: [
+    { label: "Manter uma reserva", result: "Você escolheu aprender antes de acelerar.", effect: (game) => ({ ...game, legacy: game.legacy + 1 }) },
+    { label: "Investir R$ 15 mil em marketing", tone: "risk", result: "A empresa começou a testar aquisição de clientes.", effect: (game) => ({ ...game, companies: game.companies.map((item) => item.id === company.id ? { ...item, cash: item.cash - 15000, marketing: item.marketing + 2500 } : item) }) },
+  ] };
+  if (week === 4) return { ...base, subject: `${employee.name} quer saber se existe futuro aqui`, body: "Salário abaixo do mercado, estresse e falta de crescimento corroem lealdade aos poucos. Pessoas não saem por um único número; saem por uma sequência de sinais.", choices: [
+    { label: `Dar aumento de 6% a ${employee.name}`, result: `${employee.name} percebeu que o esforço foi reconhecido.`, effect: (game) => ({ ...game, companies: game.companies.map((item) => item.id === company.id ? { ...item, employees: item.employees.map((person) => person.id === employee.id ? { ...person, salary: Math.round(person.salary * 1.06 / 100) * 100, morale: clamp(person.morale + 8), loyalty: clamp(person.loyalty + 7) } : person) } : item) }) },
+    { label: "Prometer uma conversa em oito semanas", tone: "risk", result: "Você ganhou tempo, mas a promessa ficou registrada na memória da equipe.", effect: (game) => ({ ...game, companies: game.companies.map((item) => item.id === company.id ? { ...item, employees: item.employees.map((person) => person.id === employee.id ? { ...person, loyalty: clamp(person.loyalty - 3), memories: addCharacterMemory(person.memories, characterMemory(game.week, "salario", "Você adiou uma conversa importante sobre meu futuro.", "cauteloso", -5, 78)) } : person) } : item) }) },
+  ] };
+  if (week === 6) return { ...base, subject: `O projeto ${project.name} precisa de uma prioridade`, body: "Projetos em desenvolvimento consomem equipe e caixa. Produtos passam a faturar quando chegam ao mercado; melhorias e campanhas geram seus efeitos ao serem concluídas.", choices: [
+    { label: "Priorizar qualidade", result: "A equipe aceitou avançar mais devagar para entregar algo melhor.", effect: (game) => ({ ...game, companies: game.companies.map((item) => item.id === company.id ? { ...item, projects: item.projects.map((candidate) => candidate.id === project.id ? { ...candidate, quality: clamp(candidate.quality + 8), risk: clamp(candidate.risk - 3) } : candidate) } : item) }) },
+    { label: "Priorizar velocidade", tone: "risk", result: "O cronograma avançou, junto com o risco de falhas.", effect: (game) => ({ ...game, companies: game.companies.map((item) => item.id === company.id ? { ...item, projects: item.projects.map((candidate) => candidate.id === project.id ? { ...candidate, progress: clamp(candidate.progress + 12), risk: clamp(candidate.risk + 8) } : candidate) } : item) }) },
+  ] };
+  if (week === 8) return { ...base, subject: "Enquanto você administra, concorrentes observam", body: "Rivais desenvolvem produtos, conquistam clientes, entram em crise e podem ser comprados. Preço, reputação e marketing determinam como sua empresa responde.", choices: [
+    { label: "Fortalecer clientes atuais", result: "A empresa reforçou relacionamento em vez de entrar numa guerra de descontos.", effect: (game) => ({ ...game, companies: game.companies.map((item) => item.id === company.id ? { ...item, reputation: clamp(item.reputation + 5), customers: Math.round(item.customers * 1.03) } : item) }) },
+    { label: "Desafiar o principal rival", tone: "risk", result: "O mercado percebeu que existe uma rivalidade em formação.", effect: (game) => ({ ...game, rivalScore: game.rivalScore + 5, reputation: clamp(game.reputation + 3) }) },
+  ] };
+  if (week === 10) return { ...base, subject: "Você não precisa decidir tudo sozinho para sempre", body: "Quando a holding crescer, CEOs poderão contratar, criar produtos e negociar contratos conforme a autonomia recebida. Delegar economiza atenção, mas também cria risco político.", choices: [
+    { label: "Quero construir líderes", result: "Sua identidade começou a valorizar pessoas e visão de longo prazo.", effect: (game) => evolveIdentity(game, { pessoas: 6, visao: 7 }, "Decidiu construir líderes antes de precisar deles") },
+    { label: "Prefiro manter controle", result: "Sua identidade passou a valorizar prudência e supervisão direta.", effect: (game) => evolveIdentity(game, { prudencia: 8, negociacao: -2 }, "Preferiu preservar controle sobre as decisões") },
+  ] };
+  if (week === 12) return { ...base, subject: "A partir daqui, a história reage a você", body: "Mensagens trazem decisões; o Conselho da Semana resume apenas o essencial; e o ritmo se adapta. Crises consecutivas criam recuperação, semanas vazias abrem oportunidades e conflitos centrais ganham prioridade.", choices: [
+    { label: "Estou pronto para comandar", tone: "good", result: "O tutorial terminou. Helena continuará aconselhando, mas as decisões agora são suas.", effect: (game) => ({ ...game, tutorialCompleted: true, legacy: game.legacy + 3 }) },
+    { label: "Quero um ritmo mais tranquilo", result: "O tutorial terminou e a dificuldade foi ajustada para Relaxado.", effect: (game) => ({ ...game, tutorialCompleted: true, difficulty: "relaxado" }) },
+  ] };
+  return null;
+}
+
 function createGenerationMissions(state: GameState): GenerationMission[] {
   const generation = state.generation ?? 2;
   const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
@@ -4619,6 +4732,9 @@ export default function Home() {
           generationArcHistory: parsed.generationArcHistory ?? [],
           generationMissions: parsed.generationMissions ?? [],
           achievements: parsed.achievements ?? [],
+          narrativeDirector: parsed.narrativeDirector ?? { mode: "equilibrio", tension: 35, crisisStreak: 0, quietStreak: 0, lastInterventionWeek: 0, lastReason: "O ritmo será recalculado na próxima semana." },
+          tutorialSeenWeeks: parsed.tutorialSeenWeeks ?? (parsed.week > 12 ? [2, 4, 6, 8, 10, 12] : []),
+          tutorialCompleted: parsed.tutorialCompleted ?? parsed.week > 12,
           generationProfile: parsed.generationProfile ? { ...parsed.generationProfile, age: parsed.generationProfile.age ?? 42, health: parsed.generationProfile.health ?? 88 } : (parsed.dynastyMode ? generationProfileFor(parsed.playerExecutive ?? parsed.founder, parsed.generation ?? 2, parsed.heirs?.find((heir: Heir) => heir.name === (parsed.playerExecutive ?? parsed.founder))?.style ?? "crescimento", parsed.dynastyStartedWeek ?? parsed.week, 42) : undefined),
           mandateReviews: parsed.mandateReviews ?? [],
           lastMandateReviewWeek: parsed.lastMandateReviewWeek ?? parsed.dynastyStartedWeek ?? 0,
@@ -5195,14 +5311,21 @@ export default function Home() {
     if (!message) return;
     setGame((s) => {
       const changed = choice.effect(s);
+      const tutorialWeek = message.id.startsWith("tutorial-") ? Number(message.id.replace("tutorial-", "")) : null;
       return {
         ...changed,
         unread: changed.unread.filter((m) => m.id !== message.id),
         log: [choice.result, ...changed.log].slice(0, 10),
+        tutorialSeenWeeks: tutorialWeek ? [...new Set([...(changed.tutorialSeenWeeks ?? []), tutorialWeek])] : changed.tutorialSeenWeeks,
       };
     });
     notify(choice.result);
     setSelectedMessage(null);
+    if (message.id.startsWith("tutorial-")) {
+      const week = Number(message.id.replace("tutorial-", ""));
+      setView(week === 4 ? "pessoas" : week === 6 ? "projetos" : week === 8 ? "cidade" : week === 10 ? "portfolio" : "escritorio");
+      setDialog(null);
+    }
   };
 
   const addMessage = (message: StoryMessage) =>
@@ -5416,6 +5539,8 @@ export default function Home() {
     setGame((current) => {
       const nextWeek = current.week + 1;
       const controlledExecutive = current.playerExecutive ?? current.founder;
+      const directorBefore = current.narrativeDirector ?? initialState.narrativeDirector!;
+      const eventPressure = directorBefore.mode === "recuperacao" ? .52 : directorBefore.mode === "calma" ? .72 : directorBefore.mode === "escalada" ? 1.38 : directorBefore.mode === "foco" ? .68 : 1;
       const difficulty = difficultyProfiles[current.difficulty ?? "executivo"];
       const previousDifficulty = difficultyProfiles[current.difficultyApplied ?? "executivo"];
       const rolledEconomy = rollEconomy({ ...current.economy, demand: current.economy.demand / previousDifficulty.economyDemand, costs: current.economy.costs / previousDifficulty.economyCosts });
@@ -5436,7 +5561,7 @@ export default function Home() {
         economyRoll.economy,
         nextWeek,
         current.recentNewsTopics ?? [],
-        nextWeek % 4 === 0 ? 2 : 1,
+        directorBefore.mode === "recuperacao" || directorBefore.mode === "foco" ? 1 : directorBefore.mode === "escalada" ? 2 : nextWeek % 4 === 0 ? 2 : 1,
       );
       weeklyNews.push(...ambientNews);
       if (nextWeek % 12 === 0) {
@@ -5648,7 +5773,7 @@ export default function Home() {
           ceoInfluence > 78 &&
           ceoTrust < 45 &&
           ceoDecisionWeek &&
-          Math.random() < 0.16
+          Math.random() < 0.16 * eventPressure
         ) {
           ceoBoardImpact -= 7;
           weeklyNews.push({
@@ -5961,7 +6086,7 @@ export default function Home() {
         if (
           employees.length > 1 &&
           activePressure > 64 &&
-          Math.random() < 0.07
+          Math.random() < 0.07 * eventPressure
         ) {
           const first = employees[Math.floor(Math.random() * employees.length)];
           const second = employees.find((e) => e.id !== first.id)!;
@@ -6057,7 +6182,7 @@ export default function Home() {
             (p.lawsuitWeeks ?? 0) === 0 &&
             p.quality > 62,
         );
-        if (exposedProduct && Math.random() < 0.018) {
+        if (exposedProduct && Math.random() < 0.018 * eventPressure) {
           exposedProduct.lawsuitWeeks = 5;
           exposedProduct.legalOpponent =
             current.competitors.find(
@@ -6279,7 +6404,7 @@ export default function Home() {
           const identityTrust = partner.kind === "cliente"
             ? (publicIdentity.integridade - 50) / 180 + (publicIdentity.visao - 50) / 260
             : (publicIdentity.negociacao - 50) / 240 + (publicIdentity.prudencia - 50) / 220;
-          if (partner.trust < 30 && Math.random() < 0.1) {
+          if (partner.trust < 30 && Math.random() < 0.1 * eventPressure) {
             const disputeLevel = clamp(30 + partner.dependency * .45);
             weeklyNews.push({ id: Date.now() + partner.id.length * 73, week: nextWeek, category: "negocios", headline: `${partner.name} abre disputa contratual com ${company.name}`, body: `A confiança caiu para ${Math.round(partner.trust)}%. A contraparte contesta preço, prazo ou escopo e ameaça suspender o acordo.`, impact: "negativo" });
             return { ...partner, status: "disputa" as const, weeksLeft: 0, disputeLevel, disputeReason: partner.kind === "cliente" ? "O cliente contesta entregas e exige desconto antes de renovar." : "O fornecedor exige reajuste e ameaça interromper o fornecimento.", lastEvent: "A baixa confiança transformou a renovação em disputa contratual." };
@@ -6584,7 +6709,7 @@ export default function Home() {
           status === "crise"
             ? (rival.crisisWeeks ?? 0) + 1
             : Math.max(0, (rival.crisisWeeks ?? 0) - 2);
-        if (rival.relationship === "rival" && shock < 0.035 * difficulty.departure) {
+        if (rival.relationship === "rival" && shock < 0.035 * difficulty.departure * eventPressure) {
           const playerCompany = companies.find(
             (c) =>
               c.sector === rival.sector && !c.sold && !c.bankrupt && !c.closed,
@@ -6677,7 +6802,7 @@ export default function Home() {
           (r.cash ?? 0) > 500000 &&
           r.score > 52,
       );
-      if (mergerBuyers.length && Math.random() < 0.025) {
+      if (mergerBuyers.length && Math.random() < 0.025 * (directorBefore.mode === "escalada" ? 1.5 : eventPressure)) {
         const buyer =
           mergerBuyers[Math.floor(Math.random() * mergerBuyers.length)];
         const targets = competitors.filter(
@@ -6775,29 +6900,45 @@ export default function Home() {
         !generationAlreadyTold &&
         (!generationArc || generationArc.generation !== currentGeneration)
       ) generationArc = createGenerationArc({ ...current, week: nextWeek, companies, competitors });
+      const narrativeDirector = evolveNarrativeDirector(directorBefore, { ...current, week: nextWeek, companies, competitors, auditCases, generationArc }, weeklyNews, newStaffAlerts);
+      const pendingTutorialWeek = [2, 4, 6, 8, 10, 12].find((week) => week <= nextWeek && !(current.tutorialSeenWeeks ?? []).includes(week));
+      const tutorialMessage = !current.tutorialCompleted && current.week <= 12 && pendingTutorialWeek && current.unread.length === 0
+        ? tutorialNarrativeMessage({ ...current, week: nextWeek, companies, competitors }, pendingTutorialWeek)
+        : null;
+      const directorMessage =
+        !tutorialMessage &&
+        nextWeek > 12 &&
+        current.unread.length === 0 &&
+        nextWeek - narrativeDirector.lastInterventionWeek >= 6 &&
+        (narrativeDirector.mode === "recuperacao" && narrativeDirector.crisisStreak >= 2 || narrativeDirector.mode === "escalada" && narrativeDirector.quietStreak >= 3)
+          ? directorInterventionMessage({ ...current, week: nextWeek, companies, competitors, narrativeDirector }, narrativeDirector)
+          : null;
       const generationArcDecision =
+        !tutorialMessage &&
         generationArc?.status === "ativo" &&
         nextWeek - generationArc.lastChapterWeek >= 7 &&
         current.unread.length === 0
           ? generationArcMessage({ ...current, week: nextWeek, companies, competitors, generationArc }, generationArc)
           : null;
       const dynastyMessage =
+        !tutorialMessage &&
         current.dynastyMode &&
         !generationArcDecision &&
         generationArc?.status !== "ativo" &&
         nextWeek - (current.lastDynastyEventWeek ?? current.dynastyStartedWeek ?? 0) >= 7 &&
         current.unread.length === 0 &&
-        Math.random() < 0.32
+        Math.random() < 0.32 * eventPressure
           ? dynastyStoryMessage({ ...current, week: nextWeek, companies })
           : null;
       const familyCandidate = (current.heirs ?? [])[nextWeek % Math.max(1, (current.heirs ?? []).length)];
       const familyMessage =
+        !tutorialMessage &&
         !current.founderRetired &&
         familyCandidate &&
         nextWeek >= 12 &&
         nextWeek - (current.lastFamilyEventWeek ?? 0) >= 14 &&
         current.unread.length === 0 &&
-        Math.random() < 0.24
+        Math.random() < 0.24 * eventPressure
           ? familyStoryMessage(familyCandidate, { ...current, week: nextWeek })
           : null;
       const personalMessage =
@@ -6833,6 +6974,7 @@ export default function Home() {
             characterMemoryScore(company.ceoMemories, nextWeek) <= -8),
       );
       const politicalMessage =
+        !tutorialMessage &&
         !dynastyMessage &&
         !familyMessage &&
         !personalMessage &&
@@ -6840,7 +6982,7 @@ export default function Home() {
         politicalCandidate &&
         nextWeek >= 8 &&
         current.unread.length === 0 &&
-        Math.random() < 0.22 + Math.max(0, -characterMemoryScore(politicalCandidate.ceoMemories, nextWeek)) / 100
+        Math.random() < (0.22 + Math.max(0, -characterMemoryScore(politicalCandidate.ceoMemories, nextWeek)) / 100) * eventPressure
           ? ceoPoliticalMessage(politicalCandidate, {
               ...current,
               week: nextWeek,
@@ -6854,6 +6996,7 @@ export default function Home() {
           (characterMemoryScore(e.memories, nextWeek) <= -14 && (e.weeks ?? 0) > 8),
       );
       const employeeMessage =
+        !tutorialMessage &&
         !personalMessage &&
         !nemesisMessage &&
         !ceoProposalMessage &&
@@ -6861,7 +7004,7 @@ export default function Home() {
         !current.unread.some((m) =>
           m.id.startsWith(`employee-${crisisEmployee.id}-`),
         ) &&
-        Math.random() < 0.2 + Math.max(0, -characterMemoryScore(crisisEmployee.memories, nextWeek)) / 120
+        Math.random() < (0.2 + Math.max(0, -characterMemoryScore(crisisEmployee.memories, nextWeek)) / 120) * eventPressure
           ? employeeCrisisMessage(crisisEmployee, activeCompany.id)
           : null;
       const ideaEmployee = activeCompany.employees
@@ -6873,6 +7016,7 @@ export default function Home() {
         )
         .sort((a, b) => b.skill + b.relation / 2 - (a.skill + a.relation / 2))[0];
       const employeeIdeaMessage =
+        !tutorialMessage &&
         !dynastyMessage &&
         !familyMessage &&
         !personalMessage &&
@@ -6887,10 +7031,12 @@ export default function Home() {
         nextWeek >= 8 &&
         (nextWeek + activeCompany.id) % 13 === 0 &&
         current.unread.length === 0 &&
-        Math.random() < .68
+        Math.random() < .68 * (directorBefore.mode === "escalada" ? 1.25 : 1)
           ? employeeProductIdeaMessage(ideaEmployee, activeCompany, economyRoll.economy, nextWeek)
           : null;
       const narrativeMessage =
+        !tutorialMessage &&
+        !directorMessage &&
         !dynastyMessage &&
         !familyMessage &&
         !personalMessage &&
@@ -6902,7 +7048,7 @@ export default function Home() {
         nextWeek >= 5 &&
         nextWeek - (current.lastNarrativeWeek ?? 0) >= 6 &&
         current.unread.length === 0 &&
-        Math.random() < 0.24
+        Math.random() < 0.24 * eventPressure
           ? narrativeEvent(activeCompany, {
               ...current,
               week: nextWeek,
@@ -6911,7 +7057,7 @@ export default function Home() {
             })
           : null;
 
-      if (crisisEmployee && Math.random() < 0.16) {
+      if (crisisEmployee && Math.random() < 0.16 * eventPressure) {
         weeklyNews.push({
           id: Date.now() + 99,
           week: nextWeek,
@@ -7296,6 +7442,7 @@ export default function Home() {
         generationProfile,
         politicalArc,
         generationArc,
+        narrativeDirector,
         generationMissions,
         mandateReviews,
         lastMandateReviewWeek,
@@ -7320,6 +7467,8 @@ export default function Home() {
           ? [...current.unread, leaderDeathDecision]
           : politicalArcDecision
           ? [...current.unread, politicalArcDecision]
+          : tutorialMessage
+          ? [...current.unread, tutorialMessage]
           : generationArcDecision
           ? [...current.unread, generationArcDecision]
           : dynastyMessage
@@ -7338,6 +7487,8 @@ export default function Home() {
           ? [...current.unread, employeeMessage]
           : employeeIdeaMessage
           ? [...current.unread, employeeIdeaMessage]
+          : directorMessage
+          ? [...current.unread, directorMessage]
           : narrativeMessage
             ? [...current.unread, narrativeMessage]
             : current.unread,
@@ -7362,7 +7513,7 @@ export default function Home() {
         news: achievementUnlocks.map((achievement, index) => ({ id: Date.now() + 2300 + index, week: nextWeek, category: "negocios" as const, headline: `Conquista desbloqueada: ${achievement.title}`, body: "Uma nova marca permanente foi adicionada à história desta holding.", impact: "positivo" as const })).concat(nextState.news).slice(0, 60),
         log: achievementUnlocks.map((achievement) => `Conquista: ${achievement.title}.`).concat(nextState.log).slice(0, 12),
       };
-      setTimeout(
+      if (nextWeek > 12) setTimeout(
         () => storyBeat(nextState, activeCompany, activeMetrics.valuation),
         0,
       );
@@ -7375,6 +7526,12 @@ export default function Home() {
       else if (politicalArcDecision)
         setTimeout(() => {
           setSelectedMessage(politicalArcDecision);
+          setDialog("inbox");
+          setSpeed(0);
+        }, 100);
+      else if (tutorialMessage)
+        setTimeout(() => {
+          setSelectedMessage(tutorialMessage);
           setDialog("inbox");
           setSpeed(0);
         }, 100);
@@ -7429,6 +7586,12 @@ export default function Home() {
       else if (employeeIdeaMessage)
         setTimeout(() => {
           setSelectedMessage(employeeIdeaMessage);
+          setDialog("inbox");
+          setSpeed(0);
+        }, 100);
+      else if (directorMessage)
+        setTimeout(() => {
+          setSelectedMessage(directorMessage);
           setDialog("inbox");
           setSpeed(0);
         }, 100);
@@ -10774,6 +10937,7 @@ export default function Home() {
               <span className={`report-severity ${selectedWeeklyReport.companies.some((company) => company.severity === "critico") ? "critico" : selectedWeeklyReport.companies.some((company) => company.severity === "atencao") ? "atencao" : "normal"}`}>{weeklyDigest.length} cartões</span>
             </header>
             <section className="advisor-quote"><b>Helena:</b> “Eu li os números. Você só precisa escolher onde agir — ou quando não mexer em nada.”</section>
+            <section className={`narrative-moment ${game.narrativeDirector?.mode ?? "equilibrio"}`}><div><small>MOMENTO DA HISTÓRIA</small><h3>{narrativeModeLabels[game.narrativeDirector?.mode ?? "equilibrio"]}</h3><p>{game.narrativeDirector?.lastReason ?? "Problemas e oportunidades estão em equilíbrio."}</p></div><b>{Math.round(game.narrativeDirector?.tension ?? 30)}<span>tensão</span></b></section>
             <section className="weekly-advice-grid">
               {weeklyDigest.map((advice) => <article className={advice.tone} key={`${advice.companyId}-${advice.title}`}><small>{advice.kind === "urgente" ? "PROBLEMA URGENTE" : advice.kind === "oportunidade" ? "OPORTUNIDADE" : "RECOMENDAÇÃO DO ASSESSOR"} · {advice.companyName}</small><h3>{advice.title}</h3><p>{advice.detail}</p><button onClick={() => followWeeklyAdvice(advice, advice.companyId)}>{advice.actionLabel}</button></article>)}
             </section>
