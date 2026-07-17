@@ -317,6 +317,24 @@ type WeeklyAdvice = {
   action: "estrategia" | "pessoas" | "projetos" | "mercado" | "nenhuma";
   actionLabel: string;
 };
+type WeeklyDigestCard = WeeklyAdvice & { companyId: number; companyName: string; kind: "urgente" | "oportunidade" | "assessor" };
+type GameDifficulty = "relaxado" | "executivo" | "implacavel";
+type GenerationMissionKind = "resultado" | "reputacao" | "familia";
+type GenerationMission = {
+  id: string;
+  generation: number;
+  kind: GenerationMissionKind;
+  title: string;
+  description: string;
+  target: number;
+  progress: number;
+  rewardCash: number;
+  rewardLegacy: number;
+  rewardTitle: string;
+  completed: boolean;
+  completedWeek?: number;
+};
+type AchievementUnlock = { id: string; week: number; generation: number; title: string };
 type MessageChoice = {
   label: string;
   tone?: "good" | "risk";
@@ -446,6 +464,8 @@ type DynastyEnding = {
   futureCompanies: number;
   futurePeople: number;
   futureNarrative: string;
+  secretEndingTitle?: string;
+  secretEndingNarrative?: string;
 };
 type DynastyTransition = {
   week: number;
@@ -498,6 +518,8 @@ type GameState = {
   economy: Economy;
   providers: CapitalProvider[];
   balanceVersion?: number;
+  difficulty?: GameDifficulty;
+  difficultyApplied?: GameDifficulty;
   holdingName?: string;
   lastNarrativeWeek?: number;
   narrativeHistory?: string[];
@@ -533,6 +555,8 @@ type GameState = {
   politicalArc?: PoliticalArc;
   generationArc?: GenerationNarrativeArc;
   generationArcHistory?: GenerationArcRecord[];
+  generationMissions?: GenerationMission[];
+  achievements?: AchievementUnlock[];
   generationProfile?: GenerationProfile;
   mandateReviews?: MandateReview[];
   lastMandateReviewWeek?: number;
@@ -586,6 +610,12 @@ const compact = new Intl.NumberFormat("pt-BR", {
 });
 const clamp = (n: number, min = 0, max = 100) =>
   Math.min(max, Math.max(min, n));
+
+const difficultyProfiles: Record<GameDifficulty, { title: string; description: string; stress: number; economyDemand: number; economyCosts: number; departure: number; rival: number; reward: number }> = {
+  relaxado: { title: "Relaxado", description: "Mais tempo para aprender, equipes resistentes e economia menos punitiva.", stress: .72, economyDemand: 1.035, economyCosts: .975, departure: .55, rival: -.7, reward: .85 },
+  executivo: { title: "Executivo", description: "A experiência equilibrada: decisões difíceis sem punições artificiais.", stress: 1, economyDemand: 1, economyCosts: 1, departure: 1, rival: 0, reward: 1 },
+  implacavel: { title: "Implacável", description: "Crises pressionam margens, concorrentes reagem e pessoas toleram menos erros.", stress: 1.28, economyDemand: .965, economyCosts: 1.035, departure: 1.55, rival: .9, reward: 1.3 },
+};
 
 const characterMemory = (
   week: number,
@@ -2137,6 +2167,8 @@ const initialState: GameState = {
   },
   providers: [],
   balanceVersion: 2,
+  difficulty: "executivo",
+  difficultyApplied: "executivo",
   holdingName: "Grupo Alex",
   lastNarrativeWeek: 0,
   narrativeHistory: [],
@@ -2166,6 +2198,8 @@ const initialState: GameState = {
   dynastyHistory: [],
   formerPresidents: [],
   generationArcHistory: [],
+  generationMissions: [],
+  achievements: [],
   mandateReviews: [],
   lastMandateReviewWeek: 0,
   dynastyEndingReady: false,
@@ -4072,6 +4106,15 @@ function createDynastyEnding(state: GameState): DynastyEnding {
       : type === "fragmentacao"
         ? `Após o capítulo encerrado por você, herdeiros dividiram empresas, patrimônio e influência. Partes do grupo sobreviveram por mais ${futureYears} anos, mas o legado comum de ${state.founder} terminou na geração ${founderLegacyEndsGeneration}, quando o sobrenome deixou de representar um único projeto.`
         : `O futuro foi curto e duro: ativos foram vendidos, equipes se dispersaram e as últimas operações desapareceram ao longo de ${futureYears} anos. A geração ${founderLegacyEndsGeneration} foi a última a carregar o legado empresarial de ${state.founder}.`;
+  const secretEnding = Boolean(state.founderDeceased) && familyUnity < 25 && (state.outsideFamilyEquity ?? 0) > 60
+    ? ["O fundador esquecido", `O grupo sobreviveu por algum tempo, mas o nome de ${state.founder} foi removido de prédios, produtos e discursos. O patrimônio continuou; a memória não.`]
+    : (state.heirs ?? []).length > 0 && (state.heirs ?? []).every((heir) => heir.status === "rompido" || heir.status === "afastado")
+      ? ["O império sem herdeiros", "Executivos profissionais preservaram as empresas, mas nenhuma pessoa da família quis — ou pôde — carregar o projeto adiante."]
+      : (state.dynastyHistory ?? []).some((entry) => /derrubou|perdeu a confiança/i.test(entry))
+        ? ["A cadeira que expulsou seus donos", "A dinastia continuou depois de derrubar um de seus próprios presidentes. O conselho provou que o sobrenome abria portas, mas já não garantia o comando."]
+        : (state.generation ?? 1) >= 4 && familyUnity >= 80 && control >= 65
+          ? ["A família centenária", `Quatro gerações ou mais atravessaram crises sem transformar parentes em inimigos permanentes. O maior ativo de ${state.founder} não foi uma empresa, mas uma família capaz de continuar conversando.`]
+          : undefined;
   return {
     type,
     title: copy[0],
@@ -4086,6 +4129,8 @@ function createDynastyEnding(state: GameState): DynastyEnding {
     futureCompanies,
     futurePeople,
     futureNarrative,
+    secretEndingTitle: secretEnding?.[0],
+    secretEndingNarrative: secretEnding?.[1],
   };
 }
 
@@ -4211,13 +4256,6 @@ function buildWeeklyReport(
   };
 }
 
-const formatIndicatorValue = (value: number, format: IndicatorChange["format"]) =>
-  format === "money"
-    ? money.format(value)
-    : format === "percent"
-      ? `${Math.round(value)}%`
-      : Math.round(value).toLocaleString("pt-BR");
-
 function buildWeeklyAdvice(report: CompanyWeeklyReport, company: Company): WeeklyAdvice[] {
   const indicator = (key: IndicatorChange["key"]) => report.indicators.find((item) => item.key === key);
   const revenue = indicator("revenue");
@@ -4249,6 +4287,65 @@ function buildWeeklyAdvice(report: CompanyWeeklyReport, company: Company): Weekl
     advice.push({ tone: "positivo", title: "A empresa está respondendo bem", detail: "Não mude tudo por ansiedade. Preserve o que funcionou e acompanhe a próxima semana antes de acelerar.", action: "nenhuma", actionLabel: "Continuar a semana" });
   }
   return advice.slice(0, 3);
+}
+
+function buildWeeklyDigest(report: WeeklyReport | null, companies: Company[]): WeeklyDigestCard[] {
+  if (!report) return [];
+  const candidates = report.companies.flatMap((companyReport) => {
+    const company = companies.find((item) => item.id === companyReport.companyId);
+    return company ? buildWeeklyAdvice(companyReport, company).map((advice) => ({ ...advice, companyId: company.id, companyName: company.name })) : [];
+  });
+  const chosen: WeeklyDigestCard[] = [];
+  const add = (candidate: typeof candidates[number] | undefined, kind: WeeklyDigestCard["kind"]) => {
+    if (candidate && !chosen.some((item) => item.title === candidate.title)) chosen.push({ ...candidate, kind });
+  };
+  add(candidates.find((item) => item.tone === "urgente"), "urgente");
+  add(candidates.find((item) => item.tone === "positivo"), "oportunidade");
+  add(candidates.find((item) => item.tone === "atencao") ?? candidates.find((item) => !chosen.some((chosenItem) => chosenItem.title === item.title)) ?? candidates[0], "assessor");
+  return chosen.slice(0, 3);
+}
+
+function createGenerationMissions(state: GameState): GenerationMission[] {
+  const generation = state.generation ?? 2;
+  const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+  const rewardFactor = difficultyProfiles[state.difficulty ?? "executivo"].reward;
+  const baseReward = Math.round((90000 + generation * 25000) * rewardFactor / 1000) * 1000;
+  return [
+    { id: `g${generation}-resultado`, generation, kind: "resultado", title: "Fazer a holding respirar", description: `Manter pelo menos ${Math.max(1, Math.ceil(operating.length * .67))} empresa${operating.length > 1 ? "s" : ""} no lucro ao mesmo tempo.`, target: Math.max(1, Math.ceil(operating.length * .67)), progress: 0, rewardCash: baseReward, rewardLegacy: 4, rewardTitle: "Medalha de Resultado", completed: false },
+    { id: `g${generation}-reputacao`, generation, kind: "reputacao", title: "Conquistar o próprio nome", description: "Elevar a reputação da presidência e provar que o sobrenome não é a única credencial.", target: Math.min(95, Math.max(65, state.reputation + 8)), progress: state.reputation, rewardCash: Math.round(baseReward * .65), rewardLegacy: 6, rewardTitle: "Título de Liderança", completed: false },
+    { id: `g${generation}-familia`, generation, kind: "familia", title: "Entregar uma família governável", description: "Construir união suficiente para que a próxima sucessão não comece como uma guerra.", target: Math.min(92, Math.max(70, (state.familyUnity ?? 60) + 8)), progress: state.familyUnity ?? 60, rewardCash: Math.round(baseReward * .45), rewardLegacy: 8, rewardTitle: "Selo de Guardião do Legado", completed: false },
+  ];
+}
+
+function advanceGenerationMissions(missions: GenerationMission[], state: GameState): { missions: GenerationMission[]; completed: GenerationMission[] } {
+  const profitable = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed && companyMetrics(company, state.economy).profit > 0).length;
+  const completed: GenerationMission[] = [];
+  const next = missions.map((mission) => {
+    const progress = mission.kind === "resultado" ? profitable : mission.kind === "reputacao" ? state.reputation : state.familyUnity ?? 0;
+    const done = mission.completed || progress >= mission.target;
+    const updated = { ...mission, progress: Math.min(mission.target, progress), completed: done, completedWeek: !mission.completed && done ? state.week : mission.completedWeek };
+    if (!mission.completed && done) completed.push(updated);
+    return updated;
+  });
+  return { missions: next, completed };
+}
+
+const achievementDefinitions: { id: string; title: string; description: string; secret?: boolean; test: (state: GameState) => boolean }[] = [
+  { id: "primeiro-milhao", title: "O primeiro milhão", description: "Construir um patrimônio empresarial superior a R$ 1 milhão.", test: (state) => state.personalCash + state.companies.reduce((sum, company) => sum + (!company.sold && !company.bankrupt && !company.closed ? companyMetrics(company, state.economy).valuation : 0), 0) >= 1000000 },
+  { id: "holding-real", title: "Agora é uma holding", description: "Controlar pelo menos três empresas operacionais.", test: (state) => state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed).length >= 3 },
+  { id: "produto-icone", title: "Produto de uma geração", description: "Levar um produto com qualidade 90 ou superior ao mercado.", test: (state) => state.companies.some((company) => company.projects.some((project) => project.kind === "produto" && project.lifecycle === "mercado" && project.quality >= 90)) },
+  { id: "familia-centenaria", title: "Família centenária", description: "Chegar à quarta geração com união familiar acima de 80%.", secret: true, test: (state) => (state.generation ?? 1) >= 4 && (state.familyUnity ?? 0) >= 80 },
+  { id: "imperio-sem-herdeiros", title: "Império sem herdeiros", description: "Manter o grupo vivo depois que todos os herdeiros romperam ou se afastaram.", secret: true, test: (state) => (state.generation ?? 1) >= 3 && (state.heirs ?? []).length > 0 && (state.heirs ?? []).every((heir) => heir.status === "rompido" || heir.status === "afastado") },
+  { id: "ceo-deposto", title: "CEO deposto", description: "Perder a presidência numa disputa política e continuar a Dinastia.", secret: true, test: (state) => (state.dynastyHistory ?? []).some((entry) => /derrubou|perdeu a confiança/i.test(entry)) },
+  { id: "fundador-esquecido", title: "Fundador esquecido", description: "O nome do fundador perdeu família, controle e influência sobre o grupo.", secret: true, test: (state) => Boolean(state.founderDeceased) && (state.familyUnity ?? 100) < 25 && (state.outsideFamilyEquity ?? 0) > 60 },
+  { id: "sobrevivente", title: "À prova de crise", description: "Sobreviver a três recessões sem encerrar a história.", test: (state) => (state.survivedRecessions ?? 0) >= 3 },
+  { id: "arquiteto", title: "Arquiteto de gerações", description: "Vencer três conflitos centrais da Dinastia.", test: (state) => (state.generationArcHistory ?? []).filter((arc) => arc.tone === "vitoria").length >= 3 },
+  { id: "implacavel", title: "Sem rede de proteção", description: "Chegar à quarta geração na dificuldade Implacável.", secret: true, test: (state) => state.difficulty === "implacavel" && (state.generation ?? 1) >= 4 },
+];
+
+function newlyUnlockedAchievements(state: GameState): AchievementUnlock[] {
+  const unlocked = new Set((state.achievements ?? []).map((achievement) => achievement.id));
+  return achievementDefinitions.filter((definition) => !unlocked.has(definition.id) && definition.test(state)).map((definition) => ({ id: definition.id, week: state.week, generation: state.generation ?? 1, title: definition.title }));
 }
 
 function makeOpeningMessage(): StoryMessage {
@@ -4348,6 +4445,7 @@ export default function Home() {
     | "founder-finale"
     | "dynasty-transition"
     | "dynasty-ending"
+    | "difficulty"
     | "help"
     | null
   >(null);
@@ -4416,6 +4514,8 @@ export default function Home() {
               ),
           news: parsed.news ?? [],
           balanceVersion: 2,
+          difficulty: parsed.difficulty ?? "executivo",
+          difficultyApplied: parsed.difficultyApplied ?? "executivo",
           economy:
             parsed.balanceVersion === 2
               ? (parsed.economy ?? initialState.economy)
@@ -4517,6 +4617,8 @@ export default function Home() {
           politicalArc: parsed.politicalArc,
           generationArc: parsed.generationArc,
           generationArcHistory: parsed.generationArcHistory ?? [],
+          generationMissions: parsed.generationMissions ?? [],
+          achievements: parsed.achievements ?? [],
           generationProfile: parsed.generationProfile ? { ...parsed.generationProfile, age: parsed.generationProfile.age ?? 42, health: parsed.generationProfile.health ?? 88 } : (parsed.dynastyMode ? generationProfileFor(parsed.playerExecutive ?? parsed.founder, parsed.generation ?? 2, parsed.heirs?.find((heir: Heir) => heir.name === (parsed.playerExecutive ?? parsed.founder))?.style ?? "crescimento", parsed.dynastyStartedWeek ?? parsed.week, 42) : undefined),
           mandateReviews: parsed.mandateReviews ?? [],
           lastMandateReviewWeek: parsed.lastMandateReviewWeek ?? parsed.dynastyStartedWeek ?? 0,
@@ -4684,9 +4786,7 @@ export default function Home() {
   const advisedCompany = selectedCompanyReport
     ? game.companies.find((company) => company.id === selectedCompanyReport.companyId) ?? null
     : null;
-  const weeklyAdvice = selectedCompanyReport && advisedCompany
-    ? buildWeeklyAdvice(selectedCompanyReport, advisedCompany)
-    : [];
+  const weeklyDigest = buildWeeklyDigest(selectedWeeklyReport, game.companies);
   const latestActiveReport = game.weeklyReports?.[0]?.companies.find((report) => report.companyId === game.activeCompanyId) ?? null;
   const selectedPartner = active?.partners?.find((partner) => partner.id === selectedPartnerId) ?? null;
   const pendingStaffAlerts = (game.staffAlerts ?? []).filter((alert) => !alert.resolved);
@@ -5052,7 +5152,7 @@ export default function Home() {
     }
   }, [active?.sold, active?.bankrupt, active?.closed, view, dialog]);
 
-  const start = (sector: Sector, holdingName: string, founderName: string) => {
+  const start = (sector: Sector, holdingName: string, founderName: string, difficulty: GameDifficulty) => {
     const company = { ...newCompany(sector), ceo: founderName.trim() };
     const competitors = generateCompetitors(sector);
     setGame({
@@ -5063,6 +5163,7 @@ export default function Home() {
       companies: [company],
       activeCompanyId: company.id,
       holdingName: holdingName.trim(),
+      difficulty,
       heirs: createHeirs(founderName.trim()),
       providers: capitalProviders,
       competitors,
@@ -5111,9 +5212,10 @@ export default function Home() {
         : { ...s, unread: [...s.unread, message] },
     );
 
-  const followWeeklyAdvice = (advice: WeeklyAdvice) => {
-    if (advisedCompany)
-      setGame((state) => ({ ...state, activeCompanyId: advisedCompany.id }));
+  const followWeeklyAdvice = (advice: WeeklyAdvice, companyId?: number) => {
+    const targetCompany = game.companies.find((company) => company.id === companyId) ?? advisedCompany;
+    if (targetCompany)
+      setGame((state) => ({ ...state, activeCompanyId: targetCompany.id }));
     if (advice.action === "pessoas") setView("pessoas");
     if (advice.action === "projetos") setView("projetos");
     if (advice.action === "mercado") setView("cidade");
@@ -5314,7 +5416,18 @@ export default function Home() {
     setGame((current) => {
       const nextWeek = current.week + 1;
       const controlledExecutive = current.playerExecutive ?? current.founder;
-      const economyRoll = rollEconomy(current.economy);
+      const difficulty = difficultyProfiles[current.difficulty ?? "executivo"];
+      const previousDifficulty = difficultyProfiles[current.difficultyApplied ?? "executivo"];
+      const rolledEconomy = rollEconomy({ ...current.economy, demand: current.economy.demand / previousDifficulty.economyDemand, costs: current.economy.costs / previousDifficulty.economyCosts });
+      const economyRoll = {
+        ...rolledEconomy,
+        economy: {
+          ...rolledEconomy.economy,
+          demand: rolledEconomy.economy.demand * difficulty.economyDemand,
+          costs: rolledEconomy.economy.costs * difficulty.economyCosts,
+          confidence: clamp(rolledEconomy.economy.confidence + (current.difficulty === "relaxado" ? 3 : current.difficulty === "implacavel" ? -3 : 0)),
+        },
+      };
       const weeklyNews: NewsItem[] = economyRoll.news
         ? [{ ...economyRoll.news, id: Date.now() + 1, week: nextWeek }]
         : [];
@@ -5747,8 +5860,8 @@ export default function Home() {
           const payGap = e.salary / Math.max(1, e.market);
           const onLeave = (e.leaveWeeks ?? 0) > 0;
           const workload =
-            activePressure / 34 +
-            company.projects.filter((p) => p.status === "ativo").length * 1.05;
+            (activePressure / 34 +
+            company.projects.filter((p) => p.status === "ativo").length * 1.05) * difficulty.stress;
           const naturalRecovery =
             company.projects.filter((p) => p.status === "ativo").length === 0
               ? 4
@@ -5822,7 +5935,7 @@ export default function Home() {
         });
         let employees = evolvedEmployees.filter((e) => {
           const leaves =
-            e.loyalty < 18 && (e.weeks ?? 0) > 8 && Math.random() < 0.24;
+            e.loyalty < 18 && (e.weeks ?? 0) > 8 && Math.random() < 0.24 * difficulty.departure;
           if (leaves) {
             weeklyNews.push({
               id: Date.now() + e.id,
@@ -6373,7 +6486,7 @@ export default function Home() {
               ? -0.4
               : 0;
         let change = Math.round(
-          personalityEffect + cycleEffect + partnershipEffect,
+          personalityEffect + cycleEffect + partnershipEffect + difficulty.rival,
         );
         let cash =
           (rival.cash ?? 180000) +
@@ -6471,7 +6584,7 @@ export default function Home() {
           status === "crise"
             ? (rival.crisisWeeks ?? 0) + 1
             : Math.max(0, (rival.crisisWeeks ?? 0) - 2);
-        if (rival.relationship === "rival" && shock < 0.035) {
+        if (rival.relationship === "rival" && shock < 0.035 * difficulty.departure) {
           const playerCompany = companies.find(
             (c) =>
               c.sector === rival.sector && !c.sold && !c.bankrupt && !c.closed,
@@ -7140,15 +7253,24 @@ export default function Home() {
         if (score < 40) formerPresidents = formerPresidents.map((president) => president.alive && president.ambition >= 60 ? { ...president, status: "oposicao" as const, influence: clamp(president.influence + 7), lastMove: "Usou a avaliação ruim para questionar a presidência." } : president);
       }
       const operatingDynasty = companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+      let generationMissions = current.generationMissions ?? [];
+      if (current.dynastyMode && (!generationMissions.length || generationMissions[0].generation !== (current.generation ?? 2)))
+        generationMissions = createGenerationMissions({ ...current, week: nextWeek, companies, economy: economyAfterNews });
+      const missionProgress = advanceGenerationMissions(generationMissions, { ...current, week: nextWeek, companies, economy: economyAfterNews, reputation: clamp(current.reputation + (completedAnnualReview ? completedAnnualReview.score >= 67 ? 4 : -4 : 0)), familyUnity });
+      generationMissions = missionProgress.missions;
+      const generationRewardCash = missionProgress.completed.reduce((sum, mission) => sum + mission.rewardCash, 0);
+      const generationRewardLegacy = missionProgress.completed.reduce((sum, mission) => sum + mission.rewardLegacy, 0);
+      missionProgress.completed.forEach((mission, index) => weeklyNews.push({ id: Date.now() + 2100 + index, week: nextWeek, category: "negocios", headline: `Meta da geração concluída: ${mission.title}`, body: `${mission.rewardTitle} conquistado. A holding recebe ${money.format(mission.rewardCash)} e ${mission.rewardLegacy} pontos de legado.`, impact: "positivo" }));
       const dynastyEndingReady = current.dynastyMode && ((current.generation ?? 2) >= 4 && nextWeek - (current.dynastyStartedWeek ?? nextWeek) >= 80 || operatingDynasty.length === 0 || 100 - outsideFamilyEquity < 15);
       const finalWeeklyNews = dedupeNewsItems(weeklyNews, current.news);
       const weeklyReport = buildWeeklyReport(current, companies, economyAfterNews, nextWeek);
       const becameJourneyReady = !current.founderJourneyReady && !current.founderJourneyComplete && nextWeek >= 130;
-      const nextState: GameState = {
+      let nextState: GameState = {
         ...current,
         week: nextWeek,
         chapter: Math.max(current.chapter, founderAct(nextWeek).id),
-        personalCash: current.personalCash + holdingDividends,
+        difficultyApplied: current.difficulty ?? "executivo",
+        personalCash: current.personalCash + holdingDividends + generationRewardCash,
         survivedRecessions:
           (current.survivedRecessions ?? 0) +
           (current.economy.cycle === "recessao" &&
@@ -7174,6 +7296,7 @@ export default function Home() {
         generationProfile,
         politicalArc,
         generationArc,
+        generationMissions,
         mandateReviews,
         lastMandateReviewWeek,
         dynastyEndingReady,
@@ -7185,7 +7308,7 @@ export default function Home() {
         factionHistory: hostileFaction ? [`Semana ${nextWeek}: ${hostileFaction.name} iniciou oposição.`, ...(current.factionHistory ?? [])].slice(0, 16) : current.factionHistory,
         annualPlan,
         annualReviews,
-        legacy: current.legacy + (completedAnnualReview ? Math.round(completedAnnualReview.score / 12) : 0),
+        legacy: current.legacy + generationRewardLegacy + (completedAnnualReview ? Math.round(completedAnnualReview.score / 12) : 0),
         reputation: clamp(current.reputation + (completedAnnualReview ? completedAnnualReview.score >= 67 ? 4 : -4 : 0)),
         nemesisId: current.nemesisId ?? competitors[0]?.id,
         founderPersonal: current.founderRetired ? current.founderPersonal : {
@@ -7231,6 +7354,13 @@ export default function Home() {
           ...(completedName ? [`Projeto ${completedName} concluído.`] : []),
           ...current.log,
         ].slice(0, 12),
+      };
+      const achievementUnlocks = newlyUnlockedAchievements(nextState);
+      if (achievementUnlocks.length) nextState = {
+        ...nextState,
+        achievements: [...(nextState.achievements ?? []), ...achievementUnlocks],
+        news: achievementUnlocks.map((achievement, index) => ({ id: Date.now() + 2300 + index, week: nextWeek, category: "negocios" as const, headline: `Conquista desbloqueada: ${achievement.title}`, body: "Uma nova marca permanente foi adicionada à história desta holding.", impact: "positivo" as const })).concat(nextState.news).slice(0, 60),
+        log: achievementUnlocks.map((achievement) => `Conquista: ${achievement.title}.`).concat(nextState.log).slice(0, 12),
       };
       setTimeout(
         () => storyBeat(nextState, activeCompany, activeMetrics.valuation),
@@ -9576,6 +9706,7 @@ export default function Home() {
           <button className="inbox-button" onClick={() => setDialog("inbox")}>
             Mensagens {game.unread.length > 0 && <i>{game.unread.length}</i>}
           </button>
+          <button className="difficulty-button" onClick={() => setDialog("difficulty")}>Ritmo: {difficultyProfiles[game.difficulty ?? "executivo"].title}</button>
           <button className={`report-button ${latestActiveReport?.severity ?? ""}`} disabled={!game.weeklyReports?.length} onClick={() => {
             setSelectedReportWeek(game.weeklyReports?.[0]?.week ?? null);
             setReportCompanyId(game.activeCompanyId);
@@ -10634,26 +10765,25 @@ export default function Home() {
           </div>
         </GameModal>
       )}
-      {dialog === "weekly-report" && selectedWeeklyReport && selectedCompanyReport && (
+      {dialog === "weekly-report" && selectedWeeklyReport && (
         <GameModal onClose={() => setDialog(null)} wide>
           <div className="weekly-advice-room">
             <header className="weekly-advice-title">
               <div className="advisor-avatar">HD</div>
-              <div><small>CONSELHO DA SEMANA {selectedWeeklyReport.week}</small><h2>{selectedCompanyReport.severity === "critico" ? "Temos algo importante para resolver." : selectedCompanyReport.severity === "atencao" ? "Eu olharia isto antes de avançar." : "A empresa está respirando. Não complique."}</h2><p>{selectedCompanyReport.summary}</p></div>
-              <span className={`report-severity ${selectedCompanyReport.severity}`}>{selectedCompanyReport.severity}</span>
+              <div><small>TRÊS CARTÕES · SEMANA {selectedWeeklyReport.week}</small><h2>{selectedWeeklyReport.headline}</h2><p>Helena filtrou toda a holding e trouxe apenas o problema mais urgente, a melhor oportunidade e uma recomendação prática.</p></div>
+              <span className={`report-severity ${selectedWeeklyReport.companies.some((company) => company.severity === "critico") ? "critico" : selectedWeeklyReport.companies.some((company) => company.severity === "atencao") ? "atencao" : "normal"}`}>{weeklyDigest.length} cartões</span>
             </header>
-            {selectedWeeklyReport.companies.length > 1 && <nav className="advice-company-tabs">
-              {selectedWeeklyReport.companies.map((report) => <button className={report.companyId === selectedCompanyReport.companyId ? "active" : ""} onClick={() => setReportCompanyId(report.companyId)} key={report.companyId}>{report.companyName}</button>)}
-            </nav>}
-            <section className="advisor-quote"><b>Helena:</b> “Você não precisa entender nove gráficos. Precisa decidir qual incêndio merece o extintor primeiro.”</section>
+            <section className="advisor-quote"><b>Helena:</b> “Eu li os números. Você só precisa escolher onde agir — ou quando não mexer em nada.”</section>
             <section className="weekly-advice-grid">
-              {weeklyAdvice.map((advice) => <article className={advice.tone} key={advice.title}><small>{advice.tone === "urgente" ? "FAÇA AGORA" : advice.tone === "atencao" ? "VALE OLHAR" : "BOA OPORTUNIDADE"}</small><h3>{advice.title}</h3><p>{advice.detail}</p><button onClick={() => followWeeklyAdvice(advice)}>{advice.actionLabel}</button></article>)}
-            </section>
-            <section className="weekly-pulse">
-              {selectedCompanyReport.indicators.filter((item) => ["revenue", "profit", "customers", "stress"].includes(item.key)).map((item) => <div key={item.key}><small>{item.label}</small><b>{formatIndicatorValue(item.after, item.format)}</b><span className={item.key === "stress" ? item.delta > 0 ? "bad" : "good" : item.delta < 0 ? "bad" : "good"}>{item.delta > 0 ? "+" : ""}{formatIndicatorValue(item.delta, item.format)}</span></div>)}
+              {weeklyDigest.map((advice) => <article className={advice.tone} key={`${advice.companyId}-${advice.title}`}><small>{advice.kind === "urgente" ? "PROBLEMA URGENTE" : advice.kind === "oportunidade" ? "OPORTUNIDADE" : "RECOMENDAÇÃO DO ASSESSOR"} · {advice.companyName}</small><h3>{advice.title}</h3><p>{advice.detail}</p><button onClick={() => followWeeklyAdvice(advice, advice.companyId)}>{advice.actionLabel}</button></article>)}
             </section>
             <footer className="weekly-advice-footer"><span>Economia: <b>{selectedWeeklyReport.economyAfter}</b></span><span>Confiança do mercado: <b>{selectedWeeklyReport.confidenceAfter}/100</b></span><button onClick={() => setDialog(null)}>Entendi. Voltar ao jogo.</button></footer>
           </div>
+        </GameModal>
+      )}
+      {dialog === "difficulty" && (
+        <GameModal onClose={() => setDialog(null)} wide>
+          <div className="difficulty-room"><header><small>DIFICULDADE DA HISTÓRIA</small><h2>Escolha quanto o mundo perdoa seus erros</h2><p>Você pode alterar o ritmo durante o save. A dificuldade muda estresse, demissões, margens econômicas, agressividade dos concorrentes e recompensas das próximas gerações.</p></header><div>{(Object.keys(difficultyProfiles) as GameDifficulty[]).map((level) => <button className={(game.difficulty ?? "executivo") === level ? "active" : ""} onClick={() => setGame((state) => ({ ...state, difficulty: level }))} key={level}><small>{level === "relaxado" ? "MAIS TEMPO" : level === "executivo" ? "EQUILIBRADO" : "SEM PIEDADE"}</small><h3>{difficultyProfiles[level].title}</h3><p>{difficultyProfiles[level].description}</p><span>{level === "relaxado" ? "−28% estresse · rivais menos agressivos" : level === "executivo" ? "Regras e recompensas padrão" : "+28% estresse · crises e rivais mais fortes"}</span></button>)}</div><footer><button onClick={() => setDialog(null)}>Continuar a história</button></footer></div>
         </GameModal>
       )}
       {dialog === "inbox" && (
@@ -11616,6 +11746,7 @@ export default function Home() {
                 ))}
               </div>
               <div className="dynasty-progress"><span><i style={{ width: `${dynastyGoalProgress}%` }} /></span><b>{dynastyGoalProgress}% do projeto</b></div>
+              <div className="generation-missions"><header><small>TRÊS MISSÕES DESTA GERAÇÃO</small><h3>Resultados que deixam uma marca permanente</h3><p>As recompensas são entregues automaticamente quando a meta é alcançada.</p></header><div>{(game.generationMissions ?? []).length ? game.generationMissions!.map((mission) => <article className={mission.completed ? "completed" : ""} key={mission.id}><small>{mission.kind.toUpperCase()}</small><h4>{mission.title}</h4><p>{mission.description}</p><span><i style={{ width: `${clamp(mission.progress / Math.max(1, mission.target) * 100)}%` }} /></span><footer><b>{Math.round(mission.progress)} / {mission.target}</b><em>{mission.completed ? `${mission.rewardTitle} conquistado` : `${money.format(mission.rewardCash)} · +${mission.rewardLegacy} legado`}</em></footer></article>) : <div className="missions-pending">Avance uma semana para o conselho definir as três metas desta geração.</div>}</div></div>
               {game.generationProfile && <div className="generation-identity"><small>IDENTIDADE DESTE MANDATO</small><h3>{game.generationProfile.title}</h3><p><b>{game.generationProfile.leader}</b>, {game.generationProfile.age} anos e saúde em {Math.round(game.generationProfile.health)}%, governa pela ideia de “{game.generationProfile.doctrine.toLowerCase()}”. Promessa: {game.generationProfile.promise}. Tolerância ao risco: {game.generationProfile.riskTolerance}%.</p></div>}
               {game.politicalArc && <div className={`political-arc ${game.politicalArc.stage}`}><small>CRISE POLÍTICA · {game.politicalArc.stage.toUpperCase()}</small><h3>{game.politicalArc.challenger} articula contra {game.politicalArc.incumbent}</h3><p>Apoio estimado: <b>{Math.round(game.politicalArc.support)}%</b> · votação em {game.politicalArc.weeksLeft} semanas. O resultado pode trocar o presidente sem encerrar a partida.</p><span><i style={{ width: `${game.politicalArc.support}%` }} /></span></div>}
               {!!game.mandateReviews?.length && <div className="mandate-review-list"><small>AVALIAÇÕES DO CONSELHO</small>{game.mandateReviews.slice(0, 3).map((review) => <article key={`${review.week}-${review.leader}`}><b>{review.score}%</b><div><h4>{review.verdict}</h4><p>Semana {review.week} · {review.profitCompanies} empresas lucrativas · legitimidade {review.legitimacy}% · família {review.familyUnity}%</p></div></article>)}</div>}
@@ -11700,7 +11831,7 @@ export default function Home() {
                 </>
               )}
             </section>}
-            {dynastyTab === "cronica" && <section className="dynasty-history room-tab-panel"><small>CRÔNICA DA FAMÍLIA</small>{(game.dynastyHistory ?? []).slice(0, 8).map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</section>}
+            {dynastyTab === "cronica" && <section className="dynasty-history room-tab-panel"><small>CRÔNICA DA FAMÍLIA</small>{(game.dynastyHistory ?? []).slice(0, 8).map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}<div className="achievement-room"><header><small>CONQUISTAS E FINAIS SECRETOS</small><h3>{game.achievements?.length ?? 0} de {achievementDefinitions.length} descobertos</h3></header><div>{achievementDefinitions.map((definition) => { const unlocked = game.achievements?.find((achievement) => achievement.id === definition.id); return <article className={unlocked ? "unlocked" : "locked"} key={definition.id}><b>{unlocked ? "◆" : "?"}</b><div><small>{unlocked ? `DESCOBERTO NA GERAÇÃO ${unlocked.generation}` : definition.secret ? "FINAL SECRETO" : "AINDA BLOQUEADO"}</small><h4>{unlocked || !definition.secret ? definition.title : "Conquista desconhecida"}</h4><p>{unlocked || !definition.secret ? definition.description : "Suas decisões podem revelar este desfecho."}</p></div></article>; })}</div></div></section>}
           </div>
         </GameModal>
       )}
@@ -11721,6 +11852,7 @@ export default function Home() {
             <header><small>FIM DA CRÔNICA JOGÁVEL · GERAÇÃO {game.dynastyEnding.generation}</small><h2>{game.dynastyEnding.title}</h2><p>{game.dynastyEnding.narrative}</p></header>
             <div className="dynasty-ending-numbers"><div><small>VALOR FINAL</small><b>{compact.format(game.dynastyEnding.value)}</b></div><div><small>EMPRESAS</small><b>{game.dynastyEnding.companies}</b></div><div><small>PESSOAS</small><b>{game.dynastyEnding.people}</b></div><div><small>GERAÇÕES JOGADAS</small><b>{game.dynastyEnding.generation}</b></div></div>
             <section className="dynasty-future"><small>O FUTURO DEPOIS DE VOCÊ</small><h3>O legado de {game.founder} chegou até a geração {game.dynastyEnding.founderLegacyEndsGeneration}</h3><p>{game.dynastyEnding.futureNarrative}</p><div><span><small>ANOS SIMULADOS</small><b>{game.dynastyEnding.futureYears}</b></span><span><small>VALOR NO FUTURO</small><b>{compact.format(game.dynastyEnding.futureValue)}</b></span><span><small>EMPRESAS</small><b>{game.dynastyEnding.futureCompanies}</b></span><span><small>PESSOAS IMPACTADAS</small><b>{game.dynastyEnding.futurePeople}</b></span></div></section>
+            {game.dynastyEnding.secretEndingTitle && <section className="secret-dynasty-ending"><small>FINAL SECRETO DESCOBERTO</small><h3>{game.dynastyEnding.secretEndingTitle}</h3><p>{game.dynastyEnding.secretEndingNarrative}</p></section>}
             <section><h3>Presidentes que escreveram essa história</h3>{[...(game.formerPresidents ?? []), { name: currentLeader, generation: game.generation ?? 1, legacy: "Conduziu o capítulo final.", status: "aliado" }].map((president) => <article key={`${president.name}-${president.generation}`}><b>G{president.generation}</b><div><h4>{president.name}</h4><p>{president.legacy}</p></div></article>)}</section>
             <footer><p>Este save fica registrado como concluído. Você pode consultar a holding e a crônica, mas o tempo não avançará.</p><button onClick={() => { setDialog(null); setView("jornada"); }}>Ver o legado completo</button></footer>
           </div>
@@ -12123,11 +12255,12 @@ export default function Home() {
 function StartScreen({
   onStart,
 }: {
-  onStart: (sector: Sector, holdingName: string, founderName: string) => void;
+  onStart: (sector: Sector, holdingName: string, founderName: string, difficulty: GameDifficulty) => void;
 }) {
   const [sector, setSector] = useState<Sector>("Tecnologia");
   const [holdingName, setHoldingName] = useState("");
   const [founderName, setFounderName] = useState("");
+  const [difficulty, setDifficulty] = useState<GameDifficulty>("executivo");
   const validName = holdingName.trim().length >= 2;
   const validFounder = founderName.trim().length >= 2;
   return (
@@ -12169,7 +12302,7 @@ function StartScreen({
               onChange={(e) => setHoldingName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && validName && validFounder)
-                  onStart(sector, holdingName, founderName);
+                  onStart(sector, holdingName, founderName, difficulty);
               }}
             />
             <em>
@@ -12194,6 +12327,10 @@ function StartScreen({
             </button>
           ))}
         </div>
+        <div className="difficulty-choice">
+          <small>RITMO DA HISTÓRIA</small>
+          <div>{(Object.keys(difficultyProfiles) as GameDifficulty[]).map((level) => <button className={difficulty === level ? "active" : ""} onClick={() => setDifficulty(level)} key={level}><b>{difficultyProfiles[level].title}</b><span>{difficultyProfiles[level].description}</span></button>)}</div>
+        </div>
         <article className="sector-preview">
           <div>
             <small>SEU PRIMEIRO NEGÓCIO</small>
@@ -12202,7 +12339,7 @@ function StartScreen({
           </div>
           <button
             disabled={!validName || !validFounder}
-            onClick={() => onStart(sector, holdingName, founderName)}
+            onClick={() => onStart(sector, holdingName, founderName, difficulty)}
           >
             Começar a história <span>›</span>
           </button>
