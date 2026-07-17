@@ -796,6 +796,19 @@ button {
 .newspaper-masthead > strong {
   font: 700 9px var(--font-geist-mono);
 }
+.news-window-note {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: -12px 0 12px;
+  padding: 10px 13px;
+  background: #17262f;
+  color: #fff;
+  font: 700 7px var(--font-geist-mono);
+  letter-spacing: 0.08em;
+}
+.news-window-note b { color: var(--gold); }
+.news-window-note span { color: #bbb; text-align: right; }
 .news-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

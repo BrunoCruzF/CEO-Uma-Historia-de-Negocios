@@ -335,7 +335,7 @@ type Heir = {
   bond: number;
   ambition: number;
   style: CEOStyle;
-  role: "familia" | "formacao" | "conselho" | "sucessor";
+  role: "familia" | "formacao" | "conselho" | "sucessor" | "ceo";
   history: string[];
   generation?: number;
   parent?: string;
@@ -3721,6 +3721,20 @@ export default function Home() {
   const founderAge =
     (game.founderStartAge ?? 32) + Math.floor((game.week - 1) / 52);
   const heirs = game.heirs ?? [];
+  const eligibleHeirs = heirs.filter(
+    (heir) =>
+      heir.status !== "rompido" &&
+      heir.name !== currentLeader &&
+      heir.competence >= 35 &&
+      heir.readiness >= 20,
+  );
+  const holdingCEOHeir = holdingCompany
+    ? heirs.find((heir) => heir.name === holdingCompany.ceo) ?? null
+    : null;
+  const recentNewsStartWeek = Math.max(1, game.week - 2);
+  const recentNews = game.news.filter(
+    (item) => item.week >= recentNewsStartWeek,
+  );
   const chosenSuccessor = heirs.find(
     (heir) => heir.id === game.chosenSuccessorId,
   );
@@ -5597,7 +5611,9 @@ export default function Home() {
         ...heir,
         competence: clamp(
           heir.competence +
-            (heir.role === "sucessor"
+            (heir.role === "ceo"
+              ? 0.5
+              : heir.role === "sucessor"
               ? 0.34
               : heir.role === "conselho"
                 ? 0.28
@@ -5607,7 +5623,9 @@ export default function Home() {
         ),
         readiness: clamp(
           heir.readiness +
-            (heir.role === "sucessor"
+            (heir.role === "ceo"
+              ? 0.62
+              : heir.role === "sucessor"
               ? 0.42
               : heir.role === "conselho"
                 ? 0.34
@@ -6987,6 +7005,33 @@ export default function Home() {
     const familyExecutive = heirs.find((item) => item.name === name);
     setGame((s) => ({
       ...s,
+      heirs: (s.heirs ?? []).map((heir) =>
+        heir.name === name && familyExecutive
+          ? {
+              ...heir,
+              role: "ceo" as const,
+              competence: clamp(heir.competence + 4),
+              readiness: clamp(heir.readiness + 7),
+              history: [
+                `Semana ${s.week}: assumiu como CEO da ${holdingCompany.name}.`,
+                ...heir.history,
+              ].slice(0, 8),
+              memories: addCharacterMemory(
+                heir.memories,
+                characterMemory(
+                  s.week,
+                  "sucessao",
+                  `Você me confiou a gestão da ${holdingCompany.name}.`,
+                  "orgulhoso",
+                  10,
+                  88,
+                ),
+              ),
+            }
+          : heir.name === holdingCompany.ceo && heir.role === "ceo"
+            ? { ...heir, role: "conselho" as const }
+            : heir,
+      ),
       companies: s.companies.map((c) =>
         c.id !== holdingCompany.id
           ? c
@@ -6994,9 +7039,12 @@ export default function Home() {
               ...c,
               ceo: name,
               ceoStyle: executive?.style ?? familyExecutive?.style ?? c.ceoStyle,
+              boardSupport: familyExecutive
+                ? clamp((c.boardSupport ?? 50) + (familyExecutive.readiness - 45) / 4)
+                : c.boardSupport,
               ceoTrust: name === (s.playerExecutive ?? s.founder) ? 100 : 65,
               ceoInfluence: name === (s.playerExecutive ?? s.founder) ? 10 : 18,
-              ceoLoyalty: name === (s.playerExecutive ?? s.founder) ? 100 : (executive?.loyalty ?? (familyExecutive ? 90 : 65)),
+              ceoLoyalty: name === (s.playerExecutive ?? s.founder) ? 100 : (executive?.loyalty ?? (familyExecutive ? clamp(familyExecutive.bond * .62 + familyExecutive.readiness * .38) : 65)),
               ceoAmbition: name === (s.playerExecutive ?? s.founder) ? 25 : (executive?.ambition ?? familyExecutive?.ambition ?? 55),
               ceoReputation:
                 name === (s.playerExecutive ?? s.founder) ? 65 : (executive?.reputation ?? familyExecutive?.competence ?? 60),
@@ -7004,6 +7052,7 @@ export default function Home() {
               ceoAllianceCompanyId: undefined,
               ceoRivalCompanyId: undefined,
               ceoDemandCooldown: 8,
+              ceoProductCooldown: 4,
               ceoTenure: 0,
               ceoHiddenIssue: undefined,
               ceoHiddenWeeks: 0,
@@ -8697,7 +8746,7 @@ export default function Home() {
           <PageIntro
             kicker="GAZETA DOS NEGÓCIOS"
             title="O mundo não espera sua próxima decisão."
-            text="Vendas, falências, contratações e ciclos econômicos alteram o ambiente de todas as suas empresas."
+            text={`A edição mostra somente as semanas ${recentNewsStartWeek} a ${game.week}. Notícias antigas continuam influenciando personagens e mercado sem ocupar esta página.`}
           />
           <header className="newspaper-masthead">
             <div>
@@ -8711,9 +8760,10 @@ export default function Home() {
               Humor: {game.economy.confidence >= 72 ? "otimista" : game.economy.confidence <= 42 ? "tenso" : "cauteloso"} · {game.economy.confidence}/100
             </strong>
           </header>
-          {game.news.length ? (
+          <div className="news-window-note"><b>ÚLTIMAS 3 SEMANAS</b><span>{recentNews.length} matérias nesta edição · {Math.max(0, game.news.length - recentNews.length)} arquivadas automaticamente</span></div>
+          {recentNews.length ? (
             <div className="news-grid">
-              {game.news.map((item, index) => {
+              {recentNews.map((item, index) => {
                 const repercussion = newsRepercussion(item);
                 return (
                   <article
@@ -8742,7 +8792,7 @@ export default function Home() {
             </div>
           ) : (
             <div className="empty-news">
-              Ainda não há notícias. Coloque o tempo em movimento.
+              Nenhum fato novo nas últimas três semanas. Coloque o tempo em movimento.
             </div>
           )}
         </section>
@@ -10310,14 +10360,19 @@ export default function Home() {
                     <option value={currentLeader}>
                       {currentLeader} — liderança da geração {game.generation ?? 1}
                     </option>
-                    {executives.map((executive) => <option value={executive.name} key={executive.name}>{executive.name} — {executive.label}</option>)}
+                    <optgroup label="Executivos profissionais">
+                      {executives.map((executive) => <option value={executive.name} key={executive.name}>{executive.name} — {executive.label}</option>)}
+                    </optgroup>
+                    {!!eligibleHeirs.length && <optgroup label="Herdeiros da família">
+                      {eligibleHeirs.map((heir) => <option value={heir.name} key={heir.id}>{heir.name} — {heir.style} · prontidão {Math.round(heir.readiness)}%</option>)}
+                    </optgroup>}
                   </select>
                 </label>
                 {holdingCompany.ceo !== currentLeader && <div className="executive-profile">
-                  <b>{executives.find((e) => e.name === holdingCompany.ceo)?.label}</b>
-                  <p>{executives.find((e) => e.name === holdingCompany.ceo)?.profile}</p>
-                  <small>RISCO: {executives.find((e) => e.name === holdingCompany.ceo)?.risk}</small>
-                  <small>PARTICIPAÇÃO: {holdingCompany.ceoEquity ?? 0}% DA EMPRESA</small>
+                  <b>{holdingCEOHeir ? `Herdeiro executivo · ${holdingCEOHeir.relationship}` : executives.find((e) => e.name === holdingCompany.ceo)?.label}</b>
+                  <p>{holdingCEOHeir ? `${holdingCEOHeir.name} administra com estilo de ${holdingCEOHeir.style}. Competência ${Math.round(holdingCEOHeir.competence)}%, prontidão ${Math.round(holdingCEOHeir.readiness)}% e vínculo familiar ${Math.round(holdingCEOHeir.bond)}%.` : executives.find((e) => e.name === holdingCompany.ceo)?.profile}</p>
+                  <small>RISCO: {holdingCEOHeir ? holdingCEOHeir.readiness < 40 ? "Pouca experiência pode reduzir apoio do conselho e aumentar erros." : "Poder familiar pode criar rivalidade com outros herdeiros." : executives.find((e) => e.name === holdingCompany.ceo)?.risk}</small>
+                  <small>{holdingCEOHeir ? `PAPEL NA FAMÍLIA: ${holdingCEOHeir.role.toUpperCase()} · AMBIÇÃO ${Math.round(holdingCEOHeir.ambition)}%` : `PARTICIPAÇÃO: ${holdingCompany.ceoEquity ?? 0}% DA EMPRESA`}</small>
                 </div>}
                 <div className="ceo-settings">
                   <label>Meta principal<select value={holdingCompany.ceoGoal ?? "receita"} onChange={(e) => updateHoldingCompany({ ceoGoal: e.target.value as CEOGoal })}><option value="receita">Crescer receita</option><option value="lucro">Gerar lucro</option><option value="valor">Aumentar valuation</option><option value="cultura">Fortalecer cultura</option></select></label>
