@@ -178,6 +178,7 @@ type Company = {
   ceoAllianceCompanyId?: number;
   ceoRivalCompanyId?: number;
   ceoDemandCooldown?: number;
+  ceoProductCooldown?: number;
   partners?: BusinessPartner[];
 };
 type CapitalProvider = {
@@ -1419,6 +1420,115 @@ const candidates: Employee[] = [
     leaveWeeks: 0,
   },
 ];
+
+const ceoProductNames: Record<Sector, Record<CEOStyle, string[]>> = {
+  Tecnologia: {
+    crescimento: ["Nexo Go", "Plataforma Nexo Pro", "Nexo para Empresas"],
+    eficiencia: ["Nexo Essencial", "Nexo Automação", "Nexo Operações"],
+    inovacao: ["Nexo Quantum", "Projeto Órbita", "Nexo Inteligência"],
+    pessoas: ["Nexo Equipes", "Nexo Comunidade", "Nexo Colabora"],
+  },
+  Alimentação: {
+    crescimento: ["Menu Expresso", "Clube da Mesa", "Linha Sabor Nacional"],
+    eficiencia: ["Menu Inteligente", "Cozinha Enxuta", "Linha Essencial"],
+    inovacao: ["Laboratório de Sabores", "Mesa do Futuro", "Menu Vivo"],
+    pessoas: ["Receitas da Equipe", "Mesa Compartilhada", "Clube da Casa"],
+  },
+  Varejo: {
+    crescimento: ["Coleção Horizonte", "Linha Popular", "Clube de Vantagens"],
+    eficiencia: ["Linha Essencial", "Estoque Inteligente", "Marca Direta"],
+    inovacao: ["Coleção Mutante", "Loja Imersiva", "Linha Amanhã"],
+    pessoas: ["Coleção da Comunidade", "Linha Feita Junto", "Clube da Equipe"],
+  },
+  Agência: {
+    crescimento: ["Pacote Escala", "Marca Nacional", "Operação Conquista"],
+    eficiencia: ["Campanha Expressa", "Estúdio Enxuto", "Pacote Essencial"],
+    inovacao: ["Estúdio Experimental", "Campanha Impossível", "Laboratório Criativo"],
+    pessoas: ["Cocriação 360", "Estúdio Aberto", "Campanha com Propósito"],
+  },
+};
+
+function createCEOProduct(company: Company, week: number, style: CEOStyle): Project {
+  const budgetLimit = Math.max(10000, company.ceoBudget ?? 15000);
+  const profiles: Record<CEOStyle, { budget: number; quality: number; risk: number; reward: number; recurring: number }> = {
+    crescimento: { budget: Math.min(42000, Math.max(20000, budgetLimit)), quality: 54, risk: 38, reward: 36000, recurring: 16500 },
+    eficiencia: { budget: Math.min(26000, Math.max(12000, budgetLimit * .75)), quality: 63, risk: 19, reward: 23000, recurring: 9800 },
+    inovacao: { budget: Math.min(60000, Math.max(28000, budgetLimit * 1.15)), quality: 48, risk: 59, reward: 52000, recurring: 23000 },
+    pessoas: { budget: Math.min(38000, Math.max(18000, budgetLimit * .9)), quality: 61, risk: 28, reward: 30000, recurring: 13500 },
+  };
+  const profile = profiles[style];
+  const names = ceoProductNames[company.sector][style];
+  return {
+    id: Date.now() + company.id * 100 + week,
+    name: names[(week + company.id) % names.length],
+    progress: 0,
+    quality: profile.quality,
+    budget: Math.round(profile.budget),
+    reward: profile.reward,
+    risk: profile.risk,
+    status: "ativo",
+    kind: "produto",
+    recurring: profile.recurring,
+    lifecycle: "desenvolvimento",
+    marketStage: "lancamento",
+    marketWeeks: 0,
+    productPrice: company.price,
+    productMarketing: style === "crescimento" ? 2500 : 0,
+    version: 1,
+    patented: false,
+    rightsOwned: 100,
+    royaltyRevenue: 0,
+  };
+}
+
+function ceoProductProposalMessage(company: Company, product: Project): StoryMessage {
+  const styleLabel: Record<CEOStyle, string> = {
+    crescimento: "crescimento comercial",
+    eficiencia: "eficiência e retorno",
+    inovacao: "inovação agressiva",
+    pessoas: "cultura e clientes",
+  };
+  const startProduct = (state: GameState, pilot = false): GameState => {
+    const planned = pilot ? {
+      ...product,
+      budget: Math.round(product.budget * .65),
+      recurring: Math.round((product.recurring ?? 0) * .75),
+      reward: Math.round(product.reward * .72),
+      quality: Math.max(35, product.quality - 3),
+      risk: Math.max(10, product.risk - 9),
+      name: `${product.name} · piloto`,
+    } : product;
+    return {
+      ...state,
+      companies: state.companies.map((item) => item.id !== company.id || item.projects.some((project) => project.id === product.id) ? item : ({
+        ...item,
+        cash: item.cash - planned.budget,
+        projects: [...item.projects, planned],
+        ceoTrust: clamp((item.ceoTrust ?? 65) + (pilot ? 1 : 4)),
+        ceoLoyalty: clamp((item.ceoLoyalty ?? 65) + (pilot ? 1 : 3)),
+        ceoProductCooldown: 12,
+        ceoLastDecision: `${pilot ? "Negociou um piloto para" : "Iniciou"} ${planned.name}`,
+        ceoHistory: [`Semana ${state.week}: ${pilot ? "piloto aprovado" : "produto aprovado"} — ${planned.name}.`, ...(item.ceoHistory ?? [])].slice(0, 8),
+        ceoMemories: addCharacterMemory(item.ceoMemories, characterMemory(state.week, "produto", pilot ? "Você reduziu meu plano, mas permitiu que eu provasse a ideia." : "Você confiou no produto que propus para a empresa.", pilot ? "cauteloso" : "orgulhoso", pilot ? 3 : 8, pilot ? 58 : 76)),
+      })),
+      news: [{ id: Date.now() + product.id, week: state.week, category: "negocios", headline: `${company.name} inicia desenvolvimento de ${planned.name}`, body: `${company.ceo} recebeu autorização para investir ${money.format(planned.budget)} no novo produto. O plano reflete uma gestão de ${styleLabel[company.ceoStyle ?? "crescimento"]}.`, impact: "neutro" as const }, ...state.news].slice(0, 60),
+    };
+  };
+  return {
+    id: `ceo-product-${company.id}-${product.id}`,
+    from: company.ceo ?? "CEO",
+    role: `CEO da ${company.name}`,
+    initials: (company.ceo ?? "CEO").split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
+    color: "#6f86a8",
+    subject: `Quero lançar ${product.name}`,
+    body: `Minha proposta é investir ${money.format(product.budget)} em um produto de ${styleLabel[company.ceoStyle ?? "crescimento"]}. A projeção inicial é de até ${money.format(product.recurring ?? 0)} por semana quando estiver no mercado. Helena anotou que “projeção” é uma palavra empresarial para esperança com planilha.`,
+    choices: [
+      { label: `Aprovar o projeto · ${money.format(product.budget)}`, tone: "good", result: `${company.ceo} recebeu autorização para desenvolver ${product.name}.`, effect: (state) => startProduct(state) },
+      { label: "Autorizar somente um piloto", result: "O plano foi reduzido a um piloto mais barato e menos arriscado.", effect: (state) => startProduct(state, true) },
+      { label: "Recusar o produto", tone: "risk", result: `${company.ceo} recebeu a ordem de manter o foco na operação atual.`, effect: (state) => ({ ...state, companies: state.companies.map((item) => item.id !== company.id ? item : ({ ...item, ceoTrust: clamp((item.ceoTrust ?? 65) - 4), ceoLoyalty: clamp((item.ceoLoyalty ?? 65) - 3), ceoProductCooldown: 10, ceoLastDecision: `Teve a proposta ${product.name} recusada`, ceoHistory: [`Semana ${state.week}: proposta de ${product.name} recusada pela holding.`, ...(item.ceoHistory ?? [])].slice(0, 8), ceoMemories: addCharacterMemory(item.ceoMemories, characterMemory(state.week, "produto", "Você recusou o produto que eu considerava importante para minha estratégia.", "frustrado", -7, 72)) })) }) },
+    ],
+  };
+}
 
 function newCompany(sector: Sector, id = 1, week = 1): Company {
   const data = sectorData[sector];
@@ -4185,6 +4295,7 @@ export default function Home() {
       }
       let completedName = "";
       let holdingDividends = 0;
+      let ceoProposalMessage: StoryMessage | null = null;
       const newAuditCases: AuditCase[] = [];
 
       let companies = current.companies.map((company) => {
@@ -4251,6 +4362,10 @@ export default function Home() {
         let ceoDemandCooldown = Math.max(
           0,
           (company.ceoDemandCooldown ?? 0) - 1,
+        );
+        let ceoProductCooldown = Math.max(
+          0,
+          (company.ceoProductCooldown ?? 0) - 1,
         );
         let ceoAllianceCompanyId = company.ceoAllianceCompanyId;
         let ceoRivalCompanyId = company.ceoRivalCompanyId;
@@ -4387,7 +4502,7 @@ export default function Home() {
             1,
             company.projects.filter((p) => p.status === "ativo").length,
           );
-        const nextProjects = company.projects.map((p) => {
+        let nextProjects = company.projects.map((p) => {
           if (p.status === "concluido") {
             if (p.kind !== "produto" || p.lifecycle !== "mercado")
               return {
@@ -4464,6 +4579,69 @@ export default function Home() {
                 risk: clamp(p.risk + (setback ? 7 : -1)),
               };
         });
+        const productCadence =
+          ceoStyle === "inovacao"
+            ? 8
+            : ceoStyle === "crescimento"
+              ? 11
+              : ceoStyle === "pessoas"
+                ? 14
+                : 16;
+        const activeProduct = nextProjects.some(
+          (project) => project.kind === "produto" && project.status === "ativo",
+        );
+        const liveProducts = nextProjects.filter(
+          (project) =>
+            project.kind === "produto" &&
+            !["fora_de_linha", "direitos_vendidos"].includes(
+              project.lifecycle ?? "desenvolvimento",
+            ),
+        ).length;
+        const plannedCEOProduct = createCEOProduct(company, nextWeek, ceoStyle);
+        const canCreateProduct =
+          delegated &&
+          (company.ceoTenure ?? 0) >= 5 &&
+          ceoProductCooldown === 0 &&
+          (company.ceoBudget ?? 0) >= 10000 &&
+          !activeProduct &&
+          liveProducts < 6 &&
+          company.cash - ceoExtraCost >= plannedCEOProduct.budget + 45000 &&
+          (nextWeek + company.id) % productCadence === 0;
+        if (canCreateProduct && company.autonomy === "independente") {
+          nextProjects = [...nextProjects, plannedCEOProduct];
+          ceoExtraCost += plannedCEOProduct.budget;
+          ceoProductCooldown = productCadence;
+          ceoTrust = clamp(ceoTrust + 1);
+          ceoInfluence = clamp(ceoInfluence + 2);
+          ceoLastDecision = `Iniciou ${plannedCEOProduct.name} sem pedir autorização`;
+          ceoHistory = [
+            `Semana ${nextWeek}: iniciou autonomamente ${plannedCEOProduct.name} por ${money.format(plannedCEOProduct.budget)}.`,
+            ...ceoHistory,
+          ].slice(0, 8);
+          weeklyNews.push({
+            id: Date.now() + company.id + plannedCEOProduct.id,
+            week: nextWeek,
+            category: "negocios",
+            headline: `${company.ceo} aposta em ${plannedCEOProduct.name} na ${company.name}`,
+            body: `Com autonomia independente, o CEO iniciou um produto de ${money.format(plannedCEOProduct.budget)} sem votação da holding. A promessa é gerar até ${money.format(plannedCEOProduct.recurring ?? 0)} por semana depois do lançamento.`,
+            impact: plannedCEOProduct.risk >= 50 ? "neutro" : "positivo",
+          });
+        } else if (
+          canCreateProduct &&
+          !ceoProposalMessage &&
+          current.unread.length === 0
+        ) {
+          ceoProposalMessage = ceoProductProposalMessage(
+            { ...company, ceoStyle },
+            plannedCEOProduct,
+          );
+          ceoProductCooldown = 6;
+          ceoLastDecision = `Apresentou a proposta ${plannedCEOProduct.name} à holding`;
+          ceoHistory = [
+            `Semana ${nextWeek}: solicitou aprovação para ${plannedCEOProduct.name}.`,
+            ...ceoHistory,
+          ].slice(0, 8);
+        }
         const newlyCompleted = nextProjects.filter(
           (p, i) =>
             p.status === "concluido" &&
@@ -4867,6 +5045,7 @@ export default function Home() {
           ceoAmbition,
           ceoReputation,
           ceoDemandCooldown,
+          ceoProductCooldown,
           ceoAllianceCompanyId,
           ceoRivalCompanyId,
           ceoTenure: delegated ? (company.ceoTenure ?? 0) + 1 : 0,
@@ -5352,6 +5531,7 @@ export default function Home() {
       const employeeMessage =
         !personalMessage &&
         !nemesisMessage &&
+        !ceoProposalMessage &&
         crisisEmployee &&
         !current.unread.some((m) =>
           m.id.startsWith(`employee-${crisisEmployee.id}-`),
@@ -5365,6 +5545,7 @@ export default function Home() {
         !personalMessage &&
         !nemesisMessage &&
         !politicalMessage &&
+        !ceoProposalMessage &&
         !employeeMessage &&
         nextWeek >= 5 &&
         nextWeek - (current.lastNarrativeWeek ?? 0) >= 6 &&
@@ -5686,6 +5867,8 @@ export default function Home() {
           ? [...current.unread, nemesisMessage]
           : politicalMessage
           ? [...current.unread, politicalMessage]
+          : ceoProposalMessage
+          ? [...current.unread, ceoProposalMessage]
           : employeeMessage
           ? [...current.unread, employeeMessage]
           : narrativeMessage
@@ -5736,6 +5919,12 @@ export default function Home() {
       else if (politicalMessage)
         setTimeout(() => {
           setSelectedMessage(politicalMessage);
+          setDialog("inbox");
+          setSpeed(0);
+        }, 100);
+      else if (ceoProposalMessage)
+        setTimeout(() => {
+          setSelectedMessage(ceoProposalMessage);
           setDialog("inbox");
           setSpeed(0);
         }, 100);
@@ -10148,14 +10337,19 @@ export default function Home() {
                       <b>{policy}</b>
                       <span>
                         {policy === "centralizada"
-                          ? "Holding aprova decisões."
+                          ? "CEO recomenda; holding decide."
                           : policy === "supervisionada"
-                            ? "CEO executa e reporta."
-                            : "Mais velocidade, influência e risco."}
+                            ? "CEO propõe produtos e aguarda aprovação."
+                            : "CEO cria produtos sozinho, com mais velocidade e risco."}
                       </span>
                     </button>
                   ))}
                 </div>
+                {holdingCompany.ceo !== currentLeader && <div className="ceo-product-pipeline">
+                  <div><small>PIPELINE AUTÔNOMO</small><b>{holdingCompany.projects.filter((project) => project.kind === "produto" && project.status === "ativo").length} em desenvolvimento</b></div>
+                  <div><small>PRODUTOS FATURANDO</small><b>{holdingCompany.projects.filter((project) => project.kind === "produto" && project.lifecycle === "mercado").length}</b></div>
+                  <p>{holdingCompany.autonomy === "independente" ? `${holdingCompany.ceo} pode iniciar novos produtos dentro do orçamento sem pedir permissão.` : `${holdingCompany.ceo} enviará uma proposta quando enxergar espaço para um novo produto.`}{(holdingCompany.ceoProductCooldown ?? 0) > 0 ? ` Nova análise em aproximadamente ${holdingCompany.ceoProductCooldown} semanas.` : " O pipeline está disponível para uma nova análise."}</p>
+                </div>}
                 {holdingCompany.ceoHiddenIssue && <p className="hidden-issue">Sinal de alerta: existem inconsistências no relatório. Auditoria estimada em {holdingCompany.ceoHiddenWeeks} semanas.</p>}
                 {holdingCompany.ceo !== currentLeader && <div className="ceo-oversight"><button disabled={holdingCompany.cash < 25000} onClick={recognizeCompanyCEO}>Promover a sócio executivo · R$ 25 mil</button><button disabled={holdingCompany.cash < 20000} onClick={() => ceoOversightAction("auditoria")}>Auditar relatórios · R$ 20 mil</button><button disabled={holdingCompany.cash < 35000} onClick={() => ceoOversightAction("conselho")}>Articular conselho · R$ 35 mil</button><button className="danger-action" onClick={() => appointCompanyCEO(currentLeader)}>Demitir CEO e assumir</button></div>}
                 {(holdingCompany.ceoAllianceCompanyId || holdingCompany.ceoRivalCompanyId) && <div className="ceo-relations">
