@@ -196,6 +196,7 @@ type Company = {
   ceoDemandCooldown?: number;
   ceoProductCooldown?: number;
   ceoHireCooldown?: number;
+  workforceTarget?: number;
   partners?: BusinessPartner[];
 };
 type CapitalProvider = {
@@ -1470,76 +1471,67 @@ const basePeople: Employee[] = [
   },
 ];
 
-const candidates: Employee[] = [
-  {
-    id: 20,
-    name: "Noah Freitas",
-    initials: "NF",
-    role: "Engenharia",
-    salary: 7200,
-    market: 7900,
-    skill: 91,
-    morale: 80,
-    loyalty: 55,
-    trait: "Brilhante",
-    ambition: "Quer autonomia total",
-    color: "#778ad9",
-    relation: 50,
-    stress: 16,
-    leaveWeeks: 0,
-  },
-  {
-    id: 21,
-    name: "Maya Prado",
-    initials: "MP",
-    role: "Marketing",
-    salary: 5200,
-    market: 5900,
-    skill: 84,
-    morale: 82,
-    loyalty: 72,
-    trait: "Carismática",
-    ambition: "Quer construir uma marca famosa",
-    color: "#d982a8",
-    relation: 58,
-    stress: 15,
-    leaveWeeks: 0,
-  },
-  {
-    id: 22,
-    name: "Ravi Melo",
-    initials: "RM",
-    role: "Financeiro",
-    salary: 6100,
-    market: 6900,
-    skill: 88,
-    morale: 78,
-    loyalty: 88,
-    trait: "Cauteloso",
-    ambition: "Quer virar diretor",
-    color: "#6da88c",
-    relation: 66,
-    stress: 13,
-    leaveWeeks: 0,
-  },
-  {
-    id: 23,
-    name: "Nina Cruz",
-    initials: "NC",
-    role: "Atendimento",
-    salary: 3500,
-    market: 4100,
-    skill: 79,
-    morale: 86,
-    loyalty: 83,
-    trait: "Empática",
-    ambition: "Quer flexibilidade",
-    color: "#df9d5d",
-    relation: 80,
-    stress: 12,
-    leaveWeeks: 0,
-  },
+const laborFirstNames = [
+  "Ana", "Arthur", "Beatriz", "Bruno", "Camila", "Caio", "Cecília", "Davi",
+  "Elisa", "Enzo", "Fernanda", "Gabriel", "Giovana", "Heitor", "Iara", "Ícaro",
+  "Joana", "Júlio", "Karina", "Leandro", "Lívia", "Lucca", "Marina", "Mateus",
+  "Nina", "Noah", "Olívia", "Pedro", "Rafaela", "Ravi", "Sofia", "Thiago",
+  "Valentina", "Vinícius", "Yasmin", "Yuri",
 ];
+const laborLastNames = [
+  "Alencar", "Azevedo", "Barreto", "Campos", "Cardoso", "Cruz", "Dantas", "Duarte",
+  "Farias", "Freitas", "Gomes", "Leal", "Lima", "Lopes", "Luz", "Macedo",
+  "Medeiros", "Melo", "Moraes", "Neves", "Nogueira", "Paiva", "Pires", "Prado",
+  "Ramos", "Reis", "Rocha", "Salles", "Serra", "Tavares", "Torres", "Valente",
+];
+const laborRoles: Record<Sector, string[]> = {
+  Tecnologia: ["Engenharia", "Produto", "Dados", "Cibersegurança", "UX", "Vendas B2B", "Suporte técnico", "Qualidade"],
+  Alimentação: ["Cozinha", "Operações", "Qualidade", "Compras", "Logística", "Marketing local", "Expansão", "Atendimento"],
+  Varejo: ["Compras", "E-commerce", "Logística", "Vendas", "Visual merchandising", "Atendimento", "CRM", "Estoque"],
+  Agência: ["Criação", "Atendimento", "Mídia", "Estratégia", "Produção", "Comercial", "Redação", "Design"],
+};
+const laborTraits = ["Analítico", "Carismático", "Criativo", "Competitivo", "Diplomático", "Disciplinado", "Empático", "Inventivo", "Pragmático", "Questionador", "Resiliente", "Visionário"];
+const laborAmbitions = ["Quer liderar uma equipe", "Busca estabilidade", "Quer virar diretor", "Sonha em criar um produto", "Quer participação na empresa", "Busca autonomia", "Quer aprender rápido", "Pretende abrir o próprio negócio", "Quer reconhecimento público", "Valoriza equilíbrio pessoal"];
+const laborColors = ["#778ad9", "#d982a8", "#6da88c", "#df9d5d", "#7d72ad", "#57a7a0", "#bd735f", "#8d9a61"];
+
+function createLaborMarket(sector: Sector, companyId: number, week: number, existingNames: string[] = [], count = 10): Employee[] {
+  const marketCycle = Math.floor(Math.max(1, week) / 2);
+  const used = new Set(existingNames);
+  const result: Employee[] = [];
+  for (let index = 0; index < count * 3 && result.length < count; index += 1) {
+    const seed = companyId * 97 + marketCycle * 53 + index * 29 + sector.length * 17;
+    const firstName = laborFirstNames[seed % laborFirstNames.length];
+    const lastName = laborLastNames[(seed * 7 + companyId * 11) % laborLastNames.length];
+    const name = `${firstName} ${lastName}`;
+    if (used.has(name)) continue;
+    used.add(name);
+    const role = laborRoles[sector][(seed * 5 + index) % laborRoles[sector].length];
+    const skill = 58 + (seed % 37);
+    const rolePremium = ["Engenharia", "Dados", "Cibersegurança", "Estratégia", "Expansão"].includes(role) ? 900 : 0;
+    const market = Math.round((2400 + skill * 43 + rolePremium) / 100) * 100;
+    const salary = Math.round((market * (0.86 + ((seed >> 2) % 15) / 100)) / 100) * 100;
+    result.push({
+      id: 200000000 + companyId * 100000 + marketCycle * 100 + result.length,
+      name,
+      initials: `${firstName[0]}${lastName[0]}`.toUpperCase(),
+      role,
+      salary,
+      market,
+      skill,
+      morale: 67 + ((seed * 3) % 25),
+      loyalty: 48 + ((seed * 7) % 40),
+      trait: laborTraits[(seed + index * 3) % laborTraits.length],
+      ambition: laborAmbitions[(seed * 3 + index) % laborAmbitions.length],
+      color: laborColors[(seed + index) % laborColors.length],
+      relation: 45 + (seed % 19),
+      stress: 8 + (seed % 18),
+      weeks: 0,
+      warnings: 0,
+      leaveWeeks: 0,
+    });
+  }
+  return result;
+}
 
 const ceoProductNames: Record<Sector, Record<CEOStyle, string[]>> = {
   Tecnologia: {
@@ -1650,13 +1642,6 @@ function ceoProductProposalMessage(company: Company, product: Project): StoryMes
   };
 }
 
-const ceoHireNames = [
-  "André Luz", "Camila Torres", "Diego Nunes", "Elisa Moraes", "Felipe Vidal",
-  "Giovana Reis", "Hugo Pires", "Iara Campos", "João Valente", "Karina Alves",
-  "Lucas Serra", "Marina Dutra", "Nicolas Barreto", "Olívia Teles", "Pedro Lins",
-  "Renata Paiva", "Samuel Faria", "Talita Neves", "Vinícius Porto", "Yasmin Leal",
-];
-
 function createCEOHireCandidate(company: Company, week: number, style: CEOStyle): Employee {
   const roles: Record<CEOStyle, string[]> = {
     crescimento: ["Comercial", "Marketing", "Parcerias"],
@@ -1677,20 +1662,20 @@ function createCEOHireCandidate(company: Company, week: number, style: CEOStyle)
     pessoas: ["Quer construir uma cultura admirada", "Busca formar novos líderes"],
   };
   const seed = week * 7 + company.id * 11 + company.employees.length * 3;
-  const availableNames = ceoHireNames.filter((name) => !company.employees.some((employee) => employee.name === name));
-  const namePool = availableNames.length ? availableNames : ceoHireNames;
-  const name = namePool[seed % namePool.length];
+  const market = createLaborMarket(company.sector, company.id, week, company.employees.map((employee) => employee.name), 12);
+  const preferredRoles = roles[style];
+  const selected = market.find((candidate) => preferredRoles.some((role) => candidate.role.includes(role))) ?? market[seed % market.length];
+  const name = selected.name;
   const role = roles[style][seed % roles[style].length];
   const skill = 70 + (seed % 22);
-  const market = Math.round((3900 + skill * 38 + (style === "inovacao" ? 700 : 0)) / 100) * 100;
-  const salary = Math.round((market * (0.91 + (seed % 5) / 100)) / 100) * 100;
+  const marketSalary = Math.max(selected.market, Math.round((3900 + skill * 38 + (style === "inovacao" ? 700 : 0)) / 100) * 100);
+  const salary = Math.round((marketSalary * (0.91 + (seed % 5) / 100)) / 100) * 100;
   return {
-    id: Date.now() + company.id * 1000 + week,
+    ...selected,
     name,
-    initials: name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
     role,
     salary,
-    market,
+    market: marketSalary,
     skill,
     morale: 76 + (seed % 11),
     loyalty: 58 + (seed % 25),
@@ -1731,6 +1716,7 @@ function ceoHireProposalMessage(company: Company, candidate: Employee, reason: s
             relation: negotiated ? 46 : 55,
             memories: [characterMemory(state.week, "contratacao", negotiated ? "Aceitei entrar depois de uma negociação dura com a holding." : `A holding aprovou minha contratação indicada por ${company.ceo}.`, negotiated ? "cauteloso" : "confiante", negotiated ? 1 : 5, 68)],
           }],
+          workforceTarget: Math.max(item.workforceTarget ?? item.employees.length, item.employees.length + 1),
           ceoTrust: clamp((item.ceoTrust ?? 65) + (negotiated ? 1 : 4)),
           ceoLoyalty: clamp((item.ceoLoyalty ?? 65) + (negotiated ? 0 : 2)),
           ceoHireCooldown: 12,
@@ -1852,13 +1838,11 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
   const foundingTeam =
     id === 1
       ? basePeople
-      : candidates
-          .slice(0)
-          .sort(() => Math.random() - 0.5)
+      : createLaborMarket(sector, id, week, [], 8)
           .slice(0, 2)
           .map((e, index) => ({
             ...e,
-            id: id + index + 1,
+            id: e.id + index,
             morale: 72 + Math.round(Math.random() * 15),
             loyalty: 48 + Math.round(Math.random() * 35),
             stress: 16 + Math.round(Math.random() * 18),
@@ -1935,6 +1919,7 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
     ceoDemandCooldown: 0,
     ceoProductCooldown: 0,
     ceoHireCooldown: 0,
+    workforceTarget: foundingTeam.length,
     partners: createBusinessPartners(sector, id),
   };
 }
@@ -3978,6 +3963,7 @@ export default function Home() {
             ceoDemandCooldown: c.ceoDemandCooldown ?? 0,
             ceoProductCooldown: c.ceoProductCooldown ?? 0,
             ceoHireCooldown: c.ceoHireCooldown ?? 0,
+            workforceTarget: c.workforceTarget ?? Math.max(3, c.employees.length),
             partners: c.partners ?? createBusinessPartners(c.sector, c.id),
             projects: c.projects.map((p) => ({
               ...p,
@@ -5205,9 +5191,14 @@ export default function Home() {
         const activeProjectCount = nextProjects.filter((project) => project.status === "ativo").length;
         const marketProductCount = nextProjects.filter((project) => project.kind === "produto" && project.lifecycle === "mercado").length;
         const demandDivisor = company.sector === "Agência" ? 18 : company.sector === "Alimentação" ? 700 : company.sector === "Varejo" ? 450 : 180;
-        const targetTeamSize = Math.min(10, Math.max(3, 2 + activeProjectCount * 2 + Math.floor(marketProductCount / 2) + Math.floor(company.customers / demandDivisor)));
+        const demandTeamSize = Math.min(10, Math.max(3, 2 + activeProjectCount * 2 + Math.floor(marketProductCount / 2) + Math.floor(company.customers / demandDivisor)));
+        const previousWorkforceTarget = Math.max(company.workforceTarget ?? company.employees.length, company.employees.length);
+        const replacementVacancy = employees.length < previousWorkforceTarget;
+        const workforceTarget = Math.min(10, Math.max(3, previousWorkforceTarget, Math.min(demandTeamSize, employees.length + 1)));
         const averageStress = employees.length ? employees.reduce((sum, employee) => sum + (employee.stress ?? 0), 0) / employees.length : 100;
-        const hireReason = employees.length < 3
+        const hireReason = replacementVacancy
+          ? `A saída de um funcionário deixou ${previousWorkforceTarget - employees.length} vaga${previousWorkforceTarget - employees.length > 1 ? "s" : ""} aberta${previousWorkforceTarget - employees.length > 1 ? "s" : ""} no plano da equipe.`
+          : employees.length < 3
           ? "A equipe ficou pequena demais para sustentar a operação."
           : averageStress > 58
             ? `O estresse médio chegou a ${Math.round(averageStress)}% e precisamos dividir a carga.`
@@ -5215,17 +5206,22 @@ export default function Home() {
               ? `Temos ${activeProjectCount} projetos ativos para uma equipe de ${employees.length} pessoas.`
               : "A demanda cresceu além da capacidade segura da equipe.";
         const plannedHire = createCEOHireCandidate({ ...company, employees }, nextWeek, ceoStyle);
-        const hiringReserve = 45000 + plannedHire.salary * 8 + 9000;
+        const hiringReserve = replacementVacancy
+          ? 25000 + plannedHire.salary * 4 + 9000
+          : 45000 + plannedHire.salary * 8 + 9000;
+        const hiringReviewDue = replacementVacancy
+          ? (nextWeek + company.id) % 3 === 0
+          : (nextWeek + company.id) % (ceoStyle === "crescimento" ? 9 : ceoStyle === "pessoas" ? 10 : 12) === 0;
         const canHire =
           delegated &&
-          (company.ceoTenure ?? 0) >= 4 &&
-          ceoHireCooldown === 0 &&
-          employees.length < targetTeamSize &&
+          (company.ceoTenure ?? 0) >= (replacementVacancy ? 2 : 4) &&
+          (ceoHireCooldown === 0 || (replacementVacancy && ceoHireCooldown <= 2)) &&
+          employees.length < workforceTarget &&
           employees.length < 10 &&
           company.cash - ceoExtraCost >= hiringReserve &&
-          (cm.profit >= -plannedHire.salary || employees.length < 3) &&
-          (averageStress > 58 || activeProjectCount >= Math.max(1, Math.ceil(employees.length / 2)) || employees.length < 3) &&
-          (nextWeek + company.id) % (ceoStyle === "crescimento" ? 9 : ceoStyle === "pessoas" ? 10 : 12) === 0;
+          (cm.profit >= -plannedHire.salary || replacementVacancy || employees.length < 3) &&
+          (replacementVacancy || averageStress > 58 || activeProjectCount >= Math.max(1, Math.ceil(employees.length / 2)) || employees.length < 3) &&
+          hiringReviewDue;
         if (canHire && company.autonomy === "independente") {
           const badHireChance = .08 + (ceoTrust < 45 ? .08 : 0) + (ceoStyle === "crescimento" ? .03 : 0);
           const badHire = Math.random() < badHireChance;
@@ -5239,7 +5235,7 @@ export default function Home() {
           };
           employees = [...employees, autonomousHire];
           ceoExtraCost += 9000;
-          ceoHireCooldown = 12;
+          ceoHireCooldown = replacementVacancy ? 8 : 12;
           ceoInfluence = clamp(ceoInfluence + 1);
           ceoTrust = clamp(ceoTrust + (badHire ? -3 : 1));
           ceoLastDecision = `Contratou ${autonomousHire.name} para ${autonomousHire.role}`;
@@ -5254,7 +5250,7 @@ export default function Home() {
           });
         } else if (
           canHire &&
-          company.autonomy === "supervisionada" &&
+          (company.autonomy === "supervisionada" || (company.autonomy === "centralizada" && replacementVacancy)) &&
           !ceoProposalMessage &&
           current.unread.length === 0
         ) {
@@ -5528,6 +5524,7 @@ export default function Home() {
           ceoDemandCooldown,
           ceoProductCooldown,
           ceoHireCooldown,
+          workforceTarget,
           ceoAllianceCompanyId,
           ceoRivalCompanyId,
           ceoTenure: delegated ? (company.ceoTenure ?? 0) + 1 : 0,
@@ -6506,6 +6503,7 @@ export default function Home() {
           72,
         )),
       }],
+      workforceTarget: Math.max(c.workforceTarget ?? c.employees.length, c.employees.length + 1),
     }));
     setGame((state) => evolveIdentity(state, { pessoas: 1 }, `contratação de ${candidate.name}`));
     setDialog(null);
@@ -8898,7 +8896,7 @@ export default function Home() {
           <PageIntro
             kicker="A EMPRESA É FEITA DE GENTE"
             title="O que eles não dizem na reunião."
-            text="Cada pessoa tem ambições, limites e uma relação diferente com você. Dinheiro resolve algumas coisas — nunca todas."
+            text={isCEO ? "Cada pessoa tem ambições, limites e uma relação diferente com você. Dinheiro resolve algumas coisas — nunca todas." : `${currentLeader} preside a holding, mas ${active.ceo} é o CEO desta empresa. O controle direto fica com ele; use Meu Grupo para supervisionar ou reassuma o cargo.`}
             action={
               <button disabled={!isCEO} onClick={() => setDialog("hire")}>
                 Conhecer candidatos
@@ -9872,11 +9870,10 @@ export default function Home() {
           <ModalTitle
             label="MERCADO DE TALENTOS"
             title="Uma contratação muda o grupo."
-            text="Além de competência, considere ambição, lealdade e o tipo de cultura que você quer criar."
+            text={`A lista é própria do setor e da região da ${active?.name ?? "empresa"}, com novos perfis a cada duas semanas. Além de competência, considere ambição, lealdade e cultura.`}
           />
           <div className="hire-list">
-            {candidates
-              .filter((x) => !active?.employees.some((e) => e.name === x.name))
+            {(active ? createLaborMarket(active.sector, active.id, game.week, active.employees.map((employee) => employee.name), 10) : [])
               .map((c) => (
                 <button key={c.name} onClick={() => hire(c)}>
                   <Avatar initials={c.initials} color={c.color} />
@@ -10942,9 +10939,9 @@ export default function Home() {
                   <div><small>PIPELINE AUTÔNOMO</small><b>{holdingCompany.projects.filter((project) => project.kind === "produto" && project.status === "ativo").length} em desenvolvimento</b></div>
                   <div><small>PRODUTOS FATURANDO</small><b>{holdingCompany.projects.filter((project) => project.kind === "produto" && project.lifecycle === "mercado").length}</b></div>
                   <p>{holdingCompany.autonomy === "independente" ? `${holdingCompany.ceo} pode iniciar novos produtos dentro do orçamento sem pedir permissão.` : `${holdingCompany.ceo} enviará uma proposta quando enxergar espaço para um novo produto.`}{(holdingCompany.ceoProductCooldown ?? 0) > 0 ? ` Nova análise em aproximadamente ${holdingCompany.ceoProductCooldown} semanas.` : " O pipeline está disponível para uma nova análise."}</p>
-                  <div><small>EQUIPE SOB GESTÃO</small><b>{holdingCompany.employees.length} funcionários</b></div>
+                  <div><small>EQUIPE SOB GESTÃO</small><b>{holdingCompany.employees.length} de {holdingCompany.workforceTarget ?? Math.max(3, holdingCompany.employees.length)} planejados</b></div>
                   <div><small>PRÓXIMA ANÁLISE DE PESSOAS</small><b>{(holdingCompany.ceoHireCooldown ?? 0) > 0 ? `em ${holdingCompany.ceoHireCooldown} semanas` : "disponível"}</b></div>
-                  <p>{holdingCompany.autonomy === "independente" ? `${holdingCompany.ceo} pode contratar quando houver sobrecarga, caixa para oito meses de salário e espaço na equipe.` : holdingCompany.autonomy === "supervisionada" ? `${holdingCompany.ceo} apresentará o candidato, salário e motivo; você poderá aprovar, negociar ou recusar.` : "Contratações continuam sob seu controle direto enquanto a gestão estiver centralizada."}</p>
+                  <p>{holdingCompany.autonomy === "independente" ? `${holdingCompany.ceo} repõe vagas com uma reserva menor e contrata para expansão quando houver sobrecarga e caixa para oito meses de salário.` : holdingCompany.autonomy === "supervisionada" ? `${holdingCompany.ceo} apresentará o candidato, salário e motivo; reposições entram na análise prioritária.` : `${holdingCompany.ceo} pode pedir autorização para repor uma saída; contratações de expansão continuam sob seu controle direto.`}</p>
                 </div>}
                 {holdingCompany.ceoHiddenIssue && <p className="hidden-issue">Sinal de alerta: existem inconsistências no relatório. Auditoria estimada em {holdingCompany.ceoHiddenWeeks} semanas.</p>}
                 {holdingCompany.ceo !== currentLeader && <div className="ceo-oversight"><button disabled={holdingCompany.cash < 25000} onClick={recognizeCompanyCEO}>Promover a sócio executivo · R$ 25 mil</button><button disabled={holdingCompany.cash < 20000} onClick={() => ceoOversightAction("auditoria")}>Auditar relatórios · R$ 20 mil</button><button disabled={holdingCompany.cash < 35000} onClick={() => ceoOversightAction("conselho")}>Articular conselho · R$ 35 mil</button><button className="danger-action" onClick={() => appointCompanyCEO(currentLeader)}>Demitir CEO e assumir</button></div>}
