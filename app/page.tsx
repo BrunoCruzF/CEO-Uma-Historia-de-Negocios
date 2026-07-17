@@ -364,7 +364,37 @@ type FormerPresident = {
   status: "aliado" | "neutro" | "oposicao";
   legacy: string;
   lastMove?: string;
+  age: number;
+  health: number;
+  alive: boolean;
+  memoir?: string;
+  secret?: string;
+  secretRevealed?: boolean;
+  memoirPublished?: boolean;
 };
+type PoliticalArc = {
+  id: string;
+  challenger: string;
+  incumbent: string;
+  startedWeek: number;
+  weeksLeft: number;
+  support: number;
+  stage: "rumores" | "campanha" | "votacao";
+};
+type GenerationProfile = {
+  leader: string;
+  generation: number;
+  style: CEOStyle;
+  title: string;
+  doctrine: string;
+  promise: string;
+  riskTolerance: number;
+  startWeek: number;
+  age: number;
+  health: number;
+};
+type MandateReview = { generation: number; leader: string; week: number; score: number; verdict: string; profitCompanies: number; legitimacy: number; familyUnity: number };
+type DynastyEnding = { type: "centenario" | "imperio" | "fragmentacao" | "queda"; title: string; narrative: string; generation: number; value: number; companies: number; people: number };
 type DynastyTransition = {
   week: number;
   outgoing: string;
@@ -448,6 +478,13 @@ type GameState = {
   dynastyHistory?: string[];
   formerPresidents?: FormerPresident[];
   lastDynastyTransition?: DynastyTransition;
+  politicalArc?: PoliticalArc;
+  generationProfile?: GenerationProfile;
+  mandateReviews?: MandateReview[];
+  lastMandateReviewWeek?: number;
+  dynastyEndingReady?: boolean;
+  dynastyConcluded?: boolean;
+  dynastyEnding?: DynastyEnding;
   lastDynastyEventWeek?: number;
   completedDynastyGoals?: string[];
   recentNewsTopics?: string[];
@@ -2006,6 +2043,10 @@ const initialState: GameState = {
   outsideFamilyEquity: 0,
   dynastyHistory: [],
   formerPresidents: [],
+  mandateReviews: [],
+  lastMandateReviewWeek: 0,
+  dynastyEndingReady: false,
+  dynastyConcluded: false,
   lastDynastyEventWeek: 0,
   completedDynastyGoals: [],
   recentNewsTopics: [],
@@ -2874,6 +2915,83 @@ function dynastyStoryMessage(state: GameState): StoryMessage {
   };
 }
 
+function politicalArcMessage(state: GameState, arc: PoliticalArc, challenger: FormerPresident): StoryMessage {
+  const incumbent = state.playerExecutive ?? state.founder;
+  const finishVote = (game: GameState): GameState => {
+    const currentChallenger = (game.formerPresidents ?? []).find((president) => president.name === challenger.name) ?? challenger;
+    const takeoverStrength = arc.support * .5 + currentChallenger.influence * .28 + (100 - (game.dynastyLegitimacy ?? 50)) * .22;
+    const challengerWins = Math.random() * 100 < takeoverStrength;
+    if (!challengerWins) return {
+      ...game,
+      politicalArc: undefined,
+      dynastyLegitimacy: clamp((game.dynastyLegitimacy ?? 50) + 12),
+      formerPresidents: (game.formerPresidents ?? []).map((president) => president.name === challenger.name ? { ...president, influence: clamp(president.influence - 22), relationship: clamp(president.relationship - 10), status: "oposicao" as const, lastMove: `Perdeu uma votação de confiança contra ${incumbent}.` } : president),
+      dynastyHistory: [`Semana ${game.week}: ${incumbent} derrotou a tentativa de retorno de ${challenger.name}.`, ...(game.dynastyHistory ?? [])].slice(0, 18),
+    };
+    const incumbentStyle = game.generationProfile?.style ?? "crescimento";
+    const outgoing = formerPresidentProfile(game, incumbent, game.generation ?? 2, game.dynastyStartedWeek ?? game.week - 1, game.week, incumbentStyle);
+    return {
+      ...game,
+      playerExecutive: challenger.name,
+      dynastyStartedWeek: game.week,
+      dynastyLegitimacy: clamp(38 + challenger.reputation * .25),
+      generationProfile: { ...generationProfileFor(challenger.name, game.generation ?? 2, challenger.style, game.week, challenger.age), health: challenger.health, title: "A geração da restauração", promise: "Provar que o retorno ao poder salvou a holding" },
+      lastDynastyTransition: createDynastyTransition(game, incumbent, challenger.name, game.generation ?? 2),
+      politicalArc: undefined,
+      formerPresidents: [outgoing, ...(game.formerPresidents ?? []).filter((president) => president.name !== challenger.name && president.name !== incumbent)],
+      companies: game.companies.map((company) => company.ceo === incumbent ? { ...company, ceo: challenger.name, ceoStyle: challenger.style, autonomy: "supervisionada", ceoLastDecision: "Assumiu após vencer uma votação de confiança" } : company),
+      dynastyHistory: [`Semana ${game.week}: ${challenger.name} derrubou ${incumbent} e retornou à presidência.`, ...(game.dynastyHistory ?? [])].slice(0, 18),
+      news: [{ id: Date.now(), week: game.week, category: "negocios" as const, headline: `${challenger.name} vence votação e retorna ao comando`, body: `${incumbent} perdeu a confiança do conselho, mas a Dinastia continua sob uma presidência restaurada.`, impact: "negativo" as const }, ...game.news].slice(0, 60),
+    };
+  };
+  return {
+    id: `political-arc-${arc.id}`,
+    from: "Secretaria do conselho",
+    role: "Votação extraordinária da holding",
+    initials: "CV",
+    color: "#9b4d52",
+    subject: `${challenger.name} apresentou uma moção contra ${incumbent}`,
+    body: `Depois de semanas de articulação, ${challenger.name} chegou à votação com apoio estimado em ${Math.round(arc.support)}%. Se o conselho retirar sua confiança, o ex-presidente voltará ao comando e você continuará a Dinastia sob o líder restaurado.`,
+    choices: [
+      { label: "Negociar retirada · R$ 120 mil", hint: "Encerra a crise, mas fortalece o antecessor", result: "Um acordo político evitou a votação.", effect: (game) => ({ ...game, personalCash: Math.max(0, game.personalCash - 120000), politicalArc: undefined, familyUnity: clamp((game.familyUnity ?? 70) + 5), dynastyLegitimacy: clamp((game.dynastyLegitimacy ?? 50) - 5), formerPresidents: (game.formerPresidents ?? []).map((president) => president.name === challenger.name ? { ...president, status: "neutro" as const, influence: clamp(president.influence + 8), relationship: clamp(president.relationship + 5), lastMove: "Retirou a moção após negociar espaço e recursos." } : president) }) },
+      { label: "Expor o segredo do antigo mandato", tone: "risk", hint: "Reduz apoio do rival, mas fere a família e a reputação", result: "O segredo chegou à imprensa antes da votação.", effect: (game) => ({ ...game, politicalArc: { ...arc, support: clamp(arc.support - 24), weeksLeft: 1, stage: "votacao" }, reputation: clamp(game.reputation - 7), familyUnity: clamp((game.familyUnity ?? 70) - 12), formerPresidents: (game.formerPresidents ?? []).map((president) => president.name === challenger.name ? { ...president, secretRevealed: true, relationship: clamp(president.relationship - 25), status: "oposicao" as const, lastMove: "Teve um segredo do mandato exposto pela presidência atual." } : president) }) },
+      { label: "Ir à votação de confiança", tone: "good", hint: "Você pode vencer ou perder a presidência — o jogo continua", result: "O conselho votou. O resultado redesenhou a Dinastia.", effect: finishVote },
+    ],
+  };
+}
+
+function leaderDeathMessage(state: GameState, profile: GenerationProfile): StoryMessage {
+  const candidates = (state.heirs ?? []).filter((heir) => heir.name !== profile.leader && heir.status !== "rompido").sort((a, b) => b.readiness + b.competence - a.readiness - a.competence).slice(0, 2);
+  const transfer = (game: GameState, successor: Heir): GameState => {
+    const deceased = { ...formerPresidentProfile(game, profile.leader, game.generation ?? 2, profile.startWeek, game.week, profile.style), age: profile.age, health: 0, alive: false, influence: 0, lastMove: "Morreu no exercício da presidência e tornou-se parte da memória da Dinastia." };
+    return {
+      ...game,
+      playerExecutive: successor.name,
+      generation: (game.generation ?? 2) + 1,
+      dynastyStartedWeek: game.week,
+      dynastyLegitimacy: clamp(28 + successor.readiness * .35),
+      generationProfile: generationProfileFor(successor.name, (game.generation ?? 2) + 1, successor.style, game.week, successor.startAge + Math.round(game.week / 52)),
+      lastDynastyTransition: createDynastyTransition(game, profile.leader, successor.name, (game.generation ?? 2) + 1),
+      formerPresidents: [deceased, ...(game.formerPresidents ?? []).filter((president) => president.name !== profile.leader)],
+      politicalArc: undefined,
+      heirs: (game.heirs ?? []).map((heir) => heir.id === successor.id ? { ...heir, role: "sucessor" as const, support: 72, resentment: 4 } : heir.name === profile.leader ? { ...heir, role: "conselho" as const } : heir),
+      companies: game.companies.map((company) => company.ceo === profile.leader ? { ...company, ceo: successor.name, ceoStyle: successor.style, autonomy: "supervisionada", ceoLastDecision: "Assumiu durante uma sucessão de emergência" } : company),
+      dynastyHistory: [`Semana ${game.week}: ${profile.leader} morreu no cargo e ${successor.name} assumiu em emergência.`, ...(game.dynastyHistory ?? [])].slice(0, 20),
+    };
+  };
+  const fallback = candidates[0];
+  return {
+    id: `leader-death-${profile.leader}-${state.week}`,
+    from: "Conselho de família",
+    role: "Sucessão de emergência",
+    initials: "SF",
+    color: "#3d4148",
+    subject: `${profile.leader} morreu no exercício da presidência`,
+    body: `A Dinastia perdeu seu líder aos ${profile.age} anos. Não existe tempo para uma campanha normal: família, CEOs e investidores exigem uma nova presidência imediatamente.`,
+    choices: candidates.length ? candidates.map((candidate) => ({ label: `Empossar ${candidate.name}`, hint: `Prontidão ${Math.round(candidate.readiness)}% · competência ${Math.round(candidate.competence)}%`, result: `${candidate.name} assumiu a holding em uma sucessão de emergência.`, effect: (game: GameState) => transfer(game, candidate) })) : [{ label: "Entregar o comando ao conselho profissional", tone: "risk" as const, result: "Um presidente interino externo assumiu enquanto a família se reorganiza.", effect: (game: GameState) => ({ ...game, playerExecutive: "Presidência Interina", dynastyLegitimacy: 25, generationProfile: generationProfileFor("Presidência Interina", game.generation ?? 2, "eficiencia", game.week, 51), politicalArc: undefined, dynastyHistory: [`Semana ${game.week}: a família ficou sem sucessor e entregou a holding a uma presidência interina.`, ...(game.dynastyHistory ?? [])].slice(0, 20) }) }],
+  };
+}
+
 function ceoPoliticalMessage(company: Company, state: GameState): StoryMessage {
   const ceo = company.ceo ?? "CEO";
   const ambition = company.ceoAmbition ?? 50;
@@ -3578,6 +3696,7 @@ function formerPresidentProfile(state: GameState, name: string, generation: numb
   const heir = (state.heirs ?? []).find((candidate) => candidate.name === name);
   const relationship = heir ? clamp(heir.bond - (heir.resentment ?? 0) * .35 + (heir.support ?? 50) * .25) : clamp((state.familyUnity ?? 70) * .8);
   const influence = clamp(30 + state.reputation * .25 + (state.dynastyLegitimacy ?? 50) * .25 + (heir?.equity ?? state.founderHoldingEquity ?? 0) * .3);
+  const age = Math.round(name === state.founder ? (state.founderStartAge ?? 28) + endWeek / 52 : (heir?.startAge ?? 24) + Math.max(0, endWeek - startWeek) / 52);
   return {
     name,
     generation,
@@ -3591,7 +3710,44 @@ function formerPresidentProfile(state: GameState, name: string, generation: numb
     status: relationship >= 68 ? "aliado" : relationship < 42 ? "oposicao" : "neutro",
     legacy: generation === 1 ? `Fundou a ${state.holdingName}.` : `Conduziu a holding por ${Math.max(1, endWeek - startWeek)} semanas.`,
     lastMove: "Entregou o comando, mas manteve voz no conselho.",
+    age,
+    health: clamp(100 - Math.max(0, age - 58) * 2.2),
+    alive: true,
+    memoir: `Os anos em que ${name} comandou a geração ${generation}`,
+    secret: generation === 1 ? "Um acordo dos primeiros anos transferiu garantias pessoais para a holding." : "Uma decisão importante do mandato foi tomada sem registrar a discordância do conselho.",
   };
+}
+
+function generationProfileFor(leader: string, generation: number, style: CEOStyle, week: number, age = 38): GenerationProfile {
+  const profiles: Record<CEOStyle, { title: string; doctrine: string; promise: string; risk: number }> = {
+    crescimento: { title: "A geração da conquista", doctrine: "Crescer antes que os rivais ocupem o espaço", promise: "Entregar uma holding maior do que recebeu", risk: 78 },
+    eficiencia: { title: "A geração da disciplina", doctrine: "Proteger caixa, margem e controle", promise: "Eliminar desperdícios sem desmontar o legado", risk: 34 },
+    inovacao: { title: "A geração da reinvenção", doctrine: "Criar o próximo negócio antes que o atual envelheça", promise: "Lançar produtos que mudem a identidade do grupo", risk: 67 },
+    pessoas: { title: "A geração da união", doctrine: "Pessoas e família sustentam resultados duradouros", promise: "Deixar uma cultura mais forte que qualquer presidente", risk: 45 },
+  };
+  const profile = profiles[style];
+  return { leader, generation, style, title: profile.title, doctrine: profile.doctrine, promise: profile.promise, riskTolerance: profile.risk, startWeek: week, age, health: clamp(100 - Math.max(0, age - 58) * 2) };
+}
+
+function createDynastyEnding(state: GameState): DynastyEnding {
+  const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+  const value = state.personalCash + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0);
+  const people = operating.reduce((sum, company) => sum + company.employees.length, 0);
+  const control = 100 - (state.outsideFamilyEquity ?? 0);
+  const type: DynastyEnding["type"] = operating.length === 0 || value < 100000
+    ? "queda"
+    : control < 35 || (state.familyUnity ?? 70) < 30
+      ? "fragmentacao"
+      : (state.generation ?? 1) >= 5 && (state.familyUnity ?? 0) >= 65 && control >= 65
+        ? "centenario"
+        : "imperio";
+  const copy = {
+    centenario: ["Uma dinastia centenária", `A família atravessou ${state.generation} gerações sem perder a capacidade de permanecer unida.`],
+    imperio: ["O império empresarial", `A holding sobreviveu pela força dos negócios, mesmo carregando disputas que jamais desapareceram.`],
+    fragmentacao: ["O sobrenome se dividiu", `A riqueza permaneceu, mas controle e afeto se espalharam entre facções que já não reconhecem uma única liderança.`],
+    queda: ["O fim da holding", `Depois de gerações de decisões, o grupo perdeu suas operações e restou apenas a história do que poderia ter sido.`],
+  }[type];
+  return { type, title: copy[0], narrative: copy[1], generation: state.generation ?? 1, value, companies: operating.length, people };
 }
 
 const averageStress = (company: Company) => company.employees.length
@@ -3852,6 +4008,7 @@ export default function Home() {
     | "annual-plan"
     | "founder-finale"
     | "dynasty-transition"
+    | "dynasty-ending"
     | "help"
     | null
   >(null);
@@ -3978,7 +4135,7 @@ export default function Home() {
           familyFoundationEquity: parsed.familyFoundationEquity ?? 0,
           outsideFamilyEquity: parsed.outsideFamilyEquity ?? 0,
           dynastyHistory: parsed.dynastyHistory ?? [],
-          formerPresidents: parsed.formerPresidents ?? (parsed.dynastyMode ? [
+          formerPresidents: (parsed.formerPresidents ?? (parsed.dynastyMode ? [
             {
               name: parsed.founder,
               generation: 1,
@@ -4009,8 +4166,22 @@ export default function Home() {
                 legacy: `Liderou uma geração anterior da ${parsed.holdingName ?? "holding"}.`,
                 lastMove: "Ocupa uma cadeira no conselho da família.",
               })),
-          ] : []),
+          ] : [])).map((president: FormerPresident) => ({
+            ...president,
+            age: president.age ?? Math.round((president.name === parsed.founder ? parsed.founderStartAge ?? 28 : 32) + (parsed.week - president.startWeek) / 52),
+            health: president.health ?? (president.name === parsed.founder ? parsed.founderHealth ?? 80 : 86),
+            alive: president.alive ?? !(president.name === parsed.founder && parsed.founderDeceased),
+            memoir: president.memoir ?? `Memórias do mandato de ${president.name}`,
+            secret: president.secret ?? "Uma decisão do mandato nunca foi explicada por completo ao conselho.",
+          })),
           lastDynastyTransition: parsed.lastDynastyTransition,
+          politicalArc: parsed.politicalArc,
+          generationProfile: parsed.generationProfile ? { ...parsed.generationProfile, age: parsed.generationProfile.age ?? 42, health: parsed.generationProfile.health ?? 88 } : (parsed.dynastyMode ? generationProfileFor(parsed.playerExecutive ?? parsed.founder, parsed.generation ?? 2, parsed.heirs?.find((heir: Heir) => heir.name === (parsed.playerExecutive ?? parsed.founder))?.style ?? "crescimento", parsed.dynastyStartedWeek ?? parsed.week, 42) : undefined),
+          mandateReviews: parsed.mandateReviews ?? [],
+          lastMandateReviewWeek: parsed.lastMandateReviewWeek ?? parsed.dynastyStartedWeek ?? 0,
+          dynastyEndingReady: parsed.dynastyEndingReady ?? false,
+          dynastyConcluded: parsed.dynastyConcluded ?? false,
+          dynastyEnding: parsed.dynastyEnding,
           lastDynastyEventWeek: parsed.lastDynastyEventWeek ?? 0,
           completedDynastyGoals: parsed.completedDynastyGoals ?? [],
           recentNewsTopics: parsed.recentNewsTopics ?? [],
@@ -4421,6 +4592,20 @@ export default function Home() {
     notify(`O futuro foi escrito: ${legacyOutcome.title.toLowerCase()}. Esse epílogo agora faz parte do save.`);
   };
 
+  const concludeDynasty = () => {
+    if (!game.dynastyMode || !game.dynastyEndingReady || game.dynastyConcluded) return;
+    const ending = createDynastyEnding(game);
+    setGame((state) => ({
+      ...state,
+      dynastyConcluded: true,
+      dynastyEnding: ending,
+      dynastyHistory: [`Semana ${state.week}: ${ending.title} encerrou a crônica principal da família.`, ...(state.dynastyHistory ?? [])].slice(0, 20),
+      news: [{ id: Date.now(), week: state.week, category: "negocios", headline: ending.title, body: ending.narrative, impact: ending.type === "centenario" || ending.type === "imperio" ? "positivo" : "negativo" }, ...state.news].slice(0, 60),
+    }));
+    setSpeed(0);
+    setDialog("dynasty-ending");
+  };
+
   useEffect(() => {
     if (!game.started) return;
     const completed = game.completedMissions ?? [];
@@ -4763,7 +4948,7 @@ export default function Home() {
   };
 
   const advanceWeek = () => {
-    if (!active || active.sold || active.bankrupt) return;
+    if (!active || active.sold || active.bankrupt || game.dynastyConcluded) return;
     setGame((current) => {
       const nextWeek = current.week + 1;
       const controlledExecutive = current.playerExecutive ?? current.founder;
@@ -6423,6 +6608,10 @@ export default function Home() {
         }
       }
 
+      if (founderDeceased) {
+        formerPresidents = formerPresidents.map((president) => president.name === current.founder ? { ...president, alive: false, health: 0, influence: 0, lastMove: "Seu poder político tornou-se legado histórico." } : president);
+      }
+
       let factions = syncHoldingFactions({ ...current, companies, heirs: dynastyHeirs }, companies).map((faction) => {
         const plan = current.annualPlan?.priority;
         const aligned = faction.agenda === plan ||
@@ -6455,6 +6644,73 @@ export default function Home() {
         weeklyNews.push({ id: Date.now() + 1700, week: nextWeek, category: "negocios", headline: `${current.holdingName} encerra o ano com ${completedAnnualReview.score}% das promessas cumpridas`, body: `${completedAnnualReview.verdict}. Conselho, mercado e funcionários agora avaliam a distância entre o discurso e a execução.`, impact: completedAnnualReview.score >= 67 ? "positivo" : "negativo" });
         annualPlan = undefined;
       }
+      let generationProfile = current.generationProfile;
+      if (current.dynastyMode && generationProfile) {
+        companies = companies.map((company) => {
+          if (company.sold || company.bankrupt || company.closed || company.ceo !== controlledExecutive) return company;
+          return generationProfile.style === "crescimento"
+            ? { ...company, customers: company.customers + (nextWeek % 2 === 0 ? 1 : 0), employees: company.employees.map((employee) => ({ ...employee, stress: clamp((employee.stress ?? 0) + .12) })) }
+            : generationProfile.style === "eficiencia"
+              ? { ...company, efficiency: Math.max(.68, (company.efficiency ?? 1) - .0018), reputation: clamp(company.reputation - (nextWeek % 12 === 0 ? 1 : 0)) }
+              : generationProfile.style === "inovacao"
+                ? { ...company, projects: company.projects.map((project) => project.status === "ativo" ? { ...project, progress: clamp(project.progress + .38), risk: clamp(project.risk + .08) } : project) }
+                : { ...company, employees: company.employees.map((employee) => ({ ...employee, morale: clamp(employee.morale + .2), loyalty: clamp(employee.loyalty + .1), stress: clamp((employee.stress ?? 0) - .12) })) };
+        });
+        if (nextWeek % 52 === 0) {
+          const age = generationProfile.age + 1;
+          const health = clamp(generationProfile.health - Math.max(1.5, 1.5 + (age - 60) * .28));
+          generationProfile = { ...generationProfile, age, health };
+        }
+      }
+      if (current.dynastyMode && nextWeek % 52 === 0) {
+        formerPresidents = formerPresidents.map((president) => {
+          if (!president.alive) return president;
+          const age = president.age + 1;
+          const health = clamp(president.health - Math.max(2, 2 + (age - 62) * .32));
+          const dies = health <= 4 || (age >= 82 && Math.random() < .18);
+          if (dies) weeklyNews.push({ id: Date.now() + president.generation * 1900, week: nextWeek, category: "pessoas", headline: `${president.name}, ex-presidente da geração ${president.generation}, morre aos ${age} anos`, body: `${president.legacy} Sua morte altera o equilíbrio político e transforma influência em memória.`, impact: "negativo" });
+          const publishMemoir = !dies && age >= 68 && !president.memoirPublished && Math.random() < .38;
+          if (publishMemoir) weeklyNews.push({ id: Date.now() + president.generation * 1910, week: nextWeek, category: "negocios", headline: `${president.name} publica memórias sobre os anos no poder`, body: `“${president.memoir}” reacende debates sobre decisões, alianças e conflitos que a família preferia esquecer.`, impact: president.status === "oposicao" ? "negativo" : "neutro" });
+          const revealSecret = publishMemoir && president.status === "oposicao" && !president.secretRevealed && Math.random() < .45;
+          if (revealSecret) weeklyNews.push({ id: Date.now() + president.generation * 1920, week: nextWeek, category: "negocios", headline: `Livro de ${president.name} revela segredo da antiga gestão`, body: president.secret ?? "Um episódio omitido voltou ao centro do conselho.", impact: "negativo" });
+          return { ...president, age, health, alive: !dies, influence: dies ? 0 : president.influence, memoirPublished: president.memoirPublished || publishMemoir, secretRevealed: president.secretRevealed || revealSecret, lastMove: dies ? "Seu poder tornou-se legado histórico." : revealSecret ? "Publicou um segredo que atingiu a nova geração." : publishMemoir ? "Publicou suas memórias presidenciais." : president.lastMove };
+        });
+      }
+      let politicalArc = current.politicalArc;
+      if (current.dynastyMode && politicalArc) {
+        const weeksLeft = Math.max(0, politicalArc.weeksLeft - 1);
+        const stage = weeksLeft <= 1 ? "votacao" as const : weeksLeft <= 3 ? "campanha" as const : "rumores" as const;
+        politicalArc = { ...politicalArc, weeksLeft, stage, support: clamp(politicalArc.support + (50 - dynastyLegitimacy) / 45 + Math.random() * 3 - 1.5) };
+        if (weeksLeft === 3) weeklyNews.push({ id: Date.now() + 1930, week: nextWeek, category: "negocios", headline: `${politicalArc.challenger} transforma rumores em campanha contra a presidência`, body: `A articulação já reúne apoio estimado em ${Math.round(politicalArc.support)}% do conselho. A votação se aproxima.`, impact: "negativo" });
+      }
+      if (current.dynastyMode && !politicalArc && nextWeek - (current.dynastyStartedWeek ?? nextWeek) >= 14) {
+        const challenger = formerPresidents.filter((president) => president.alive && president.status === "oposicao" && president.influence >= 48).sort((a, b) => b.influence + b.ambition - a.influence - a.ambition)[0];
+        if (challenger && (nextWeek + challenger.generation) % 17 === 0) {
+          politicalArc = { id: `${challenger.generation}-${nextWeek}`, challenger: challenger.name, incumbent: controlledExecutive, startedWeek: nextWeek, weeksLeft: 6, support: clamp(challenger.influence * .55 + challenger.ambition * .2 + (100 - dynastyLegitimacy) * .25), stage: "rumores" };
+          weeklyNews.push({ id: Date.now() + 1940, week: nextWeek, category: "negocios", headline: `${challenger.name} reúne antigos aliados em encontro reservado`, body: `O ex-presidente nega uma tentativa de retorno, mas sua influência de ${Math.round(challenger.influence)}% preocupa o governo atual.`, impact: "negativo" });
+        }
+      }
+      const arcChallenger = politicalArc ? formerPresidents.find((president) => president.name === politicalArc?.challenger) : undefined;
+      const politicalArcDecision = politicalArc && politicalArc.weeksLeft === 0 && arcChallenger && current.unread.length === 0
+        ? politicalArcMessage({ ...current, week: nextWeek, companies, formerPresidents, politicalArc }, politicalArc, arcChallenger)
+        : null;
+      const leaderDeathDecision = current.dynastyMode && generationProfile && generationProfile.health <= 4 && current.unread.length === 0
+        ? leaderDeathMessage({ ...current, week: nextWeek, companies, formerPresidents, generationProfile }, generationProfile)
+        : null;
+      let mandateReviews = current.mandateReviews ?? [];
+      let lastMandateReviewWeek = current.lastMandateReviewWeek ?? current.dynastyStartedWeek ?? 0;
+      if (current.dynastyMode && nextWeek - lastMandateReviewWeek >= 26) {
+        const operating = companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+        const profitCompanies = operating.filter((company) => companyMetrics(company, economyAfterNews).profit >= 0).length;
+        const score = Math.round(clamp((operating.length ? profitCompanies / operating.length * 35 : 0) + dynastyLegitimacy * .3 + familyUnity * .2 + current.reputation * .15));
+        const verdict = score >= 78 ? "Mandato dominante" : score >= 58 ? "Mandato aprovado com ressalvas" : score >= 40 ? "Presidência sob pressão" : "Conselho perdeu confiança";
+        mandateReviews = [{ generation: current.generation ?? 2, leader: controlledExecutive, week: nextWeek, score, verdict, profitCompanies, legitimacy: Math.round(dynastyLegitimacy), familyUnity: Math.round(familyUnity) }, ...mandateReviews].slice(0, 12);
+        lastMandateReviewWeek = nextWeek;
+        weeklyNews.push({ id: Date.now() + 1950, week: nextWeek, category: "negocios", headline: `Conselho avalia mandato de ${controlledExecutive} em ${score}%`, body: `${verdict}. ${profitCompanies} de ${operating.length} empresas estão lucrativas, legitimidade está em ${Math.round(dynastyLegitimacy)}% e união familiar em ${Math.round(familyUnity)}%.`, impact: score >= 58 ? "positivo" : "negativo" });
+        if (score < 40) formerPresidents = formerPresidents.map((president) => president.alive && president.ambition >= 60 ? { ...president, status: "oposicao" as const, influence: clamp(president.influence + 7), lastMove: "Usou a avaliação ruim para questionar a presidência." } : president);
+      }
+      const operatingDynasty = companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+      const dynastyEndingReady = current.dynastyMode && ((current.generation ?? 2) >= 5 && nextWeek - (current.dynastyStartedWeek ?? nextWeek) >= 80 || operatingDynasty.length === 0 || 100 - outsideFamilyEquity < 15);
       const finalWeeklyNews = dedupeNewsItems(weeklyNews, current.news);
       const weeklyReport = buildWeeklyReport(current, companies, economyAfterNews, nextWeek);
       const becameJourneyReady = !current.founderJourneyReady && !current.founderJourneyComplete && nextWeek >= 130;
@@ -6485,6 +6741,11 @@ export default function Home() {
         outsideFamilyEquity,
         familyFoundationEquity,
         formerPresidents,
+        generationProfile,
+        politicalArc,
+        mandateReviews,
+        lastMandateReviewWeek,
+        dynastyEndingReady,
         factions,
         factionHistory: hostileFaction ? [`Semana ${nextWeek}: ${hostileFaction.name} iniciou oposição.`, ...(current.factionHistory ?? [])].slice(0, 16) : current.factionHistory,
         annualPlan,
@@ -6497,7 +6758,11 @@ export default function Home() {
           health: clamp((current.founderPersonal?.health ?? 82) - (nextWeek % 4 === 0 ? .35 : 0)),
         },
         founderJourneyReady: current.founderJourneyReady || nextWeek >= 130,
-        unread: dynastyMessage
+        unread: leaderDeathDecision
+          ? [...current.unread, leaderDeathDecision]
+          : politicalArcDecision
+          ? [...current.unread, politicalArcDecision]
+          : dynastyMessage
           ? [...current.unread, dynastyMessage]
           : familyMessage
           ? [...current.unread, familyMessage]
@@ -6534,7 +6799,19 @@ export default function Home() {
         () => storyBeat(nextState, activeCompany, activeMetrics.valuation),
         0,
       );
-      if (dynastyMessage)
+      if (leaderDeathDecision)
+        setTimeout(() => {
+          setSelectedMessage(leaderDeathDecision);
+          setDialog("inbox");
+          setSpeed(0);
+        }, 100);
+      else if (politicalArcDecision)
+        setTimeout(() => {
+          setSelectedMessage(politicalArcDecision);
+          setDialog("inbox");
+          setSpeed(0);
+        }, 100);
+      else if (dynastyMessage)
         setTimeout(() => {
           setSelectedMessage(dynastyMessage);
           setDialog("inbox");
@@ -8122,6 +8399,8 @@ export default function Home() {
         ...(s.formerPresidents ?? []).filter((president) => president.name !== s.founder),
       ],
       lastDynastyTransition: createDynastyTransition(s, s.founder, chosenSuccessor.name, 2),
+      generationProfile: generationProfileFor(chosenSuccessor.name, 2, chosenSuccessor.style, s.week, chosenSuccessor.startAge + Math.round(s.week / 52)),
+      lastMandateReviewWeek: s.week,
       legacy: s.legacy + 15 + Math.round(lifeGoalProgress / 10),
       companies: s.companies.map((company) =>
         !company.sold &&
@@ -8358,6 +8637,9 @@ export default function Home() {
         ...(s.formerPresidents ?? []).filter((president) => president.name !== formerLeader),
       ],
       lastDynastyTransition: createDynastyTransition(s, formerLeader, selectedNextLeader.name, (s.generation ?? 2) + 1),
+      generationProfile: generationProfileFor(selectedNextLeader.name, (s.generation ?? 2) + 1, selectedNextLeader.style, s.week, selectedNextLeader.startAge + Math.round(dynastyTenure / 52)),
+      lastMandateReviewWeek: s.week,
+      politicalArc: undefined,
       companies: s.companies.map((company) =>
         !company.sold &&
         !company.bankrupt &&
@@ -10876,6 +11158,11 @@ export default function Home() {
                 ))}
               </div>
               <div className="dynasty-progress"><span><i style={{ width: `${dynastyGoalProgress}%` }} /></span><b>{dynastyGoalProgress}% do projeto</b></div>
+              {game.generationProfile && <div className="generation-identity"><small>IDENTIDADE DESTE MANDATO</small><h3>{game.generationProfile.title}</h3><p><b>{game.generationProfile.leader}</b>, {game.generationProfile.age} anos e saúde em {Math.round(game.generationProfile.health)}%, governa pela ideia de “{game.generationProfile.doctrine.toLowerCase()}”. Promessa: {game.generationProfile.promise}. Tolerância ao risco: {game.generationProfile.riskTolerance}%.</p></div>}
+              {game.politicalArc && <div className={`political-arc ${game.politicalArc.stage}`}><small>CRISE POLÍTICA · {game.politicalArc.stage.toUpperCase()}</small><h3>{game.politicalArc.challenger} articula contra {game.politicalArc.incumbent}</h3><p>Apoio estimado: <b>{Math.round(game.politicalArc.support)}%</b> · votação em {game.politicalArc.weeksLeft} semanas. O resultado pode trocar o presidente sem encerrar a partida.</p><span><i style={{ width: `${game.politicalArc.support}%` }} /></span></div>}
+              {!!game.mandateReviews?.length && <div className="mandate-review-list"><small>AVALIAÇÕES DO CONSELHO</small>{game.mandateReviews.slice(0, 3).map((review) => <article key={`${review.week}-${review.leader}`}><b>{review.score}%</b><div><h4>{review.verdict}</h4><p>Semana {review.week} · {review.profitCompanies} empresas lucrativas · legitimidade {review.legitimacy}% · família {review.familyUnity}%</p></div></article>)}</div>}
+              {game.dynastyEndingReady && !game.dynastyConcluded && <div className="dynasty-ending-call"><div><small>O ÚLTIMO CAPÍTULO ESTÁ DISPONÍVEL</small><h3>A família pode encerrar sua crônica</h3><p>O resultado considerará gerações, patrimônio, empresas, pessoas, controle familiar e união.</p></div><button onClick={concludeDynasty}>Escrever o final da Dinastia</button></div>}
+              {game.dynastyConcluded && game.dynastyEnding && <button className="reopen-dynasty-ending" onClick={() => setDialog("dynasty-ending")}>Reabrir final: {game.dynastyEnding.title}</button>}
             </section>}
             {dynastyTab === "familia" && <div className="dynasty-columns room-tab-panel">
               <section className="family-tree-section">
@@ -10921,9 +11208,10 @@ export default function Home() {
                   {(game.formerPresidents ?? []).map((president) => (
                     <article className={president.status} key={`${president.name}-${president.generation}`}>
                       <div><span>{president.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><section><small>GERAÇÃO {president.generation} · {president.status}</small><h4>{president.name}</h4><p>{president.legacy}</p></section></div>
-                      <dl><div><dt>Influência</dt><dd>{Math.round(president.influence)}%</dd></div><div><dt>Relação</dt><dd>{Math.round(president.relationship)}%</dd></div><div><dt>Ambição</dt><dd>{Math.round(president.ambition)}%</dd></div></dl>
+                      <dl><div><dt>Influência</dt><dd>{Math.round(president.influence)}%</dd></div><div><dt>Relação</dt><dd>{Math.round(president.relationship)}%</dd></div><div><dt>Ambição</dt><dd>{Math.round(president.ambition)}%</dd></div><div><dt>Idade</dt><dd>{president.age}</dd></div><div><dt>Saúde</dt><dd>{Math.round(president.health)}%</dd></div><div><dt>Condição</dt><dd>{president.alive ? "Ativo" : "Legado"}</dd></div></dl>
+                      {president.memoirPublished && <p className="former-book">Livro: “{president.memoir}”</p>}{president.secretRevealed && <p className="former-secret">Segredo revelado: {president.secret}</p>}
                       <p className="former-last-move">{president.lastMove}</p>
-                      <footer><button disabled={game.personalCash < 30000} onClick={() => formerPresidentAction(president.name, "aproximar")}>Reconciliar</button><button disabled={game.personalCash < 80000} onClick={() => formerPresidentAction(president.name, "conselho")}>Dar poder</button><button disabled={game.personalCash < 60000} onClick={() => formerPresidentAction(president.name, "limitar")}>Limitar influência</button></footer>
+                      <footer><button disabled={!president.alive || game.personalCash < 30000} onClick={() => formerPresidentAction(president.name, "aproximar")}>Reconciliar</button><button disabled={!president.alive || game.personalCash < 80000} onClick={() => formerPresidentAction(president.name, "conselho")}>Dar poder</button><button disabled={!president.alive || game.personalCash < 60000} onClick={() => formerPresidentAction(president.name, "limitar")}>Limitar influência</button></footer>
                     </article>
                   ))}
                 </div>
@@ -10956,6 +11244,16 @@ export default function Home() {
             <div className="transition-score"><div><small>MANDATO</small><b>{game.lastDynastyTransition.tenure} semanas</b></div><div><small>VALOR ENTREGUE</small><b>{compact.format(game.lastDynastyTransition.empireValue)}</b></div><div><small>EMPRESAS</small><b>{game.lastDynastyTransition.activeCompanies}</b></div><div><small>PESSOAS</small><b>{game.lastDynastyTransition.employees}</b></div><div><small>REPUTAÇÃO</small><b>{game.lastDynastyTransition.reputation}%</b></div></div>
             <section><h3>O que muda agora?</h3><p>Você passa a controlar {game.lastDynastyTransition.incoming}. {game.lastDynastyTransition.outgoing} ocupa o conselho e poderá apoiar, pressionar, sabotar decisões ou tentar reconstruir poder conforme influência, ambição e relação familiar.</p></section>
             <footer><button onClick={() => { setDynastyTab("poder"); setDialog("dynasty"); }}>Conhecer o novo conselho</button><button onClick={() => setDialog(null)}>Começar o novo mandato</button></footer>
+          </div>
+        </GameModal>
+      )}
+      {dialog === "dynasty-ending" && game.dynastyEnding && (
+        <GameModal onClose={() => setDialog(null)} wide>
+          <div className={`dynasty-ending-room ${game.dynastyEnding.type}`}>
+            <header><small>FIM DA CRÔNICA · GERAÇÃO {game.dynastyEnding.generation}</small><h2>{game.dynastyEnding.title}</h2><p>{game.dynastyEnding.narrative}</p></header>
+            <div className="dynasty-ending-numbers"><div><small>VALOR FINAL</small><b>{compact.format(game.dynastyEnding.value)}</b></div><div><small>EMPRESAS</small><b>{game.dynastyEnding.companies}</b></div><div><small>PESSOAS</small><b>{game.dynastyEnding.people}</b></div><div><small>GERAÇÕES</small><b>{game.dynastyEnding.generation}</b></div></div>
+            <section><h3>Presidentes que escreveram essa história</h3>{[...(game.formerPresidents ?? []), { name: currentLeader, generation: game.generation ?? 1, legacy: "Conduziu o capítulo final.", status: "aliado" }].map((president) => <article key={`${president.name}-${president.generation}`}><b>G{president.generation}</b><div><h4>{president.name}</h4><p>{president.legacy}</p></div></article>)}</section>
+            <footer><p>Este save fica registrado como concluído. Você pode consultar a holding e a crônica, mas o tempo não avançará.</p><button onClick={() => { setDialog(null); setView("jornada"); }}>Ver o legado completo</button></footer>
           </div>
         </GameModal>
       )}
