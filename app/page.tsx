@@ -56,6 +56,19 @@ type AnnualReview = { year: number; priority: AnnualPriority; score: number; ver
 type FounderPersonal = { health: number; family: number; satisfaction: number; ego: number; regrets: number };
 type CareerMoment = { week: number; title: string; detail: string; tone: "positivo" | "negativo" | "neutro" };
 type FounderEnding = "querido" | "bilionario" | "visionario" | "negociador" | "sobrevivente" | "deposto" | "dinastia" | "controverso";
+type FounderLegacyPath = "duradouro" | "ambivalente" | "ruptura";
+type FounderLegacyOutcome = {
+  path: FounderLegacyPath;
+  probability: number;
+  title: string;
+  generation: number;
+  financialValue: number;
+  peopleImpacted: number;
+  impactScore: number;
+  impactTone: "positivo" | "negativo";
+  narrative: string;
+  drivers: string[];
+};
 
 const founderPersonalLabels: Record<keyof FounderPersonal, string> = {
   health: "saúde",
@@ -424,6 +437,7 @@ type GameState = {
   founderJourneyComplete?: boolean;
   founderEnding?: FounderEnding;
   founderEndingWeek?: number;
+  founderLegacyOutcome?: FounderLegacyOutcome;
 };
 type Mission = {
   id: string;
@@ -674,6 +688,12 @@ const endingDetails: Record<FounderEnding, { title: string; description: string 
   controverso: { title: "A Lenda Controversa", description: "Os resultados são incontestáveis. A forma como você chegou até eles continuará dividindo opiniões." },
 };
 
+const legacyPathDetails: Record<FounderLegacyPath, { title: string; description: string }> = {
+  duradouro: { title: "Uma dinastia duradoura", description: "A holding atravessa gerações, preserva relevância e amplia seu impacto." },
+  ambivalente: { title: "Um império ambivalente", description: "O patrimônio continua, mas mercado e família discordam sobre o preço desse legado." },
+  ruptura: { title: "A ruptura do legado", description: "Conflitos, decisões frágeis ou falta de sucessão encurtam a história do grupo." },
+};
+
 function determineFounderEnding(state: GameState): FounderEnding {
   const identity = state.leadershipIdentity ?? initialLeadershipIdentity;
   const personal = state.founderPersonal ?? { health: 80, family: 70, satisfaction: 60, ego: 40, regrets: 10 };
@@ -688,6 +708,94 @@ function determineFounderEnding(state: GameState): FounderEnding {
   if (identity.visao >= 68) return "visionario";
   if (identity.negociacao >= 68 || state.companies.filter((company) => company.sold || company.origin === "adquirida").length >= 3) return "negociador";
   return "querido";
+}
+
+function founderLegacyChances(state: GameState): Record<FounderLegacyPath, number> {
+  const identity = state.leadershipIdentity ?? initialLeadershipIdentity;
+  const personal = state.founderPersonal ?? { health: 80, family: 70, satisfaction: 60, ego: 40, regrets: 10 };
+  const heirs = state.heirs ?? [];
+  const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+  const heirReadiness = heirs.length ? heirs.reduce((sum, heir) => sum + heir.readiness, 0) / heirs.length : 25;
+  const boardSupport = operating.length ? operating.reduce((sum, company) => sum + (company.boardSupport ?? 50), 0) / operating.length : 30;
+  const profitable = operating.filter((company) => companyMetrics(company, state.economy).profit >= 0).length;
+  const bankruptcies = state.companies.filter((company) => company.bankrupt).length;
+  const successionBonus = heirs.some((heir) => heir.id === state.chosenSuccessorId && heir.readiness >= 60) ? 18 : 0;
+  const durableRaw = Math.max(8, 18 + personal.family * .24 + (state.familyUnity ?? 70) * .18 + identity.integridade * .15 + heirReadiness * .16 + boardSupport * .09 + profitable * 5 + successionBonus - bankruptcies * 9 - personal.regrets * .1);
+  const ambivalentRaw = Math.max(8, 30 + identity.visao * .08 + identity.negociacao * .1 + identity.agressividade * .12 + Math.abs(55 - personal.family) * .12 + state.companies.filter((company) => company.sold).length * 3);
+  const ruptureRaw = Math.max(8, 14 + (100 - personal.family) * .23 + (100 - (state.familyUnity ?? 70)) * .18 + (100 - identity.integridade) * .12 + (100 - heirReadiness) * .13 + (100 - boardSupport) * .1 + bankruptcies * 11 + personal.regrets * .14 - successionBonus * .45);
+  const total = durableRaw + ambivalentRaw + ruptureRaw;
+  const duradouro = Math.floor(durableRaw / total * 100);
+  const ruptura = Math.floor(ruptureRaw / total * 100);
+  return { duradouro, ambivalente: 100 - duradouro - ruptura, ruptura };
+}
+
+function createFounderLegacyOutcome(state: GameState): FounderLegacyOutcome {
+  const chances = founderLegacyChances(state);
+  const roll = Math.random() * 100;
+  const path: FounderLegacyPath = roll < chances.duradouro
+    ? "duradouro"
+    : roll < chances.duradouro + chances.ambivalente
+      ? "ambivalente"
+      : "ruptura";
+  const identity = state.leadershipIdentity ?? initialLeadershipIdentity;
+  const personal = state.founderPersonal ?? { health: 80, family: 70, satisfaction: 60, ego: 40, regrets: 10 };
+  const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+  const currentGeneration = state.generation ?? 1;
+  const readyHeirs = (state.heirs ?? []).filter((heir) => heir.readiness >= 55).length;
+  const bankruptcies = state.companies.filter((company) => company.bankrupt).length;
+  const baseValue = Math.max(100000, state.personalCash + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0));
+  const generation = path === "duradouro"
+    ? currentGeneration + 2 + Math.floor(Math.random() * 3) + Math.min(1, readyHeirs)
+    : path === "ambivalente"
+      ? currentGeneration + 1 + Math.floor(Math.random() * 3)
+      : currentGeneration + (Math.random() < .38 ? 1 : 0);
+  const multiplier = path === "duradouro"
+    ? 2.2 + Math.random() * 3.8 + readyHeirs * .35
+    : path === "ambivalente"
+      ? .9 + Math.random() * 2.1
+      : .18 + Math.random() * .72;
+  const financialValue = Math.round(baseValue * multiplier / 10000) * 10000;
+  const currentReach = state.companies.reduce((sum, company) => sum + company.customers + company.employees.length * 25, 0);
+  const peopleImpacted = Math.round(Math.max(250, currentReach * (generation + 1) * (path === "duradouro" ? 5 + Math.random() * 6 : path === "ambivalente" ? 2 + Math.random() * 4 : .7 + Math.random() * 1.5)) / 100) * 100;
+  const mixedImpact = (state.reputation + identity.visao + identity.integridade) / 3 - personal.regrets * .55 - (100 - personal.family) * .24 + Math.random() * 16 - 8;
+  const impactScore = path === "duradouro"
+    ? Math.round(clamp((state.reputation + identity.integridade + identity.pessoas + personal.family) / 4 + Math.random() * 14, 20, 95))
+    : path === "ambivalente"
+      ? Math.round(clamp(mixedImpact, -55, 70))
+      : -Math.round(clamp((100 - personal.family) * .38 + (100 - identity.integridade) * .3 + bankruptcies * 13 + Math.random() * 20, 25, 95));
+  const impactTone: FounderLegacyOutcome["impactTone"] = impactScore >= 8 ? "positivo" : "negativo";
+  const drivers = [
+    personal.family >= 62 ? `família próxima (${Math.round(personal.family)}%)` : `família fragilizada (${Math.round(personal.family)}%)`,
+    readyHeirs ? `${readyHeirs} herdeiro${readyHeirs > 1 ? "s" : ""} preparado${readyHeirs > 1 ? "s" : ""}` : "nenhum herdeiro plenamente preparado",
+    identity.integridade >= 60 ? `integridade reconhecida (${Math.round(identity.integridade)}%)` : `integridade questionada (${Math.round(identity.integridade)}%)`,
+    bankruptcies ? `${bankruptcies} falência${bankruptcies > 1 ? "s" : ""} no histórico` : `${operating.length} empresa${operating.length !== 1 ? "s" : ""} em operação`,
+  ];
+  const consequence = path === "duradouro"
+    ? personal.family >= 62
+      ? "A família transformou o sobrenome em responsabilidade compartilhada, e não apenas em direito ao poder."
+      : "A governança sobreviveu mesmo às relações pessoais imperfeitas e impediu que o grupo dependesse de uma única pessoa."
+    : path === "ambivalente"
+      ? personal.family < 50
+        ? "O patrimônio cresceu por mais tempo que a proximidade entre os herdeiros; cada geração contou uma versão diferente sobre o fundador."
+        : "Produtos e aquisições mantiveram o nome vivo, mas as escolhas agressivas dividiram funcionários, clientes e a própria família."
+      : readyHeirs === 0
+        ? "Sem uma sucessão preparada, o poder virou disputa e partes importantes da holding foram vendidas ou perderam relevância."
+        : "Conflitos internos e decisões acumuladas consumiram a confiança necessária para manter o grupo unido.";
+  const toneSentence = impactTone === "positivo"
+    ? `Seu impacto foi lembrado de forma positiva, com índice histórico de +${Math.abs(impactScore)}.`
+    : `Seu impacto foi lembrado de forma negativa, com índice histórico de -${Math.abs(impactScore)}.`;
+  return {
+    path,
+    probability: chances[path],
+    title: legacyPathDetails[path].title,
+    generation,
+    financialValue,
+    peopleImpacted,
+    impactScore,
+    impactTone,
+    narrative: `O legado de ${state.founder}, que iniciou a holding ${state.holdingName ?? "Grupo Horizonte"}, chegou até a geração ${generation}, movimentou mais de ${compact.format(financialValue)} e impactou aproximadamente ${peopleImpacted.toLocaleString("pt-BR")} pessoas. ${toneSentence} ${consequence}`,
+    drivers,
+  };
 }
 
 const mentorComment = (state: GameState) => {
@@ -3818,6 +3926,7 @@ export default function Home() {
           founderJourneyComplete: parsed.founderJourneyComplete ?? false,
           founderEnding: parsed.founderEnding,
           founderEndingWeek: parsed.founderEndingWeek,
+          founderLegacyOutcome: parsed.founderLegacyOutcome,
           companies: (parsed.companies ?? []).map((c: Company) => ({
             ...c,
             founderEquity: c.founderEquity ?? 100,
@@ -3914,6 +4023,12 @@ export default function Home() {
       }
   }, []);
   useEffect(() => {
+    if (game.started && game.founderJourneyComplete && !game.founderLegacyOutcome) {
+      const outcome = createFounderLegacyOutcome(game);
+      setGame((state) => state.founderLegacyOutcome ? state : ({ ...state, founderLegacyOutcome: outcome }));
+    }
+  }, [game.started, game.founderJourneyComplete, game.founderLegacyOutcome]);
+  useEffect(() => {
     const safe = { ...game, unread: [] };
     localStorage.setItem("ceo-historia-v2", JSON.stringify(safe));
   }, [game]);
@@ -3959,6 +4074,8 @@ export default function Home() {
   const nextJourneyMission = missions.find((mission) => !(game.completedMissions ?? []).includes(mission.id) && game.week >= (mission.unlockWeek ?? 1)) ?? missions.find((mission) => !(game.completedMissions ?? []).includes(mission.id));
   const founderJourneyProgress = game.founderJourneyComplete ? 100 : Math.round(clamp(Math.min(130, game.week) / 130 * 55 + ((game.completedMissions?.length ?? 0) / missions.length) * 45));
   const projectedFounderEnding = game.founderEnding ?? determineFounderEnding(game);
+  const founderLegacyProbabilities = founderLegacyChances(game);
+  const founderLegacyOutcome = game.founderLegacyOutcome;
   const isCEO = active?.ceo === currentLeader;
   const operationalAccess = Boolean(
     active && !active.sold && !active.bankrupt && !active.closed,
@@ -4184,18 +4301,20 @@ export default function Home() {
     if (game.founderJourneyComplete) return;
     const ending = determineFounderEnding(game);
     const details = endingDetails[ending];
+    const legacyOutcome = createFounderLegacyOutcome(game);
     setGame((state) => ({
       ...state,
       founderJourneyComplete: true,
       founderJourneyReady: true,
       founderEnding: ending,
       founderEndingWeek: state.week,
+      founderLegacyOutcome: legacyOutcome,
       legacy: state.legacy + 25,
-      careerMoments: [{ week: state.week, title: details.title, detail: details.description, tone: "positivo" }, ...(state.careerMoments ?? [])].slice(0, 30),
-      news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${state.founder} conclui sua jornada como ${details.title}`, body: details.description, impact: "positivo" }, ...state.news].slice(0, 60),
+      careerMoments: [{ week: state.week, title: legacyOutcome.title, detail: legacyOutcome.narrative, tone: legacyOutcome.impactTone === "positivo" ? "positivo" : "negativo" }, ...(state.careerMoments ?? [])].slice(0, 30),
+      news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${state.founder} conclui sua jornada como ${details.title}`, body: legacyOutcome.narrative, impact: legacyOutcome.impactTone }, ...state.news].slice(0, 60),
     }));
     setSpeed(0);
-    notify("A jornada do fundador foi concluída. O mundo continua, mas este personagem já tem um final.");
+    notify(`O futuro foi escrito: ${legacyOutcome.title.toLowerCase()}. Esse epílogo agora faz parte do save.`);
   };
 
   useEffect(() => {
@@ -9502,6 +9621,37 @@ export default function Home() {
                 <span><small>LEGADO</small><b>{game.legacy}</b></span>
               </div>
             </section>
+
+            {!game.founderJourneyComplete ? (
+              <section className="legacy-probability-room">
+                <header><small>FUTUROS POSSÍVEIS</small><h3>O que poderá acontecer depois de você?</h3><p>As chances refletem família, sucessão, integridade, empresas, conselho e decisões acumuladas. Ao concluir, um futuro será sorteado uma única vez e ficará registrado neste save.</p></header>
+                <div className="legacy-probability-grid">
+                  {(["duradouro", "ambivalente", "ruptura"] as FounderLegacyPath[]).map((path) => (
+                    <article className={path} key={path}>
+                      <b>{founderLegacyProbabilities[path]}%</b>
+                      <span>{legacyPathDetails[path].title}</span>
+                      <p>{legacyPathDetails[path].description}</p>
+                    </article>
+                  ))}
+                </div>
+                <footer><span>Essas porcentagens ainda podem mudar</span><b>Suas decisões finais continuam importando.</b></footer>
+              </section>
+            ) : founderLegacyOutcome && (
+              <section className={`legacy-outcome-room ${founderLegacyOutcome.impactTone}`}>
+                <header>
+                  <div><small>EPÍLOGO DA PRIMEIRA GERAÇÃO · CHANCE ORIGINAL {founderLegacyOutcome.probability}%</small><h3>{founderLegacyOutcome.title}</h3></div>
+                  <strong>{founderLegacyOutcome.impactScore > 0 ? "+" : ""}{founderLegacyOutcome.impactScore}</strong>
+                </header>
+                <blockquote>“{founderLegacyOutcome.narrative}”</blockquote>
+                <div className="legacy-outcome-stats">
+                  <span><small>ÚLTIMA GERAÇÃO</small><b>{founderLegacyOutcome.generation}</b></span>
+                  <span><small>VALOR MOVIMENTADO</small><b>{compact.format(founderLegacyOutcome.financialValue)}</b></span>
+                  <span><small>PESSOAS IMPACTADAS</small><b>{founderLegacyOutcome.peopleImpacted.toLocaleString("pt-BR")}</b></span>
+                  <span><small>MEMÓRIA HISTÓRICA</small><b>{founderLegacyOutcome.impactTone}</b></span>
+                </div>
+                <footer>{founderLegacyOutcome.drivers.map((driver) => <span key={driver}>{driver}</span>)}</footer>
+              </section>
+            )}
 
             <section className="founder-life-balance">
               {(Object.entries(founderPersonal) as [keyof FounderPersonal, number][]).map(([key, value]) => (

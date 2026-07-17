@@ -2658,6 +2658,165 @@ button {
     display: none;
   }
 }
+
+.legacy-probability-room,
+.legacy-outcome-room {
+  margin-top: 14px;
+  padding: 22px;
+  border: 1px solid #a89d8e;
+  background: #fff8ec;
+}
+.legacy-probability-room > header small,
+.legacy-outcome-room > header small {
+  font: 800 10px var(--font-geist-mono);
+  letter-spacing: .13em;
+  color: var(--rust);
+}
+.legacy-probability-room > header h3,
+.legacy-outcome-room > header h3 {
+  margin: 6px 0;
+  font: 400 27px Georgia, serif;
+}
+.legacy-probability-room > header p {
+  max-width: 720px;
+  margin: 0;
+  color: #625b53;
+}
+.legacy-probability-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin-top: 16px;
+}
+.legacy-probability-grid article {
+  min-height: 155px;
+  padding: 16px;
+  border-top: 5px solid #84796d;
+  background: #eee5d8;
+}
+.legacy-probability-grid article.duradouro { border-color: #4f7a63; }
+.legacy-probability-grid article.ambivalente { border-color: #b48748; }
+.legacy-probability-grid article.ruptura { border-color: #9b4a3e; }
+.legacy-probability-grid article > b {
+  display: block;
+  font: 900 30px var(--font-geist-mono);
+}
+.legacy-probability-grid article > span {
+  display: block;
+  margin-top: 6px;
+  font: 700 13px var(--font-geist-mono);
+}
+.legacy-probability-grid article > p {
+  margin: 9px 0 0;
+  font: 13px/1.5 Georgia, serif;
+  color: #665e55;
+}
+.legacy-probability-room > footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #c5baaa;
+  font-size: 11px;
+  color: #746b61;
+}
+.legacy-outcome-room {
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  border-left: 7px solid #557c66;
+  background: #17262f;
+  color: #fff;
+}
+.legacy-outcome-room.negativo { border-left-color: #b85a4e; }
+.legacy-outcome-room:after {
+  content: "EPÍLOGO";
+  position: absolute;
+  right: -12px;
+  bottom: -18px;
+  font: 900 58px var(--font-geist-mono);
+  color: rgba(255,255,255,.035);
+  pointer-events: none;
+}
+.legacy-outcome-room > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.legacy-outcome-room > header small { color: #d9b87c; }
+.legacy-outcome-room > header h3 { color: #fff; }
+.legacy-outcome-room > header > strong {
+  display: grid;
+  width: 66px;
+  height: 66px;
+  flex: 0 0 66px;
+  place-items: center;
+  border: 2px solid #6c9a7b;
+  border-radius: 50%;
+  color: #91c3a3;
+  font: 900 20px var(--font-geist-mono);
+}
+.legacy-outcome-room.negativo > header > strong {
+  border-color: #b85a4e;
+  color: #ee9b88;
+}
+.legacy-outcome-room > blockquote {
+  position: relative;
+  z-index: 1;
+  margin: 15px 0;
+  padding: 16px 18px;
+  border-left: 3px solid #d5af78;
+  background: rgba(255,255,255,.06);
+  font: italic 16px/1.65 Georgia, serif;
+  color: #eee6d7;
+}
+.legacy-outcome-stats {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+.legacy-outcome-stats span {
+  padding: 11px;
+  background: rgba(255,255,255,.08);
+}
+.legacy-outcome-stats small {
+  display: block;
+  color: #aeb8bc;
+}
+.legacy-outcome-stats b {
+  display: block;
+  margin-top: 6px;
+  font: 800 14px var(--font-geist-mono);
+  text-transform: capitalize;
+}
+.legacy-outcome-room > footer {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.legacy-outcome-room > footer span {
+  padding: 6px 8px;
+  border: 1px solid rgba(255,255,255,.16);
+  font: 700 10px var(--font-geist-mono);
+  color: #d5cbbc;
+}
+@media (max-width: 720px) {
+  .legacy-probability-room,
+  .legacy-outcome-room { padding: 18px 14px; }
+  .legacy-probability-grid,
+  .legacy-outcome-stats { grid-template-columns: 1fr; }
+  .legacy-probability-grid article { min-height: 0; }
+  .legacy-probability-room > footer { flex-direction: column; }
+  .legacy-outcome-room > header h3 { font-size: 23px; }
+  .legacy-outcome-room > blockquote { font-size: 14px; }
+}
 @media (max-width: 720px) {
   .founder-fields,
   .journey-summary {
