@@ -295,6 +295,35 @@ type IndicatorChange = {
   format: "money" | "number" | "percent";
   reasons: IndicatorReason[];
 };
+type DecisionImpact = {
+  label: string;
+  tone: "positivo" | "negativo" | "neutro";
+};
+type DecisionObservation = {
+  week: number;
+  companyId: number;
+  indicator: IndicatorChange["key"];
+  label: string;
+  delta: number;
+  format: IndicatorChange["format"];
+  tone: "positivo" | "negativo" | "neutro";
+};
+type DecisionTrace = {
+  id: string;
+  week: number;
+  actor: string;
+  title: string;
+  decision: string;
+  result: string;
+  companyId?: number;
+  companyName?: string;
+  expiresWeek: number;
+  impactKeys: IndicatorChange["key"][];
+  impacts: DecisionImpact[];
+  affectedCharacters: string[];
+  derivedNewsIds: number[];
+  observations: DecisionObservation[];
+};
 type CompanyWeeklyReport = {
   companyId: number;
   companyName: string;
@@ -582,6 +611,7 @@ type GameState = {
   completedDynastyGoals?: string[];
   recentNewsTopics?: string[];
   weeklyReports?: WeeklyReport[];
+  decisionTraces?: DecisionTrace[];
   leadershipIdentity?: LeadershipIdentity;
   identityHistory?: IdentityMoment[];
   factions?: HoldingFaction[];
@@ -2237,6 +2267,7 @@ const initialState: GameState = {
   completedDynastyGoals: [],
   recentNewsTopics: [],
   weeklyReports: [],
+  decisionTraces: [],
   leadershipIdentity: initialLeadershipIdentity,
   identityHistory: [],
   factions: [],
@@ -4166,6 +4197,93 @@ const averageStress = (company: Company) => company.employees.length
   ? company.employees.reduce((sum, employee) => sum + (employee.stress ?? 0), 0) / company.employees.length
   : 0;
 
+function recordDecisionTrace(
+  before: GameState,
+  after: GameState,
+  title: string,
+  decision: string,
+  result: string,
+): GameState {
+  const changedCompanies = after.companies.filter((company) => {
+    const old = before.companies.find((item) => item.id === company.id);
+    return !old || JSON.stringify({ cash: old.cash, price: old.price, marketing: old.marketing, customers: old.customers, reputation: old.reputation, board: old.boardSupport, projects: old.projects, employees: old.employees, partners: old.partners, ceo: old.ceo }) !== JSON.stringify({ cash: company.cash, price: company.price, marketing: company.marketing, customers: company.customers, reputation: company.reputation, board: company.boardSupport, projects: company.projects, employees: company.employees, partners: company.partners, ceo: company.ceo });
+  });
+  const company = changedCompanies.find((item) => item.id === before.activeCompanyId) ?? changedCompanies[0] ?? after.companies.find((item) => item.id === before.activeCompanyId);
+  const oldCompany = company ? before.companies.find((item) => item.id === company.id) : undefined;
+  const impacts: DecisionImpact[] = [];
+  const impactKeys = new Set<IndicatorChange["key"]>();
+  const affectedCharacters = new Set<string>();
+  const addImpact = (label: string, tone: DecisionImpact["tone"], ...keys: IndicatorChange["key"][]) => {
+    impacts.push({ label, tone });
+    keys.forEach((key) => impactKeys.add(key));
+  };
+
+  if (company && oldCompany) {
+    const cashDelta = company.cash - oldCompany.cash;
+    if (Math.abs(cashDelta) >= 1000) addImpact(`${cashDelta > 0 ? "Entrada" : "Saída"} imediata de ${money.format(Math.abs(cashDelta))} no caixa`, cashDelta > 0 ? "positivo" : "negativo", "cash", "profit");
+    if (company.marketing !== oldCompany.marketing) addImpact(`Marketing semanal ${company.marketing > oldCompany.marketing ? "aumentou" : "caiu"} para ${money.format(company.marketing)}`, company.marketing > oldCompany.marketing ? "positivo" : "neutro", "revenue", "customers", "profit", "cash");
+    if (company.price !== oldCompany.price) addImpact(`Preço mudou de ${money.format(oldCompany.price)} para ${money.format(company.price)}`, "neutro", "revenue", "customers", "profit");
+    if (company.customers !== oldCompany.customers) addImpact(`${Math.abs(company.customers - oldCompany.customers)} clientes ${company.customers > oldCompany.customers ? "conquistados" : "perdidos"} imediatamente`, company.customers > oldCompany.customers ? "positivo" : "negativo", "customers", "revenue");
+    if (company.reputation !== oldCompany.reputation) addImpact(`Reputação ${company.reputation > oldCompany.reputation ? "fortalecida" : "desgastada"}`, company.reputation > oldCompany.reputation ? "positivo" : "negativo", "reputation", "revenue", "valuation");
+    if ((company.boardSupport ?? 50) !== (oldCompany.boardSupport ?? 50)) addImpact(`Apoio do conselho ${Number(company.boardSupport ?? 50) > Number(oldCompany.boardSupport ?? 50) ? "aumentou" : "diminuiu"}`, Number(company.boardSupport ?? 50) > Number(oldCompany.boardSupport ?? 50) ? "positivo" : "negativo", "board", "valuation");
+    if (company.employees.length !== oldCompany.employees.length) addImpact(`Equipe passou de ${oldCompany.employees.length} para ${company.employees.length} pessoas`, company.employees.length > oldCompany.employees.length ? "positivo" : "negativo", "morale", "stress", "profit", "revenue");
+    if (company.projects.length !== oldCompany.projects.length) addImpact(`${company.projects.length > oldCompany.projects.length ? "Novo projeto entrou" : "Projeto saiu"} do portfólio`, "neutro", "cash", "profit", "revenue", "valuation", "stress");
+    company.employees.forEach((employee) => {
+      const oldEmployee = oldCompany.employees.find((item) => item.id === employee.id);
+      if (!oldEmployee || employee.salary !== oldEmployee.salary || employee.morale !== oldEmployee.morale || employee.loyalty !== oldEmployee.loyalty || (employee.memories?.length ?? 0) > (oldEmployee.memories?.length ?? 0)) affectedCharacters.add(employee.name);
+    });
+    if (company.ceo !== oldCompany.ceo || company.ceoLoyalty !== oldCompany.ceoLoyalty || (company.ceoMemories?.length ?? 0) > (oldCompany.ceoMemories?.length ?? 0)) affectedCharacters.add(company.ceo);
+  }
+  (after.heirs ?? []).forEach((heir) => {
+    const oldHeir = (before.heirs ?? []).find((item) => item.id === heir.id);
+    if (oldHeir && (heir.bond !== oldHeir.bond || heir.resentment !== oldHeir.resentment || (heir.memories?.length ?? 0) > (oldHeir.memories?.length ?? 0))) affectedCharacters.add(heir.name);
+  });
+  if (!impacts.length) addImpact("A decisão alterou relações, estratégia ou poder político", "neutro", "reputation", "board", "valuation");
+  const derivedNewsIds = after.news.filter((item) => !before.news.some((old) => old.id === item.id)).map((item) => item.id);
+  const duration = impactKeys.has("revenue") || impactKeys.has("valuation") ? 12 : impactKeys.has("morale") || impactKeys.has("board") ? 10 : 8;
+  const trace: DecisionTrace = {
+    id: `decision-${before.week}-${Date.now()}-${Math.round(Math.random() * 9999)}`,
+    week: before.week,
+    actor: before.playerExecutive ?? before.founder,
+    title,
+    decision,
+    result,
+    companyId: company?.id,
+    companyName: company?.name,
+    expiresWeek: before.week + duration,
+    impactKeys: [...impactKeys],
+    impacts: impacts.slice(0, 5),
+    affectedCharacters: [...affectedCharacters].slice(0, 8),
+    derivedNewsIds,
+    observations: [],
+  };
+  const history = (after.decisionTraces ?? before.decisionTraces ?? []).filter((item) => !(item.week === trace.week && item.title === trace.title && item.companyId === trace.companyId));
+  return { ...after, decisionTraces: [trace, ...history].slice(0, 50) };
+}
+
+function observeDecisionTraces(traces: DecisionTrace[] | undefined, report: WeeklyReport, weeklyNews: NewsItem[]): DecisionTrace[] {
+  return (traces ?? []).map((trace) => {
+    if (trace.week >= report.week || trace.expiresWeek < report.week || trace.observations.some((item) => item.week === report.week)) return trace;
+    const companyReport = report.companies.find((item) => item.companyId === trace.companyId) ?? report.companies[0];
+    if (!companyReport) return trace;
+    const candidates = companyReport.indicators
+      .filter((indicator) => trace.impactKeys.includes(indicator.key) && Math.abs(indicator.delta) >= (indicator.format === "money" ? 500 : 0.5))
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 2);
+    const observations = candidates.map((indicator): DecisionObservation => ({
+      week: report.week,
+      companyId: companyReport.companyId,
+      indicator: indicator.key,
+      label: indicator.label,
+      delta: indicator.delta,
+      format: indicator.format,
+      tone: indicator.delta === 0 ? "neutro" : ["stress"].includes(indicator.key) ? indicator.delta < 0 ? "positivo" : "negativo" : indicator.delta > 0 ? "positivo" : "negativo",
+    }));
+    const relatedNews = weeklyNews.filter((item) => trace.companyName && `${item.headline} ${item.body}`.includes(trace.companyName)).map((item) => item.id);
+    return { ...trace, observations: [...observations, ...trace.observations].slice(0, 16), derivedNewsIds: [...new Set([...trace.derivedNewsIds, ...relatedNews])].slice(0, 12) };
+  });
+}
+
 function buildWeeklyReport(
   previous: GameState,
   companies: Company[],
@@ -4769,6 +4887,7 @@ export default function Home() {
           completedDynastyGoals: parsed.completedDynastyGoals ?? [],
           recentNewsTopics: parsed.recentNewsTopics ?? [],
           weeklyReports: parsed.weeklyReports ?? [],
+          decisionTraces: parsed.decisionTraces ?? [],
           leadershipIdentity: parsed.leadershipIdentity ?? initialLeadershipIdentity,
           identityHistory: parsed.identityHistory ?? [],
           factions: parsed.factions ?? [],
@@ -4918,6 +5037,11 @@ export default function Home() {
     ? game.companies.find((company) => company.id === selectedCompanyReport.companyId) ?? null
     : null;
   const weeklyDigest = buildWeeklyDigest(selectedWeeklyReport, game.companies);
+  const selectedWeekDecisionTraces = (game.decisionTraces ?? [])
+    .filter((trace) => selectedWeeklyReport && trace.week < selectedWeeklyReport.week && trace.expiresWeek >= selectedWeeklyReport.week && (trace.observations.some((observation) => observation.week === selectedWeeklyReport.week) || trace.companyId === selectedCompanyReport?.companyId))
+    .sort((a, b) => (b.observations.some((item) => item.week === selectedWeeklyReport?.week) ? 1 : 0) - (a.observations.some((item) => item.week === selectedWeeklyReport?.week) ? 1 : 0) || b.week - a.week)
+    .slice(0, 3);
+  const selectedNewsCause = selectedNews ? (game.decisionTraces ?? []).find((trace) => trace.derivedNewsIds.includes(selectedNews.id)) ?? null : null;
   const latestActiveReport = game.weeklyReports?.[0]?.companies.find((report) => report.companyId === game.activeCompanyId) ?? null;
   const selectedPartner = active?.partners?.find((partner) => partner.id === selectedPartnerId) ?? null;
   const pendingStaffAlerts = (game.staffAlerts ?? []).filter((alert) => !alert.resolved);
@@ -5054,12 +5178,20 @@ export default function Home() {
       );
       return;
     }
-    setGame((s) => ({
-      ...s,
-      companies: s.companies.map((c) =>
-        c.id === s.activeCompanyId ? fn(c) : c,
-      ),
-    }));
+    setGame((s) => {
+      const beforeCompany = s.companies.find((company) => company.id === s.activeCompanyId);
+      if (!beforeCompany) return s;
+      const afterCompany = fn(beforeCompany);
+      const title = afterCompany.price !== beforeCompany.price
+        ? "Ajuste de preço"
+        : afterCompany.marketing !== beforeCompany.marketing
+          ? "Ajuste de marketing"
+          : afterCompany.strategy !== beforeCompany.strategy
+            ? "Mudança de estratégia"
+            : "Decisão operacional";
+      const changed = { ...s, companies: s.companies.map((company) => company.id === s.activeCompanyId ? afterCompany : company) };
+      return recordDecisionTrace(s, changed, title, title, `A configuração da ${afterCompany.name} foi alterada e continuará sendo observada nas próximas semanas.`);
+    });
   };
   const notify = (text: string) => {
     setToast(text);
@@ -5093,8 +5225,9 @@ export default function Home() {
         : action === "relacionamento"
           ? { pessoas: 2, integridade: 1 }
           : { agressividade: 3, integridade: -1 };
-    setGame((state) => evolveIdentity({
-      ...state,
+    setGame((state) => {
+      const changed = evolveIdentity({
+        ...state,
       companies: state.companies.map((company) => company.id !== active.id ? company : ({
         ...company,
         cash: company.cash - (action === "relacionamento" ? 20000 : 0),
@@ -5111,7 +5244,9 @@ export default function Home() {
         body: action === "pressionar" && !pressureSuccess ? "A contraparte recusou as condições e a relação comercial entrou em risco." : `A decisão de ${action} alterou valores, confiança e dependência entre as empresas.`,
         impact: action === "relacionamento" || (action === "pressionar" && pressureSuccess) ? "positivo" : action === "encerrar" || (action === "pressionar" && !pressureSuccess) ? "negativo" : "neutro",
       }, ...state.news].slice(0, 60),
-    }, changes, `${action} com ${selectedPartner.name}`));
+      }, changes, `${action} com ${selectedPartner.name}`);
+      return recordDecisionTrace(state, changed, `Negociação com ${selectedPartner.name}`, action, action === "pressionar" && !pressureSuccess ? "A pressão foi recusada e abriu uma disputa." : "O contrato e a relação comercial foram alterados.");
+    });
     setDialog(null);
     notify(action === "pressionar" ? pressureSuccess ? "A negociação dura funcionou." : "A contraparte recusou sua pressão." : "A decisão comercial foi registrada.");
   };
@@ -5149,7 +5284,8 @@ export default function Home() {
         factionHistory: [`Semana ${state.week}: ${action} com ${selectedFaction.name}.`, ...(state.factionHistory ?? [])].slice(0, 16),
         news: [{ id: Date.now(), week: state.week, category: "negocios" as const, headline: action === "confrontar" ? `${currentLeader} confronta ${selectedFaction.name}` : `${selectedFaction.name} fecha acordo com a liderança`, body: `A disputa por ${agenda} alterou apoio, pressão e prioridades dentro da holding.`, impact: action === "confrontar" ? "negativo" as const : "neutro" as const }, ...state.news].slice(0, 60),
       };
-      return evolveIdentity(changed, action === "confrontar" ? { agressividade: 3, negociacao: -1 } : action === "negociar" ? { negociacao: 3, pessoas: 1 } : agenda === "seguranca" ? { prudencia: 3 } : agenda === "inovacao" ? { visao: 3 } : agenda === "pessoas" ? { pessoas: 3 } : { agressividade: 2 }, `${action} com ${selectedFaction.name}`);
+      const evolved = evolveIdentity(changed, action === "confrontar" ? { agressividade: 3, negociacao: -1 } : action === "negociar" ? { negociacao: 3, pessoas: 1 } : agenda === "seguranca" ? { prudencia: 3 } : agenda === "inovacao" ? { visao: 3 } : agenda === "pessoas" ? { pessoas: 3 } : { agressividade: 2 }, `${action} com ${selectedFaction.name}`);
+      return recordDecisionTrace(state, evolved, `Disputa com ${selectedFaction.name}`, action, `A decisão alterou apoio, pressão e a agenda de ${agenda}.`);
     });
     notify("O equilíbrio político da holding mudou.");
   };
@@ -5157,11 +5293,14 @@ export default function Home() {
   const startAnnualPlan = () => {
     if (game.annualPlan) return;
     const details = annualPlanDetails[annualPriorityChoice];
-    setGame((state) => ({
+    setGame((state) => {
+      const changed: GameState = {
       ...state,
       annualPlan: { year: (state.annualReviews?.length ?? 0) + 1, startWeek: state.week, endWeek: state.week + 51, priority: annualPriorityChoice, title: details.title, promises: details.promises, baseline: annualSnapshot(state) },
       news: [{ id: Date.now(), week: state.week, category: "negocios", headline: `${state.holdingName} anuncia ${details.title}`, body: `A liderança assumiu três promessas públicas para as próximas 52 semanas: ${details.promises.join("; ")}.`, impact: "neutro" }, ...state.news].slice(0, 60),
-    }));
+      };
+      return recordDecisionTrace(state, changed, "Plano estratégico anual", details.title, `Três promessas públicas orientarão a holding até a semana ${state.week + 51}.`);
+    });
     notify("O plano anual começou. As promessas agora serão cobradas.");
   };
 
@@ -5326,12 +5465,13 @@ export default function Home() {
     if (!message) return;
     setGame((s) => {
       const changed = choice.effect(s);
+      const traced = recordDecisionTrace(s, changed, message.subject, choice.label, choice.result);
       const tutorialWeek = message.id.startsWith("tutorial-") ? Number(message.id.replace("tutorial-", "")) : null;
       return {
-        ...changed,
-        unread: changed.unread.filter((m) => m.id !== message.id),
-        log: [choice.result, ...changed.log].slice(0, 10),
-        tutorialSeenWeeks: tutorialWeek ? [...new Set([...(changed.tutorialSeenWeeks ?? []), tutorialWeek])] : changed.tutorialSeenWeeks,
+        ...traced,
+        unread: traced.unread.filter((m) => m.id !== message.id),
+        log: [choice.result, ...traced.log].slice(0, 10),
+        tutorialSeenWeeks: tutorialWeek ? [...new Set([...(traced.tutorialSeenWeeks ?? []), tutorialWeek])] : traced.tutorialSeenWeeks,
       };
     });
     notify(choice.result);
@@ -7435,6 +7575,7 @@ export default function Home() {
       const dynastyEndingReady = current.dynastyMode && ((current.generation ?? 2) >= 4 && nextWeek - (current.dynastyStartedWeek ?? nextWeek) >= 80 || operatingDynasty.length === 0 || 100 - outsideFamilyEquity < 15);
       const finalWeeklyNews = dedupeNewsItems(weeklyNews, current.news);
       const weeklyReport = buildWeeklyReport(current, companies, economyAfterNews, nextWeek);
+      const decisionTraces = observeDecisionTraces(current.decisionTraces, weeklyReport, finalWeeklyNews);
       const becameJourneyReady = !current.founderJourneyReady && !current.founderJourneyComplete && nextWeek >= 130;
       let nextState: GameState = {
         ...current,
@@ -7525,6 +7666,7 @@ export default function Home() {
         ].filter((topic, index, all) => all.indexOf(topic) === index).slice(0, 18),
         news: [...finalWeeklyNews, ...current.news].slice(0, 60),
         weeklyReports: [weeklyReport, ...(current.weeklyReports ?? [])].slice(0, 16),
+        decisionTraces,
         log: [
           `Semana ${current.week}: ${activeMetrics.profit >= 0 ? "lucro" : "prejuízo"} de ${money.format(Math.abs(activeMetrics.profit))}.`,
           ...(completedName ? [`Projeto ${completedName} concluído.`] : []),
@@ -10966,6 +11108,19 @@ export default function Home() {
             <section className="weekly-advice-grid">
               {weeklyDigest.map((advice) => <article className={advice.tone} key={`${advice.companyId}-${advice.title}`}><small>{advice.kind === "urgente" ? "PROBLEMA URGENTE" : advice.kind === "oportunidade" ? "OPORTUNIDADE" : "RECOMENDAÇÃO DO ASSESSOR"} · {advice.companyName}</small><h3>{advice.title}</h3><p>{advice.detail}</p><button onClick={() => followWeeklyAdvice(advice, advice.companyId)}>{advice.actionLabel}</button></article>)}
             </section>
+            {!!selectedWeekDecisionTraces.length && <section className="causal-timeline">
+              <header><div><small>LINHA DE CAUSA E CONSEQUÊNCIA</small><h3>Por que isso está acontecendo?</h3></div><p>O jogo relaciona os efeitos atuais às decisões que ainda estão repercutindo. Economia e outras escolhas também podem influenciar o resultado.</p></header>
+              <div>{selectedWeekDecisionTraces.map((trace) => {
+                const observations = trace.observations.filter((item) => item.week === selectedWeeklyReport.week);
+                return <article key={trace.id}>
+                  <div className="causal-origin"><b>S{trace.week}</b><span><small>DECISÃO DE {trace.actor.toUpperCase()}</small><strong>{trace.decision}</strong><em>{trace.title}{trace.companyName ? ` · ${trace.companyName}` : ""}</em></span></div>
+                  <p>{trace.result}</p>
+                  <div className="causal-impacts">{trace.impacts.map((impact, index) => <span className={impact.tone} key={`${impact.label}-${index}`}>{impact.tone === "positivo" ? "+" : impact.tone === "negativo" ? "−" : "·"} {impact.label}</span>)}</div>
+                  {observations.length ? <div className="causal-observations"><small>EFEITO OBSERVADO NA SEMANA {selectedWeeklyReport.week}</small>{observations.map((observation) => <span className={observation.tone} key={`${observation.indicator}-${observation.week}`}><b>{observation.label}</b><i>{observation.delta > 0 ? "+" : ""}{observation.format === "money" ? money.format(observation.delta) : `${observation.delta.toFixed(1)}${observation.format === "percent" ? " p.p." : ""}`}</i></span>)}</div> : <div className="causal-waiting">O efeito ainda está sendo observado.</div>}
+                  <footer><span>Continua por até <b>{Math.max(0, trace.expiresWeek - selectedWeeklyReport.week)} semanas</b></span>{!!trace.affectedCharacters.length && <span>Memória: <b>{trace.affectedCharacters.join(", ")}</b></span>}{!!trace.derivedNewsIds.length && <span><b>{trace.derivedNewsIds.length}</b> notícia{trace.derivedNewsIds.length === 1 ? "" : "s"} derivada{trace.derivedNewsIds.length === 1 ? "" : "s"}</span>}</footer>
+                </article>;
+              })}</div>
+            </section>}
             <footer className="weekly-advice-footer"><span>Economia: <b>{selectedWeeklyReport.economyAfter}</b></span><span>Confiança do mercado: <b>{selectedWeeklyReport.confidenceAfter}/100</b></span><button onClick={() => setDialog(null)}>Entendi. Voltar ao jogo.</button></footer>
           </div>
         </GameModal>
@@ -11879,6 +12034,11 @@ export default function Home() {
                 <span>{selectedNews.impact === "positivo" ? "confiança" : selectedNews.impact === "negativo" ? "pressão" : "cautela"}</span>
               </aside>
             </div>
+            {selectedNewsCause && <section className="news-causal-origin">
+              <small>ESTA NOTÍCIA NASCEU DE UMA DECISÃO</small>
+              <div><b>S{selectedNewsCause.week}</b><span><strong>{selectedNewsCause.decision}</strong><p>{selectedNewsCause.actor} decidiu em “{selectedNewsCause.title}”. {selectedNewsCause.result}</p></span><em>{Math.max(0, selectedNewsCause.expiresWeek - selectedNews.week)} sem. de efeito restante</em></div>
+              {!!selectedNewsCause.affectedCharacters.length && <footer>Quem guardou memória: <b>{selectedNewsCause.affectedCharacters.join(", ")}</b></footer>}
+            </section>}
             <section className="market-read">
               <small>COMO O MERCADO REAGIU</small>
               <h3>{selectedNewsRepercussion.marketReaction}</h3>
