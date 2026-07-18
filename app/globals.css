@@ -515,6 +515,57 @@ button {
   grid-template-columns: repeat(4, 1fr);
   gap: 18px;
 }
+.company-directors {
+  margin-bottom: 30px;
+  padding: 25px;
+  color: #f4eee3;
+  background: linear-gradient(125deg, #13232b, #25363a);
+  border-top: 4px solid var(--rust);
+}
+.company-directors > header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+.company-directors small,
+.director-candidate-columns header small,
+.current-director-detail > small {
+  font: 700 8px var(--font-geist-mono);
+  letter-spacing: .14em;
+  color: #eaa365;
+}
+.company-directors h2 {
+  margin: 5px 0;
+  font: 400 30px Georgia, serif;
+}
+.company-directors header p {
+  max-width: 720px;
+  margin: 0;
+  color: #b8c0bd;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.director-board {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.director-board article {
+  min-height: 180px;
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.04);
+}
+.director-board article.vacant { border-style: dashed; }
+.director-board h3 { margin: 12px 0 5px; font: 400 21px Georgia, serif; }
+.director-board p { min-height: 32px; color: #adb7b4; font-size: 9px; line-height: 1.5; }
+.director-board article > div { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; margin: 12px 0; }
+.director-board article > div span { padding: 7px 4px; text-align: center; background: rgba(255,255,255,.06); font-size: 7px; }
+.director-board article > div b { display: block; margin-top: 3px; font-size: 11px; }
+.director-board em { display: block; color: #d3d7d4; font: italic 10px Georgia, serif; line-height: 1.4; }
+.director-board button { margin-top: 12px; }
 .person-card {
   background: var(--cream);
   border: 1px solid rgba(25, 31, 32, 0.13);
@@ -1221,6 +1272,39 @@ button {
 .hire-list > button > strong {
   font: 700 11px var(--font-geist-mono);
 }
+.director-area-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+  margin: 22px 0;
+}
+.director-area-tabs button { min-height: 46px; border: 1px solid var(--line); background: transparent; font-size: 9px; }
+.director-area-tabs button.active { color: #fff; background: #193039; border-color: #193039; }
+.director-candidate-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.director-candidate-columns > section { padding: 17px; border: 1px solid var(--line); background: rgba(255,255,255,.2); }
+.director-candidate-columns h3 { margin: 6px 0 15px; font: 400 21px Georgia, serif; }
+.director-candidates { display: grid; gap: 7px; }
+.director-candidates > button {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: #e5ddcf;
+}
+.director-candidates > button:hover:not(:disabled) { border-color: var(--teal); }
+.director-candidates span > * { display: block; }
+.director-candidates span b { font-size: 11px; }
+.director-candidates span small { margin-top: 2px; color: #666; font-size: 8px; }
+.director-candidates span em { margin-top: 5px; color: #7e5c45; font-size: 8px; }
+.director-candidates strong { font: 700 9px var(--font-geist-mono); }
+.current-director-detail { padding: 24px; border: 1px solid var(--line); background: #e5ddcf; }
+.current-director-detail h3 { margin: 7px 0; font: 400 30px Georgia, serif; }
+.current-director-detail > div { display: flex; gap: 8px; margin: 18px 0; }
+.current-director-detail > div span { min-width: 110px; padding: 10px; background: rgba(255,255,255,.4); font-size: 8px; }
+.current-director-detail > div b { display: block; margin-top: 5px; font-size: 15px; }
 .choice-cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -2686,9 +2770,13 @@ button {
   }
   .choice-cards,
   .provider-grid,
-  .board-actions {
+  .board-actions,
+  .director-board,
+  .director-area-tabs,
+  .director-candidate-columns {
     grid-template-columns: 1fr;
   }
+  .company-directors > header { align-items: flex-start; flex-direction: column; }
   .capital-room,
   .board-room {
     padding: 25px;

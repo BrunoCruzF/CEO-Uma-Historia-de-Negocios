@@ -149,6 +149,21 @@ type Employee = {
   warnings?: number;
   leaveWeeks?: number;
   memories?: CharacterMemory[];
+  department?: DirectorArea;
+};
+type DirectorArea = "pessoas" | "operacoes" | "produto" | "comercial";
+type CompanyDirector = {
+  id: string;
+  employeeId: number;
+  name: string;
+  area: DirectorArea;
+  style: "colaborativo" | "agressivo" | "analitico" | "especialista";
+  competence: number;
+  trust: number;
+  authority: number;
+  weeks: number;
+  lastAction: string;
+  origin: "promovido" | "contratado";
 };
 type Project = {
   id: number;
@@ -240,6 +255,7 @@ type Company = {
   marketingMultiplier?: number;
   marketingPulse?: MarketingPulse;
   marketingCampaigns?: MarketingCampaign[];
+  directors?: CompanyDirector[];
   parentCompanyId?: number;
   acquisitionPrice?: number;
   origin?: "fundada" | "adquirida";
@@ -1796,6 +1812,28 @@ const laborRoles: Record<Sector, string[]> = {
   Varejo: ["Compras", "E-commerce", "Logística", "Vendas", "Visual merchandising", "Atendimento", "CRM", "Estoque"],
   Agência: ["Criação", "Atendimento", "Mídia", "Estratégia", "Produção", "Comercial", "Redação", "Design"],
 };
+const directorAreaLabels: Record<DirectorArea, string> = { pessoas: "Pessoas e Cultura", operacoes: "Operações e Finanças", produto: "Produto e Inovação", comercial: "Comercial e Clientes" };
+
+function inferDepartment(role: string): DirectorArea {
+  const normalized = role.toLowerCase();
+  if (["produto", "engenharia", "dados", "segurança", "ux", "design", "qualidade", "criação", "redação"].some((term) => normalized.includes(term))) return "produto";
+  if (["comercial", "vendas", "marketing", "atendimento", "crm", "mídia", "expansão"].some((term) => normalized.includes(term))) return "comercial";
+  if (["pessoas", "rh", "cultura", "liderança"].some((term) => normalized.includes(term))) return "pessoas";
+  return "operacoes";
+}
+
+function directorStyle(employee: Employee): CompanyDirector["style"] {
+  if (["Empático", "Diplomático", "Carismático"].includes(employee.trait)) return "colaborativo";
+  if (["Competitivo", "Visionário"].includes(employee.trait)) return "agressivo";
+  if (["Analítico", "Pragmático", "Disciplinado"].includes(employee.trait)) return "analitico";
+  return "especialista";
+}
+
+function directorStrength(directors: CompanyDirector[], area: DirectorArea) {
+  const director = directors.find((item) => item.area === area);
+  if (!director) return 0;
+  return clamp(director.competence * .5 + director.trust * .28 + director.authority * .22);
+}
 const productPreparationLabels: Record<ProductPreparation, { label: string; cost: number; detail: string }> = {
   pesquisa: { label: "Pesquisa", cost: 12000, detail: "Reduz incompatibilidade com o mercado e atrasos." },
   prototipo: { label: "Protótipo", cost: 18000, detail: "Descobre problemas antes de comprometer o lançamento." },
@@ -2288,7 +2326,10 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
     culture: "Equilíbrio",
     price: data.price,
     marketing: 7000,
-    employees: foundingTeam,
+    employees: foundingTeam.map((employee) => ({
+      ...employee,
+      department: employee.department ?? inferDepartment(employee.role),
+    })),
     projects: [
       {
         id: Date.now(),
@@ -2358,6 +2399,7 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
     ceoHireCooldown: 0,
     workforceTarget: foundingTeam.length,
     partners: createBusinessPartners(sector, id),
+    directors: [],
   };
 }
 
@@ -4962,6 +5004,7 @@ export default function Home() {
     | "weekly-report"
     | "finance"
     | "marketing"
+    | "directors"
     | "partner"
     | "factions"
     | "annual-plan"
@@ -4995,6 +5038,7 @@ export default function Home() {
   const [campaignAudience, setCampaignAudience] = useState<MarketingAudience>("nicho");
   const [campaignObjective, setCampaignObjective] = useState<MarketingObjective>("aquisicao");
   const [campaignProductId, setCampaignProductId] = useState<number | undefined>(undefined);
+  const [directorArea, setDirectorArea] = useState<DirectorArea>("pessoas");
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
   const [selectedReportWeek, setSelectedReportWeek] = useState<number | null>(null);
   const [reportCompanyId, setReportCompanyId] = useState<number | null>(null);
@@ -5201,6 +5245,7 @@ export default function Home() {
             marketingMultiplier: c.marketingMultiplier ?? 1,
             marketingPulse: c.marketingPulse,
             marketingCampaigns: c.marketingCampaigns ?? [],
+            directors: c.directors ?? [],
             parentCompanyId: c.parentCompanyId,
             acquisitionPrice: c.acquisitionPrice,
             origin: c.origin ?? "fundada",
@@ -5301,6 +5346,7 @@ export default function Home() {
               warnings: e.warnings ?? 0,
               leaveWeeks: e.leaveWeeks ?? 0,
               memories: e.memories ?? [],
+              department: e.department ?? inferDepartment(e.role),
             })),
           })),
         });
@@ -6200,6 +6246,7 @@ export default function Home() {
         let ceoHistory = company.ceoHistory ?? [];
         let ceoMemories = company.ceoMemories ?? [];
         let marketingCampaigns = company.marketingCampaigns ?? [];
+        let directors = company.directors ?? [];
         let ceoHiddenIssue = company.ceoHiddenIssue;
         let ceoHiddenWeeks = Math.max(0, (company.ceoHiddenWeeks ?? 0) - 1);
         let ceoExtraCost = ceoSpend;
@@ -6211,6 +6258,25 @@ export default function Home() {
           ceoEfficiencyGain = 0,
           ceoReputationBoost = 0,
           ceoBoardImpact = 0;
+        const peopleDirectorStrength = directorStrength(directors, "pessoas");
+        const operationsDirectorStrength = directorStrength(directors, "operacoes");
+        const productDirectorStrength = directorStrength(directors, "produto");
+        const commercialDirectorStrength = directorStrength(directors, "comercial");
+        const directorStressRelief = peopleDirectorStrength > 0 ? Math.max(-.8, (peopleDirectorStrength - 42) / 18) : 0;
+        const directorMoraleBoost = peopleDirectorStrength > 0 ? (peopleDirectorStrength - 45) / 45 : 0;
+        const directorRelationBoost = peopleDirectorStrength > 0 ? (peopleDirectorStrength - 40) / 70 : 0;
+        ceoProgressBoost += productDirectorStrength > 0 ? Math.max(-2, (productDirectorStrength - 42) / 9) : 0;
+        ceoQualityBoost += productDirectorStrength > 0 ? Math.max(-1, (productDirectorStrength - 48) / 35) : 0;
+        ceoCustomerBoost += commercialDirectorStrength > 0 ? Math.round(Math.max(-2, (commercialDirectorStrength - 48) / 18)) : 0;
+        ceoReputationBoost += commercialDirectorStrength > 0 ? Math.max(-.7, (commercialDirectorStrength - 50) / 65) : 0;
+        ceoEfficiencyGain += operationsDirectorStrength > 0 ? Math.max(-.012, (operationsDirectorStrength - 48) / 3200) : 0;
+        directors = directors.map((director) => {
+          const score = directorStrength([director], director.area);
+          const review = (nextWeek + director.employeeId) % 6 === 0;
+          const successful = score + Math.random() * 24 >= 62;
+          if (review) weeklyNews.push({ id: Date.now() + director.employeeId + 2240, week: nextWeek, category: "pessoas", headline: successful ? `${director.name} ganha espaço na ${company.name}` : `${director.name} enfrenta resistência interna`, body: successful ? `A diretoria de ${directorAreaLabels[director.area].toLowerCase()} entregou resultados e fortaleceu o estilo ${director.style} de liderança.` : `Decisões da diretoria de ${directorAreaLabels[director.area].toLowerCase()} geraram conflito, retrabalho e dúvidas sobre sua autoridade.`, impact: successful ? "positivo" : "negativo" });
+          return { ...director, weeks: (director.weeks ?? 0) + 1, trust: clamp(director.trust + (review ? successful ? 2 : -4 : .15)), authority: clamp(director.authority + (review ? successful ? 2 : -2 : .1)), lastAction: review ? successful ? "Conduziu uma iniciativa bem recebida pela equipe." : "Tomou uma decisão contestada por funcionários e pelo CEO." : director.lastAction };
+        });
         if (ceoDecisionWeek) {
           if (ceoStyle === "crescimento") {
             const activeCampaignCount = marketingCampaigns.filter((campaign) => campaign.weeksLeft > 0).length;
@@ -6641,8 +6707,13 @@ export default function Home() {
             !e.role.startsWith("Diretor")
               ? 2
               : 0;
+          const employeeArea = e.department ?? inferDepartment(e.role);
+          const areaDirector = directors.find((director) => director.area === employeeArea);
+          const areaLeadership = areaDirector ? directorStrength([areaDirector], employeeArea) : 0;
+          const localMoraleBoost = areaLeadership > 0 ? Math.max(-.5, (areaLeadership - 48) / 65) : 0;
           return {
             ...e,
+            department: employeeArea,
             weeks: (e.weeks ?? 0) + 1,
             leaveWeeks: Math.max(0, (e.leaveWeeks ?? 0) - 1),
             market: Math.round(
@@ -6659,6 +6730,8 @@ export default function Home() {
                 (Math.random() * 2 - 1) +
                 effectValue("moraleDelta") +
                 ceoMoraleBoost +
+                directorMoraleBoost +
+                localMoraleBoost +
                 (creditedProduct ? 9 : 0),
             ),
             loyalty: clamp(
@@ -6672,10 +6745,11 @@ export default function Home() {
               e.relation +
                 (company.culture === "Pessoas" ? 0.5 : 0) +
                 (Math.random() - 0.5) +
+                directorRelationBoost +
                 (creditedProduct ? 6 : 0),
             ),
             stress: clamp(
-              stress + effectValue("stressDelta") - ceoStressRelief,
+              stress + effectValue("stressDelta") - ceoStressRelief - directorStressRelief,
             ),
             memories: creditedProduct
               ? addCharacterMemory(
@@ -6693,8 +6767,9 @@ export default function Home() {
           };
         });
         let employees = evolvedEmployees.filter((e) => {
+          const retentionEffect = clamp(1 - Math.max(0, peopleDirectorStrength - 45) / 110, .45, 1);
           const leaves =
-            e.loyalty < 18 && (e.weeks ?? 0) > 8 && Math.random() < 0.24 * difficulty.departure;
+            e.loyalty < 18 && (e.weeks ?? 0) > 8 && Math.random() < 0.24 * difficulty.departure * retentionEffect;
           if (leaves) {
             weeklyNews.push({
               id: Date.now() + e.id,
@@ -6709,7 +6784,8 @@ export default function Home() {
           return !leaves;
         });
         if (delegated && company.autonomy === "independente" && employees.length > 3 && (nextWeek + company.id) % 24 === 0) {
-          const dismissal = [...employees].sort((a, b) => a.skill + a.morale * .35 - (b.skill + b.morale * .35))[0];
+          const directorIds = new Set(directors.map((director) => director.employeeId));
+          const dismissal = [...employees].filter((employee) => !directorIds.has(employee.id)).sort((a, b) => a.skill + a.morale * .35 - (b.skill + b.morale * .35))[0];
           if (dismissal && (dismissal.skill < 58 || dismissal.morale < 30)) {
             employees = employees.filter((employee) => employee.id !== dismissal.id);
             newStaffAlerts.push({ id: `staff-${company.id}-${dismissal.id}-${nextWeek}`, companyId: company.id, companyName: company.name, employeeName: dismissal.name, role: dismissal.role, reason: "desligamento", week: nextWeek, responsible: company.ceo ?? "CEO", headcountAfter: employees.length });
@@ -6776,6 +6852,7 @@ export default function Home() {
           const badHire = Math.random() < badHireChance;
           const autonomousHire = {
             ...plannedHire,
+            department: plannedHire.department ?? inferDepartment(plannedHire.role),
             skill: badHire ? Math.max(48, plannedHire.skill - 22) : plannedHire.skill,
             morale: badHire ? 64 : plannedHire.morale,
             loyalty: badHire ? 45 : plannedHire.loyalty,
@@ -6833,6 +6910,7 @@ export default function Home() {
             impact: "negativo",
           });
         }
+        directors = directors.filter((director) => employees.some((employee) => employee.id === director.employeeId));
         const legalCost = nextProjects.reduce(
           (sum, p) => sum + ((p.lawsuitWeeks ?? 0) > 0 ? 9000 : 0),
           0,
@@ -7099,6 +7177,7 @@ export default function Home() {
           marketingMultiplier: runningMarketingCampaigns.length ? 1 : marketingPulse.multiplier,
           marketingPulse,
           marketingCampaigns: marketingCampaigns.map((campaign) => campaign.weeksLeft > 0 ? { ...campaign, weeksLeft: campaign.weeksLeft - 1, revealed: true } : campaign).filter((campaign) => campaign.weeksLeft > 0 || nextWeek - campaign.startedWeek <= 12),
+          directors,
           efficiency: Math.max(
             0.68,
             (company.efficiency ?? 1) - efficiencyGain - ceoEfficiencyGain,
@@ -8281,6 +8360,7 @@ export default function Home() {
       employees: [...c.employees, {
         ...candidate,
         id: Date.now(),
+        department: candidate.department ?? inferDepartment(candidate.role),
         memories: addCharacterMemory(candidate.memories, characterMemory(
           game.week,
           "contratacao",
@@ -8297,12 +8377,41 @@ export default function Home() {
     notify(`${candidate.name} aceitou sua proposta.`);
   };
 
+  const appointDirector = (employee: Employee, area: DirectorArea, external = false) => {
+    if (!active || !isCEO || (active.directors ?? []).some((director) => director.area === area)) return;
+    const hiringCost = external ? 25000 : 12000;
+    if (active.cash < hiringCost) return;
+    const promotedSalary = Math.round(Math.max(employee.salary * (external ? 1.48 : 1.25), employee.market * 1.08) / 100) * 100;
+    const appointmentId = Date.now();
+    const director: CompanyDirector = { id: `director-${active.id}-${area}-${appointmentId}`, employeeId: external ? appointmentId : employee.id, name: employee.name, area, style: directorStyle(employee), competence: employee.skill, trust: clamp(employee.relation * .55 + employee.loyalty * .45), authority: external ? 42 : 50, weeks: 0, lastAction: "Assumiu a diretoria e iniciou conversas com a equipe.", origin: external ? "contratado" : "promovido" };
+    setGame((state) => ({
+      ...state,
+      companies: state.companies.map((company) => company.id !== active.id ? company : {
+        ...company,
+        cash: company.cash - hiringCost,
+        directors: [...(company.directors ?? []), director],
+        employees: external
+          ? [...company.employees, { ...employee, id: director.employeeId, salary: promotedSalary, market: promotedSalary, role: `Diretor de ${directorAreaLabels[area]}`, department: area, morale: 72, loyalty: 58, relation: 55, stress: 24, weeks: 0, memories: [characterMemory(state.week, "contratacao", `Fui contratado para liderar ${directorAreaLabels[area]} na ${company.name}.`, "confiante", 6, 75)] }]
+          : company.employees.map((person) => person.id === employee.id ? { ...person, salary: promotedSalary, market: Math.max(person.market, promotedSalary), role: `Diretor de ${directorAreaLabels[area]}`, department: area, morale: clamp(person.morale + 8), loyalty: clamp(person.loyalty + 6), relation: clamp(person.relation + 7), memories: addCharacterMemory(person.memories, characterMemory(state.week, "promocao", `Você confiou em mim para dirigir ${directorAreaLabels[area]}.`, "orgulhoso", 10, 88)) } : { ...person, morale: clamp(person.morale + (person.department === area || inferDepartment(person.role) === area ? 2 : 0)) }),
+      }),
+      financialLedger: [{ id: `${state.week}-${active.id}-director-${Date.now()}`, week: state.week, companyId: active.id, companyName: active.name, category: "equipe", label: `${external ? "Contratação" : "Promoção"} de diretor`, amount: -hiringCost, detail: `${employee.name} assumiu ${directorAreaLabels[area]} com salário de ${money.format(promotedSalary)}.` }, ...(state.financialLedger ?? [])].slice(0, 180),
+      news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${employee.name} assume diretoria na ${active.name}`, body: `${external ? "Contratado no mercado" : "Promovido internamente"}, o novo diretor liderará ${directorAreaLabels[area].toLowerCase()}. Seu estilo ${director.style} influenciará decisões, relações e desempenho da equipe.`, impact: "positivo" }, ...state.news].slice(0, 60),
+    }));
+    notify(`${employee.name} assumiu ${directorAreaLabels[area]}.`);
+  };
+
+  const removeDirector = (director: CompanyDirector) => {
+    if (!active || !isCEO) return;
+    setGame((state) => ({ ...state, companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, directors: (company.directors ?? []).filter((item) => item.id !== director.id), employees: company.employees.map((employee) => employee.id === director.employeeId ? { ...employee, role: `Especialista sênior · ${directorAreaLabels[director.area]}`, morale: clamp(employee.morale - 12), loyalty: clamp(employee.loyalty - 10), relation: clamp(employee.relation - 14), memories: addCharacterMemory(employee.memories, characterMemory(state.week, "promocao", `Você me retirou da diretoria de ${directorAreaLabels[director.area]}.`, "magoado", -12, 90)) } : employee) })), news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${director.name} deixa a diretoria da ${active.name}`, body: `A destituição abriu um vazio em ${directorAreaLabels[director.area].toLowerCase()} e abalou a confiança do antigo diretor.`, impact: "negativo" }, ...state.news].slice(0, 60) }));
+    notify(`${director.name} foi retirado da diretoria.`);
+  };
+
   const dismissEmployee = (employee: Employee) => {
     if (!active || !isCEO || active.employees.length <= 1) return;
     setGame((state) => ({
       ...state,
       reputation: clamp(state.reputation - 2),
-      companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, employees: company.employees.filter((person) => person.id !== employee.id), workforceTarget: Math.max(2, (company.workforceTarget ?? company.employees.length) - 1), reputation: clamp(company.reputation - 2) })),
+      companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, employees: company.employees.filter((person) => person.id !== employee.id), directors: (company.directors ?? []).filter((director) => director.employeeId !== employee.id), workforceTarget: Math.max(2, (company.workforceTarget ?? company.employees.length) - 1), reputation: clamp(company.reputation - 2) })),
       staffAlerts: [{ id: `staff-${active.id}-${employee.id}-${state.week}`, companyId: active.id, companyName: active.name, employeeName: employee.name, role: employee.role, reason: "desligamento", week: state.week, responsible: currentLeader, headcountAfter: active.employees.length - 1 }, ...(state.staffAlerts ?? [])].slice(0, 20),
       news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${employee.name} é desligado da ${active.name}`, body: `${currentLeader} decidiu encerrar o vínculo de ${employee.role.toLowerCase()}. A empresa precisará decidir se elimina a posição ou busca reposição.`, impact: "negativo" }, ...state.news].slice(0, 60),
     }));
@@ -10791,6 +10900,34 @@ export default function Home() {
               </button>
             }
           />
+          <section className="company-directors">
+            <header>
+              <div>
+                <small>ESTRUTURA DE LIDERANÇA</small>
+                <h2>Diretoria da empresa</h2>
+                <p>Cada diretor lidera uma área e altera decisões semanais. Competência ajuda a operação; baixa confiança pode criar resistência e piorar resultados.</p>
+              </div>
+              <button disabled={!isCEO || (active.directors ?? []).length >= 4} onClick={() => setDialog("directors")}>Nomear diretor</button>
+            </header>
+            <div className="director-board">
+              {(Object.keys(directorAreaLabels) as DirectorArea[]).map((area) => {
+                const director = (active.directors ?? []).find((item) => item.area === area);
+                return <article className={director ? "occupied" : "vacant"} key={area}>
+                  <small>{directorAreaLabels[area].toUpperCase()}</small>
+                  {director ? <>
+                    <h3>{director.name}</h3>
+                    <p>Estilo {director.style} · {director.origin === "promovido" ? "talento interno" : "contratado no mercado"}</p>
+                    <div><span>Competência <b>{Math.round(director.competence)}</b></span><span>Confiança <b>{Math.round(director.trust)}</b></span><span>Autoridade <b>{Math.round(director.authority)}</b></span></div>
+                    <em>{director.lastAction}</em>
+                  </> : <>
+                    <h3>Cadeira vaga</h3>
+                    <p>A área funciona sem liderança especializada e não oferece bônus à empresa.</p>
+                    <button disabled={!isCEO} onClick={() => { setDirectorArea(area); setDialog("directors"); }}>Preencher vaga</button>
+                  </>}
+                </article>;
+              })}
+            </div>
+          </section>
           <div className="people-grid">
             {active.employees.map((e) => (
               <article className="person-card" key={e.id}>
@@ -10806,6 +10943,7 @@ export default function Home() {
                   <h2>{e.name}</h2>
                   <p>“{e.ambition}.”</p>
                   <div className="traits">
+                    <span>{directorAreaLabels[e.department ?? inferDepartment(e.role)]}</span>
                     <span>{e.trait}</span>
                     <span>Lealdade {Math.round(e.loyalty)}</span>
                     <span>Relação {Math.round(e.relation)}</span>
@@ -11782,6 +11920,48 @@ export default function Home() {
               Fazer proposta
             </button>
           </div>
+        </GameModal>
+      )}
+      {dialog === "directors" && active && (
+        <GameModal onClose={() => setDialog(null)}>
+          <ModalTitle
+            label="DIRETORIA EXECUTIVA"
+            title="Quem transforma sua estratégia em rotina?"
+            text="Promova alguém da equipe ou contrate uma liderança externa. Diretores influenciam a área toda semana e também podem falhar, perder confiança ou enfrentar resistência."
+          />
+          <div className="director-area-tabs">
+            {(Object.keys(directorAreaLabels) as DirectorArea[]).map((area) => <button className={directorArea === area ? "active" : ""} key={area} onClick={() => setDirectorArea(area)}>{directorAreaLabels[area]}</button>)}
+          </div>
+          {(() => {
+            const currentDirector = (active.directors ?? []).find((item) => item.area === directorArea);
+            const internalCandidates = active.employees
+              .filter((employee) => !(active.directors ?? []).some((director) => director.employeeId === employee.id))
+              .sort((a, b) => b.skill + b.loyalty * .25 - (a.skill + a.loyalty * .25))
+              .slice(0, 5);
+            const externalCandidates = createLaborMarket(active.sector, active.id + 37, game.week, active.employees.map((employee) => employee.name), 7)
+              .sort((a, b) => b.skill - a.skill)
+              .slice(0, 4);
+            return currentDirector ? <section className="current-director-detail">
+              <small>{directorAreaLabels[directorArea].toUpperCase()}</small>
+              <h3>{currentDirector.name}</h3>
+              <p>{currentDirector.lastAction}</p>
+              <div><span>Competência <b>{Math.round(currentDirector.competence)}</b></span><span>Confiança <b>{Math.round(currentDirector.trust)}</b></span><span>Autoridade <b>{Math.round(currentDirector.authority)}</b></span></div>
+              <button className="danger-action" disabled={!isCEO} onClick={() => { removeDirector(currentDirector); setDialog(null); }}>Destituir diretor</button>
+            </section> : <div className="director-candidate-columns">
+              <section>
+                <header><small>PROMOÇÃO INTERNA · CUSTO R$ 12 MIL</small><h3>Quem já conhece a casa</h3></header>
+                <div className="director-candidates">{internalCandidates.map((candidate) => <button disabled={!isCEO || active.cash < 12000} key={candidate.id} onClick={() => { appointDirector(candidate, directorArea); setDialog(null); }}>
+                  <Avatar initials={candidate.initials} color={candidate.color} /><span><b>{candidate.name}</b><small>{candidate.role} · estilo {directorStyle(candidate)}</small><em>Competência {candidate.skill} · lealdade {Math.round(candidate.loyalty)}</em></span><strong>{money.format(Math.round(Math.max(candidate.salary * 1.25, candidate.market * 1.08) / 100) * 100)}</strong>
+                </button>)}</div>
+              </section>
+              <section>
+                <header><small>BUSCA EXTERNA · CUSTO R$ 25 MIL</small><h3>Experiência nova, confiança por construir</h3></header>
+                <div className="director-candidates">{externalCandidates.map((candidate) => <button disabled={!isCEO || active.cash < 25000} key={candidate.id} onClick={() => { appointDirector(candidate, directorArea, true); setDialog(null); }}>
+                  <Avatar initials={candidate.initials} color={candidate.color} /><span><b>{candidate.name}</b><small>{candidate.role} · estilo {directorStyle(candidate)}</small><em>Competência {candidate.skill} · adaptação inicial</em></span><strong>{money.format(Math.round(Math.max(candidate.salary * 1.48, candidate.market * 1.08) / 100) * 100)}</strong>
+                </button>)}</div>
+              </section>
+            </div>;
+          })()}
         </GameModal>
       )}
       {dialog === "hire" && (
