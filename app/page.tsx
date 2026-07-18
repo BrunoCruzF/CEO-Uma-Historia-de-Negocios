@@ -55,6 +55,28 @@ type MarketingPulse = {
   customerDelta: number;
   efficiency: number;
   detail: string;
+  reputationDelta?: number;
+};
+type MarketingAudience = "massa" | "nicho" | "premium" | "clientes";
+type MarketingObjective = "aquisicao" | "lancamento" | "marca" | "retencao";
+type MarketingCampaignOutcome = "forte" | "moderado" | "ignorado" | "negativo";
+type MarketingCampaign = {
+  id: string;
+  name: string;
+  audience: MarketingAudience;
+  objective: MarketingObjective;
+  productId?: number;
+  productName?: string;
+  totalBudget: number;
+  duration: number;
+  weeksLeft: number;
+  startedWeek: number;
+  outcome: MarketingCampaignOutcome;
+  probabilities: Record<MarketingCampaignOutcome, number>;
+  totalCustomerImpact: number;
+  revenueMultiplier: number;
+  totalReputationImpact: number;
+  revealed?: boolean;
 };
 type FinancialEntry = {
   id: string;
@@ -155,7 +177,24 @@ type Project = {
   proposedByEmployeeId?: number;
   proposedByEmployeeName?: string;
   estimatedSuccess?: number;
+  complexity?: 1 | 2 | 3 | 4 | 5;
+  requiredTeam?: number;
+  requiredRoles?: string[];
+  developmentCost?: number;
+  maintenanceCost?: number;
+  preparation?: Partial<Record<ProductPreparation, number>>;
+  delayWeeks?: number;
+  bugLevel?: number;
+  customerSatisfaction?: number;
+  updateNeed?: number;
+  supportLevel?: number;
+  feedback?: ProductFeedback[];
+  launchOutcome?: "sucesso" | "morno" | "falha" | "desastre";
+  lastVersionOutcome?: "melhoria" | "ignorada" | "bugs" | "rejeitada" | "canibalizacao";
+  emergencyWeeks?: number;
 };
+type ProductPreparation = "pesquisa" | "prototipo" | "testes" | "seguranca" | "qualidade" | "piloto" | "suporte";
+type ProductFeedback = { id: string; week: number; rating: number; text: string; tone: "positivo" | "neutro" | "negativo" };
 type OngoingEffect = {
   id: string;
   name: string;
@@ -200,6 +239,7 @@ type Company = {
   campaignWeeks?: number;
   marketingMultiplier?: number;
   marketingPulse?: MarketingPulse;
+  marketingCampaigns?: MarketingCampaign[];
   parentCompanyId?: number;
   acquisitionPrice?: number;
   origin?: "fundada" | "adquirida";
@@ -1604,6 +1644,9 @@ function productWeeklyRevenue(product: Project, competition = 0): number {
   const marketingSaturation = 1 - Math.exp(-productMarketing / 12000);
   const marketingEffect = 1 + marketingSaturation * .34 * clamp(product.quality / 75, .45, 1.15);
   const qualityEffect = 0.62 + product.quality / 155;
+  const satisfactionEffect = .55 + (product.customerSatisfaction ?? 70) / 155;
+  const bugEffect = clamp(1 - (product.bugLevel ?? 0) / 115, .25, 1);
+  const launchEffect = product.launchOutcome === "desastre" ? .32 : product.launchOutcome === "falha" ? .58 : product.launchOutcome === "morno" ? .84 : 1;
   const competitionEffect = clamp(1 - competition / 260, 0.55, 1);
   const ownership = (product.rightsOwned ?? 100) / 100;
   return Math.max(
@@ -1614,6 +1657,9 @@ function productWeeklyRevenue(product: Project, competition = 0): number {
         priceEffect *
         marketingEffect *
         qualityEffect *
+        satisfactionEffect *
+        bugEffect *
+        launchEffect *
         competitionEffect *
         ownership +
         (product.royaltyRevenue ?? 0),
@@ -1745,11 +1791,53 @@ const laborLastNames = [
   "Ramos", "Reis", "Rocha", "Salles", "Serra", "Tavares", "Torres", "Valente",
 ];
 const laborRoles: Record<Sector, string[]> = {
-  Tecnologia: ["Engenharia", "Produto", "Dados", "Cibersegurança", "UX", "Vendas B2B", "Suporte técnico", "Qualidade"],
+  Tecnologia: ["Engenharia", "Produto", "Dados", "Cibersegurança", "UX", "Web design", "Vendas B2B", "Suporte técnico", "Qualidade"],
   Alimentação: ["Cozinha", "Operações", "Qualidade", "Compras", "Logística", "Marketing local", "Expansão", "Atendimento"],
   Varejo: ["Compras", "E-commerce", "Logística", "Vendas", "Visual merchandising", "Atendimento", "CRM", "Estoque"],
   Agência: ["Criação", "Atendimento", "Mídia", "Estratégia", "Produção", "Comercial", "Redação", "Design"],
 };
+const productPreparationLabels: Record<ProductPreparation, { label: string; cost: number; detail: string }> = {
+  pesquisa: { label: "Pesquisa", cost: 12000, detail: "Reduz incompatibilidade com o mercado e atrasos." },
+  prototipo: { label: "Protótipo", cost: 18000, detail: "Descobre problemas antes de comprometer o lançamento." },
+  testes: { label: "Testes", cost: 16000, detail: "Reduz bugs e falhas técnicas." },
+  seguranca: { label: "Segurança", cost: 20000, detail: "Evita incidentes, fraudes e crises de confiança." },
+  qualidade: { label: "Controle de qualidade", cost: 15000, detail: "Melhora acabamento e avaliação dos clientes." },
+  piloto: { label: "Lançamento gradual", cost: 24000, detail: "Testa o produto com poucos clientes antes da escala." },
+  suporte: { label: "Suporte pós-venda", cost: 12000, detail: "Amortece reclamações e acelera correções." },
+};
+
+function productBlueprint(sector: Sector, complexity: Project["complexity"] = 3) {
+  const roles: Record<Sector, string[]> = {
+    Tecnologia: complexity >= 4 ? ["Engenharia|Produto", "UX|Web design", "Qualidade|Cibersegurança"] : ["Engenharia|Produto", "UX|Web design"],
+    Alimentação: complexity >= 4 ? ["Cozinha|Operações", "Qualidade", "Logística|Compras"] : ["Cozinha|Operações", "Qualidade"],
+    Varejo: complexity >= 4 ? ["E-commerce|Vendas", "Logística|Estoque", "Compras|CRM"] : ["E-commerce|Vendas", "Logística|Estoque"],
+    Agência: complexity >= 4 ? ["Criação|Design", "Atendimento|Estratégia", "Produção|Mídia"] : ["Criação|Design", "Atendimento|Estratégia"],
+  };
+  return { requiredTeam: Math.max(2, complexity), requiredRoles: roles[sector], maintenanceCost: 1800 + complexity * 1400, developmentCost: 16000 + complexity * 12000 };
+}
+
+function productRoleCoverage(product: Project, company: Company) {
+  const requirements = product.requiredRoles ?? productBlueprint(company.sector, product.complexity ?? 3).requiredRoles;
+  const covered = requirements.filter((requirement) => requirement.split("|").some((role) => company.employees.some((employee) => employee.role.toLowerCase().includes(role.toLowerCase()))));
+  return { requirements, covered: covered.length, missing: requirements.filter((requirement) => !covered.includes(requirement)), ratio: requirements.length ? covered.length / requirements.length : 1 };
+}
+
+function productRiskProfile(product: Project, company: Company) {
+  const complexity = product.complexity ?? 3;
+  const preparation = product.preparation ?? {};
+  const coverage = productRoleCoverage(product, company);
+  const teamShortage = Math.max(0, (product.requiredTeam ?? complexity) - company.employees.filter((employee) => (employee.leaveWeeks ?? 0) <= 0).length);
+  const prep = (key: ProductPreparation) => preparation[key] ?? 0;
+  const delayChance = clamp(12 + complexity * 7 + teamShortage * 9 + (1 - coverage.ratio) * 28 + product.risk * .18 - prep("pesquisa") * 5 - prep("prototipo") * 4, 4, 78);
+  const failureChance = clamp(10 + complexity * 8 + (1 - coverage.ratio) * 32 + product.risk * .22 + Math.max(0, 60 - product.quality) * .25 - prep("testes") * 6 - prep("seguranca") * 4 - prep("qualidade") * 5 - prep("piloto") * 7, 3, 82);
+  return { complexity, coverage, teamShortage, delayChance: Math.round(delayChance), failureChance: Math.round(failureChance) };
+}
+
+function productVersionRisk(product: Project, strategy: "economica" | "equilibrada" | "robusta") {
+  const prep = product.preparation ?? {};
+  const protection = (prep.testes ?? 0) * 5 + (prep.seguranca ?? 0) * 3 + (prep.qualidade ?? 0) * 4 + (product.supportLevel ?? 0) * 3 + (strategy === "robusta" ? 22 : strategy === "equilibrada" ? 10 : 0);
+  return clamp(48 + (product.complexity ?? 3) * 5 + (product.bugLevel ?? 0) * .25 + (product.updateNeed ?? 0) * .18 - product.quality * .28 - protection, 12, 72);
+}
 const laborTraits = ["Analítico", "Carismático", "Criativo", "Competitivo", "Diplomático", "Disciplinado", "Empático", "Inventivo", "Pragmático", "Questionador", "Resiliente", "Visionário"];
 const laborAmbitions = ["Quer liderar uma equipe", "Busca estabilidade", "Quer virar diretor", "Sonha em criar um produto", "Quer participação na empresa", "Busca autonomia", "Quer aprender rápido", "Pretende abrir o próprio negócio", "Quer reconhecimento público", "Valoriza equilíbrio pessoal"];
 const laborColors = ["#778ad9", "#d982a8", "#6da88c", "#df9d5d", "#7d72ad", "#57a7a0", "#bd735f", "#8d9a61"];
@@ -1830,6 +1918,7 @@ function createCEOProduct(company: Company, week: number, style: CEOStyle): Proj
   };
   const profile = profiles[style];
   const names = ceoProductNames[company.sector][style];
+  const complexity = (style === "inovacao" ? 5 : style === "crescimento" ? 4 : style === "eficiencia" ? 2 : 3) as 1 | 2 | 3 | 4 | 5;
   return {
     id: Date.now() + company.id * 100 + week,
     name: names[(week + company.id) % names.length],
@@ -1850,6 +1939,15 @@ function createCEOProduct(company: Company, week: number, style: CEOStyle): Proj
     patented: false,
     rightsOwned: 100,
     royaltyRevenue: 0,
+    complexity,
+    ...productBlueprint(company.sector, complexity),
+    developmentCost: Math.round(profile.budget),
+    preparation: style === "eficiencia" ? { pesquisa: 1, qualidade: 1 } : style === "inovacao" ? { prototipo: 1 } : style === "pessoas" ? { pesquisa: 1, suporte: 1 } : {},
+    bugLevel: 0,
+    customerSatisfaction: 70,
+    updateNeed: 0,
+    supportLevel: 0,
+    feedback: [],
   };
 }
 
@@ -2219,6 +2317,14 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
         patented: false,
         rightsOwned: 100,
         royaltyRevenue: 0,
+        complexity: 2,
+        ...productBlueprint(sector, 2),
+        preparation: {},
+        bugLevel: 0,
+        customerSatisfaction: 70,
+        updateNeed: 0,
+        supportLevel: 0,
+        feedback: [],
       },
     ],
     history: [id === 1 ? 120000 : 0],
@@ -2230,6 +2336,7 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
     productRevenue: 0,
     efficiency: 1,
     campaignWeeks: 0,
+    marketingCampaigns: [],
     origin: "fundada",
     autonomy: "centralizada",
     dividendRate: 0,
@@ -4045,7 +4152,68 @@ function companyCommercialCapacity(company: Company) {
   return { available: available.length, morale, skill, operatingCapacity, sectorMultiplier, customerCapacity, productRevenueCapacity };
 }
 
+const marketingAudienceLabels: Record<MarketingAudience, string> = { massa: "Grande público", nicho: "Público de nicho", premium: "Clientes premium", clientes: "Clientes atuais" };
+const marketingObjectiveLabels: Record<MarketingObjective, string> = { aquisicao: "Conquistar clientes", lancamento: "Lançar produto", marca: "Fortalecer a marca", retencao: "Reter clientes" };
+const marketingOutcomeLabels: Record<MarketingCampaignOutcome, string> = { forte: "crescimento forte", moderado: "retorno moderado", ignorado: "campanha ignorada", negativo: "repercussão negativa" };
+
+function marketingCampaignForecast(company: Company, economy: Economy, competitors: Competitor[], budget: number, duration: number, audience: MarketingAudience, objective: MarketingObjective, productId?: number) {
+  const capacity = companyCommercialCapacity(company);
+  const marketProducts = company.projects.filter((product) => product.kind === "produto" && product.lifecycle === "mercado");
+  const targetProduct = marketProducts.find((product) => product.id === productId) ?? marketProducts[0];
+  const quality = targetProduct?.quality ?? (marketProducts.length ? marketProducts.reduce((sum, product) => sum + product.quality, 0) / marketProducts.length : 42);
+  const marketWeeks = targetProduct?.marketWeeks ?? 20;
+  const priceReference = sectorData[company.sector].price;
+  const priceRatio = company.price / Math.max(1, priceReference);
+  const priceFit = audience === "premium" ? clamp(58 + (priceRatio - 1) * 35 + (quality - 60) * .35) : audience === "massa" ? clamp(72 - Math.max(0, priceRatio - .9) * 55) : audience === "clientes" ? clamp(company.reputation * .75 + quality * .25) : clamp(45 + quality * .55 - Math.abs(priceRatio - 1.05) * 20);
+  const stageFit = objective === "lancamento" ? (marketWeeks <= 6 ? 92 : marketWeeks <= 15 ? 65 : 35) : objective === "retencao" ? clamp(50 + Math.min(30, marketWeeks)) : objective === "marca" ? clamp(52 + company.reputation * .38) : marketWeeks <= 30 ? 75 : 58;
+  const audienceFit = company.sector === "Tecnologia" ? (audience === "nicho" ? 90 : audience === "premium" ? 76 : 58) : company.sector === "Agência" ? (audience === "premium" || audience === "nicho" ? 86 : 55) : company.sector === "Alimentação" ? (audience === "massa" || audience === "clientes" ? 86 : 58) : (audience === "massa" || audience === "clientes" ? 82 : 62);
+  const capacityRoom = clamp((capacity.customerCapacity - company.customers) / Math.max(1, capacity.customerCapacity));
+  const capacityFit = objective === "retencao" ? clamp(65 + capacityRoom * 25) : clamp(capacityRoom * 100);
+  const economicFit = clamp(economy.demand * 45 + economy.confidence * .5);
+  const sectorRivals = competitors.filter((rival) => rival.sector === company.sector && !["fechada", "vendida"].includes(rival.status));
+  const rivalStrength = sectorRivals.length ? sectorRivals.reduce((sum, rival) => sum + rival.score, 0) / sectorRivals.length : 45;
+  const competitionFit = clamp(78 + company.reputation * .25 - rivalStrength * .45);
+  const estimatedRevenue = Math.max(10000, company.customers * company.price + (company.productRevenue ?? 0));
+  const idealBudget = Math.max(15000, estimatedRevenue * duration * .16);
+  const budgetEfficiency = clamp(1 - Math.exp(-budget / idealBudget), 0, .96);
+  const overspend = Math.max(0, budget / idealBudget - 2);
+  const score = clamp(quality * .22 + company.reputation * .15 + capacity.morale * .09 + priceFit * .11 + stageFit * .11 + audienceFit * .1 + economicFit * .08 + capacityFit * .08 + competitionFit * .06 + budgetEfficiency * 18 - overspend * 9);
+  const raw = {
+    forte: Math.max(6, 8 + score * .48),
+    moderado: Math.max(18, 28 + score * .2),
+    ignorado: Math.max(6, 35 - score * .25 + (1 - budgetEfficiency) * 12),
+    negativo: Math.max(3, 21 - score * .16 + overspend * 9),
+  };
+  const total = raw.forte + raw.moderado + raw.ignorado + raw.negativo;
+  const forte = Math.round(raw.forte / total * 100);
+  const moderado = Math.round(raw.moderado / total * 100);
+  const ignorado = Math.round(raw.ignorado / total * 100);
+  const negativo = 100 - forte - moderado - ignorado;
+  return {
+    probabilities: { forte, moderado, ignorado, negativo } as Record<MarketingCampaignOutcome, number>,
+    score: Math.round(score), idealBudget: Math.round(idealBudget), budgetEfficiency,
+    factors: [
+      `${quality >= 70 ? "Boa" : quality >= 50 ? "Média" : "Baixa"} qualidade do produto (${Math.round(quality)}%)`,
+      `${capacityFit >= 60 ? "Capacidade disponível" : "Equipe próxima do limite"} (${Math.round(capacityFit)}%)`,
+      `${audienceFit >= 75 ? "Público adequado" : "Público difícil"} para ${company.sector}`,
+      `${priceFit >= 65 ? "Preço coerente" : "Preço desalinhado"} com o público (${Math.round(priceFit)}%)`,
+      `${economicFit >= 60 ? "Economia favorável" : "Economia cautelosa"}`,
+      `${competitionFit >= 60 ? "Boa posição contra rivais" : "Concorrência mais forte"} (${Math.round(competitionFit)}%)`,
+      `${budget > idealBudget * 2 ? "Orçamento saturado" : budget < idealBudget * .45 ? "Orçamento curto" : "Orçamento coerente"}`,
+    ],
+  };
+}
+
 function rollMarketingPulse(company: Company, metrics: ReturnType<typeof companyMetrics>, week: number): MarketingPulse {
+  const campaigns = (company.marketingCampaigns ?? []).filter((campaign) => campaign.weeksLeft > 0);
+  if (campaigns.length) {
+    const customerDelta = campaigns.reduce((sum, campaign) => sum + Math.round(campaign.totalCustomerImpact / campaign.duration), 0);
+    const multiplier = campaigns.reduce((value, campaign) => value * (1 + (campaign.revenueMultiplier - 1) / campaign.duration), 1);
+    const reputationDelta = campaigns.reduce((sum, campaign) => sum + campaign.totalReputationImpact / campaign.duration, 0);
+    const strongest = campaigns.reduce<MarketingCampaignOutcome>((result, campaign) => campaign.outcome === "negativo" ? "negativo" : campaign.outcome === "forte" && result !== "negativo" ? "forte" : result, campaigns[0].outcome);
+    const mappedOutcome: MarketingPulse["outcome"] = strongest === "moderado" ? "positivo" : strongest === "ignorado" ? "fraco" : strongest;
+    return { week, outcome: mappedOutcome, multiplier, customerDelta, reputationDelta, efficiency: Math.round(campaigns.reduce((sum, campaign) => sum + campaign.probabilities.forte + campaign.probabilities.moderado, 0) / campaigns.length), detail: campaigns.map((campaign) => `${campaign.name}: ${marketingOutcomeLabels[campaign.outcome]}`).join(" · ") };
+  }
   if (company.marketing <= 0) return { week, outcome: "organico", multiplier: 1, customerDelta: 0, efficiency: 0, detail: "Sem campanha paga: crescimento depende apenas de reputação, preço e indicação." };
   const capacity = companyCommercialCapacity(company);
   const marketProducts = company.projects.filter((product) => product.kind === "produto" && product.lifecycle === "mercado");
@@ -4075,7 +4243,11 @@ function companyMetrics(
     company.customers * company.price,
     capacity * 410 * sectorMultiplier,
   );
-  const recurringRevenue = Math.min(company.productRevenue ?? 0, commercial.productRevenueCapacity) * (company.campaignWeeks ? 1.08 : 1) * (company.marketingMultiplier ?? 1);
+  const activeMarketingCampaigns = (company.marketingCampaigns ?? []).filter((campaign) => campaign.weeksLeft > 0);
+  const campaignRevenueMultiplier = activeMarketingCampaigns.length
+    ? activeMarketingCampaigns.reduce((value, campaign) => value * (1 + (campaign.revenueMultiplier - 1) / campaign.duration), 1)
+    : company.marketingMultiplier ?? 1;
+  const recurringRevenue = Math.min(company.productRevenue ?? 0, commercial.productRevenueCapacity) * (company.campaignWeeks ? 1.08 : 1);
   const contractRevenue = (company.partners ?? [])
     .filter((partner) => partner.kind === "cliente" && partner.status === "ativo")
     .reduce((sum, partner) => sum + partner.weeklyValue * (0.78 + partner.trust / 450), 0);
@@ -4095,6 +4267,7 @@ function companyMetrics(
       (0.75 + company.reputation / 250) *
       economy.demand *
       (0.9 + economy.confidence / 500) *
+      campaignRevenueMultiplier *
       effectRevenue,
   );
   const weeklyPayroll = payroll / 4.33;
@@ -4104,15 +4277,16 @@ function companyMetrics(
       sum + (p.lifecycle === "mercado" ? (p.productMarketing ?? 0) : 0),
     0,
   );
+  const productMaintenance = company.projects.filter((product) => product.kind === "produto" && product.lifecycle === "mercado").reduce((sum, product) => sum + (product.maintenanceCost ?? productBlueprint(company.sector, product.complexity ?? 3).maintenanceCost) * (1 + (product.bugLevel ?? 0) / 80), 0);
   const costs =
-    ((weeklyPayroll + company.marketing + productMarketing + weeklyOverhead + supplierCosts) *
+    ((weeklyPayroll + company.marketing + productMarketing + productMaintenance + weeklyOverhead + supplierCosts) *
       economy.costs *
       (company.efficiency ?? 1) +
       company.debt * economy.interest) *
     effectCosts;
   const profit = Math.round(revenue - costs);
   const valuation = Math.max(30000, Math.round(company.cash * .68 + Math.max(0, profit) * 52 * 3.2 + revenue * 3.5 + company.reputation * 2600 - company.debt * 1.05));
-  return { payroll, morale, skill, revenue, costs, profit, valuation, customerCapacity: commercial.customerCapacity, productRevenueCapacity: commercial.productRevenueCapacity };
+  return { payroll, morale, skill, revenue, costs, profit, valuation, productMaintenance, customerCapacity: commercial.customerCapacity, productRevenueCapacity: commercial.productRevenueCapacity };
 }
 
 function buildFinancialEntries(previous: GameState, companies: Company[], economy: Economy, week: number): FinancialEntry[] {
@@ -4123,9 +4297,11 @@ function buildFinancialEntries(previous: GameState, companies: Company[], econom
     const weeklyPayroll = metrics.payroll / 4.33;
     const productMarketing = company.projects.reduce((sum, product) => sum + (product.lifecycle === "mercado" ? product.productMarketing ?? 0 : 0), 0);
     const weeklyOverhead = (12500 + company.employees.length * 800) / 4.33;
+    const productMaintenance = metrics.productMaintenance;
     const supplierCosts = (company.partners ?? []).filter((partner) => partner.kind === "fornecedor" && partner.status === "ativo").reduce((sum, partner) => sum + partner.weeklyValue, 0);
     const interest = company.debt * economy.interest;
-    const nominalCosts = weeklyPayroll + company.marketing + productMarketing + weeklyOverhead + supplierCosts + interest;
+    const launchedCampaignSpend = (company.marketingCampaigns ?? []).filter((campaign) => campaign.startedWeek === week).reduce((sum, campaign) => sum + campaign.totalBudget, 0);
+    const nominalCosts = weeklyPayroll + company.marketing + productMarketing + productMaintenance + weeklyOverhead + supplierCosts + interest;
     const costFactor = nominalCosts > 0 ? metrics.costs / nominalCosts : 1;
     const add = (category: FinancialEntry["category"], label: string, amount: number, detail: string) => {
       if (Math.abs(amount) < 1) return;
@@ -4134,11 +4310,13 @@ function buildFinancialEntries(previous: GameState, companies: Company[], econom
     add("receita", "Receita da operação", metrics.revenue, "Clientes, produtos em mercado e contratos ativos.");
     add("equipe", "Folha semanal", -weeklyPayroll * costFactor, `${company.employees.length} profissionais na equipe.`);
     add("marketing", "Marketing e divulgação", -(company.marketing + productMarketing) * costFactor, company.marketingPulse ? company.marketingPulse.detail : "Campanhas da empresa e dos produtos.");
+    add("marketing", "Nova campanha estratégica", -launchedCampaignSpend, "Orçamento comprometido no lançamento; os resultados serão distribuídos nas próximas semanas.");
     add("estrutura", "Estrutura operacional", -weeklyOverhead * costFactor, "Escritório, ferramentas, suporte e manutenção.");
+    add("estrutura", "Manutenção dos produtos", -productMaintenance * costFactor, "Suporte, infraestrutura, correções e operação dos produtos no mercado.");
     add("contratos", "Fornecedores", -supplierCosts * costFactor, "Contratos de fornecimento ativos nesta semana.");
     add("juros", "Juros da dívida", -interest * costFactor, `Dívida atual de ${money.format(company.debt)}.`);
     if (before) {
-      const expectedCashChange = metrics.profit;
+      const expectedCashChange = metrics.profit - launchedCampaignSpend;
       const actualCashChange = company.cash - before.cash;
       const extraordinary = actualCashChange - expectedCashChange;
       add("eventos", extraordinary >= 0 ? "Decisões e eventos extraordinários" : "Decisões, dividendos e eventos", extraordinary, "Movimentos fora da operação normal, incluindo decisões narrativas, custos jurídicos e ações do CEO.");
@@ -4783,6 +4961,7 @@ export default function Home() {
     | "dynasty"
     | "weekly-report"
     | "finance"
+    | "marketing"
     | "partner"
     | "factions"
     | "annual-plan"
@@ -4811,6 +4990,11 @@ export default function Home() {
   const [holdingCompanyId, setHoldingCompanyId] = useState<number | null>(null);
   const [transferTargetId, setTransferTargetId] = useState<number | null>(null);
   const [transferAmount, setTransferAmount] = useState(50000);
+  const [campaignBudget, setCampaignBudget] = useState(30000);
+  const [campaignDuration, setCampaignDuration] = useState(4);
+  const [campaignAudience, setCampaignAudience] = useState<MarketingAudience>("nicho");
+  const [campaignObjective, setCampaignObjective] = useState<MarketingObjective>("aquisicao");
+  const [campaignProductId, setCampaignProductId] = useState<number | undefined>(undefined);
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
   const [selectedReportWeek, setSelectedReportWeek] = useState<number | null>(null);
   const [reportCompanyId, setReportCompanyId] = useState<number | null>(null);
@@ -5016,6 +5200,7 @@ export default function Home() {
             campaignWeeks: c.campaignWeeks ?? 0,
             marketingMultiplier: c.marketingMultiplier ?? 1,
             marketingPulse: c.marketingPulse,
+            marketingCampaigns: c.marketingCampaigns ?? [],
             parentCompanyId: c.parentCompanyId,
             acquisitionPrice: c.acquisitionPrice,
             origin: c.origin ?? "fundada",
@@ -5086,6 +5271,20 @@ export default function Home() {
               rightsOwned: p.rightsOwned ?? 100,
               royaltyRevenue: p.royaltyRevenue ?? 0,
               lawsuitWeeks: p.lawsuitWeeks ?? 0,
+              ...((p.kind ?? (c.sector === "Agência" ? "contrato" : "produto")) === "produto" ? productBlueprint(c.sector, p.complexity ?? 3) : {}),
+              complexity: p.complexity ?? ((p.kind ?? (c.sector === "Agência" ? "contrato" : "produto")) === "produto" ? 3 : undefined),
+              requiredTeam: p.requiredTeam ?? ((p.kind ?? "produto") === "produto" ? productBlueprint(c.sector, p.complexity ?? 3).requiredTeam : undefined),
+              requiredRoles: p.requiredRoles ?? ((p.kind ?? "produto") === "produto" ? productBlueprint(c.sector, p.complexity ?? 3).requiredRoles : undefined),
+              developmentCost: p.developmentCost ?? ((p.kind ?? "produto") === "produto" ? productBlueprint(c.sector, p.complexity ?? 3).developmentCost : undefined),
+              maintenanceCost: p.maintenanceCost ?? ((p.kind ?? "produto") === "produto" ? productBlueprint(c.sector, p.complexity ?? 3).maintenanceCost : undefined),
+              preparation: p.preparation ?? {},
+              delayWeeks: p.delayWeeks ?? 0,
+              bugLevel: p.bugLevel ?? 0,
+              customerSatisfaction: p.customerSatisfaction ?? 70,
+              updateNeed: p.updateNeed ?? 0,
+              supportLevel: p.supportLevel ?? 0,
+              feedback: p.feedback ?? [],
+              emergencyWeeks: p.emergencyWeeks ?? 0,
             })),
             employees: c.employees.map((e) => ({
               ...e,
@@ -5137,6 +5336,7 @@ export default function Home() {
   const managedProduct =
     active?.projects.find((p) => p.id === selectedProduct?.id) ??
     selectedProduct;
+  const managedProductRisk = active && managedProduct?.kind === "produto" ? productRiskProfile(managedProduct, active) : null;
   const currentLeader = game.playerExecutive ?? game.founder;
   const selectedWeeklyReport = (game.weeklyReports ?? []).find((report) => report.week === selectedReportWeek) ?? game.weeklyReports?.[0] ?? null;
   const selectedCompanyReport = selectedWeeklyReport?.companies.find((report) => report.companyId === reportCompanyId)
@@ -5180,6 +5380,8 @@ export default function Home() {
     () => (active ? companyMetrics(active, game.economy) : null),
     [active, game.economy],
   );
+  const marketableProducts = active?.projects.filter((product) => product.kind === "produto" && product.lifecycle === "mercado") ?? [];
+  const campaignForecast = active ? marketingCampaignForecast(active, game.economy, game.competitors, campaignBudget, campaignDuration, campaignAudience, campaignObjective, campaignProductId) : null;
   const empireValue =
     game.companies
       .filter((c) => !c.sold && !c.bankrupt && !c.closed)
@@ -5310,6 +5512,53 @@ export default function Home() {
       const changed = { ...s, companies: s.companies.map((company) => company.id === s.activeCompanyId ? afterCompany : company) };
       return recordDecisionTrace(s, changed, title, title, `A configuração da ${afterCompany.name} foi alterada e continuará sendo observada nas próximas semanas.`);
     });
+  };
+  const startMarketingCampaign = () => {
+    if (!active || !campaignForecast || !isCEO || active.cash < campaignBudget || campaignBudget < 5000 || campaignBudget > 150000 || (active.marketingCampaigns ?? []).filter((campaign) => campaign.weeksLeft > 0).length >= 2) return;
+    if (campaignObjective === "lancamento" && (!marketableProducts.length || !campaignProductId)) return;
+    const roll = Math.random() * 100;
+    const probabilities = campaignForecast.probabilities;
+    const outcome: MarketingCampaignOutcome = roll < probabilities.forte ? "forte" : roll < probabilities.forte + probabilities.moderado ? "moderado" : roll < probabilities.forte + probabilities.moderado + probabilities.ignorado ? "ignorado" : "negativo";
+    const product = marketableProducts.find((item) => item.id === campaignProductId);
+    const capacity = companyCommercialCapacity(active);
+    const room = Math.max(0, capacity.customerCapacity - active.customers);
+    const retentionFactor = campaignObjective === "retencao" ? .45 : 1;
+    const totalCustomerImpact = outcome === "forte"
+      ? Math.max(1, Math.round(room * (.08 + campaignForecast.budgetEfficiency * .16) * retentionFactor))
+      : outcome === "moderado"
+        ? Math.max(0, Math.round(room * (.035 + campaignForecast.budgetEfficiency * .075) * retentionFactor))
+        : outcome === "negativo"
+          ? -Math.max(1, Math.round(active.customers * (.018 + Math.max(0, campaignBudget / campaignForecast.idealBudget - 1.8) * .012)))
+          : 0;
+    const campaign: MarketingCampaign = {
+      id: `campaign-${active.id}-${game.week}-${Date.now()}`,
+      name: campaignObjective === "lancamento" && product ? `Lançamento de ${product.name}` : `${marketingObjectiveLabels[campaignObjective]} · ${marketingAudienceLabels[campaignAudience]}`,
+      audience: campaignAudience,
+      objective: campaignObjective,
+      productId: product?.id,
+      productName: product?.name,
+      totalBudget: campaignBudget,
+      duration: campaignDuration,
+      weeksLeft: campaignDuration,
+      startedWeek: game.week,
+      outcome,
+      probabilities,
+      totalCustomerImpact,
+      revenueMultiplier: outcome === "forte" ? 1.18 : outcome === "moderado" ? 1.075 : outcome === "ignorado" ? .995 : .92,
+      totalReputationImpact: outcome === "forte" ? 5 : outcome === "moderado" ? 2 : outcome === "negativo" ? -7 : 0,
+      revealed: false,
+    };
+    setGame((state) => {
+      const changed: GameState = {
+        ...state,
+        companies: state.companies.map((company) => company.id === active.id ? { ...company, cash: company.cash - campaignBudget, marketingCampaigns: [...(company.marketingCampaigns ?? []), campaign] } : company),
+        financialLedger: [{ id: `${state.week}-${active.id}-campaign-${Date.now()}`, week: state.week, companyId: active.id, companyName: active.name, category: "marketing", label: campaign.name, amount: -campaignBudget, detail: `Campanha de ${campaignDuration} semanas para ${marketingAudienceLabels[campaignAudience].toLowerCase()}.` }, ...(state.financialLedger ?? [])].slice(0, 180),
+        news: [{ id: Date.now(), week: state.week, category: "negocios", headline: `${active.name} lança nova campanha de ${money.format(campaignBudget)}`, body: `${campaign.name} ficará no ar por ${campaignDuration} semanas. O mercado estima ${probabilities.forte}% de crescimento forte, ${probabilities.moderado}% de retorno moderado, ${probabilities.ignorado}% de indiferença e ${probabilities.negativo}% de repercussão negativa.`, impact: "neutro" }, ...state.news].slice(0, 60),
+      };
+      return recordDecisionTrace(state, changed, "Campanha de marketing", campaign.name, `O investimento de ${money.format(campaignBudget)} produzirá efeitos graduais durante ${campaignDuration} semanas.`);
+    });
+    setDialog(null);
+    notify("A campanha começou. O resultado aparecerá gradualmente nas próximas semanas.");
   };
   const notify = (text: string) => {
     setToast(text);
@@ -5950,6 +6199,7 @@ export default function Home() {
           company.ceoLastDecision ?? "Consolidar a operação";
         let ceoHistory = company.ceoHistory ?? [];
         let ceoMemories = company.ceoMemories ?? [];
+        let marketingCampaigns = company.marketingCampaigns ?? [];
         let ceoHiddenIssue = company.ceoHiddenIssue;
         let ceoHiddenWeeks = Math.max(0, (company.ceoHiddenWeeks ?? 0) - 1);
         let ceoExtraCost = ceoSpend;
@@ -5963,9 +6213,22 @@ export default function Home() {
           ceoBoardImpact = 0;
         if (ceoDecisionWeek) {
           if (ceoStyle === "crescimento") {
-            ceoCustomerBoost = Math.round(3 + ceoSpend / 3500);
-            ceoReputationBoost = 1.2;
-            ceoLastDecision = "Acelerou marketing e expansão comercial";
+            const activeCampaignCount = marketingCampaigns.filter((campaign) => campaign.weeksLeft > 0).length;
+            if (ceoSpend >= 5000 && activeCampaignCount < 2) {
+              const audience: MarketingAudience = company.sector === "Tecnologia" || company.sector === "Agência" ? "nicho" : "massa";
+              const forecast = marketingCampaignForecast(company, economyRoll.economy, current.competitors, ceoSpend, 3, audience, "aquisicao");
+              const roll = Math.random() * 100;
+              const outcome: MarketingCampaignOutcome = roll < forecast.probabilities.forte ? "forte" : roll < forecast.probabilities.forte + forecast.probabilities.moderado ? "moderado" : roll < forecast.probabilities.forte + forecast.probabilities.moderado + forecast.probabilities.ignorado ? "ignorado" : "negativo";
+              const capacity = companyCommercialCapacity(company);
+              const room = Math.max(0, capacity.customerCapacity - company.customers);
+              const totalCustomerImpact = outcome === "forte" ? Math.max(1, Math.round(room * (.08 + forecast.budgetEfficiency * .14))) : outcome === "moderado" ? Math.max(0, Math.round(room * .065)) : outcome === "negativo" ? -Math.max(1, Math.round(company.customers * .025)) : 0;
+              marketingCampaigns = [...marketingCampaigns, { id: `ceo-campaign-${company.id}-${nextWeek}`, name: `Expansão comercial de ${company.ceo}`, audience, objective: "aquisicao", totalBudget: ceoSpend, duration: 3, weeksLeft: 3, startedWeek: nextWeek, outcome, probabilities: forecast.probabilities, totalCustomerImpact, revenueMultiplier: outcome === "forte" ? 1.16 : outcome === "moderado" ? 1.065 : outcome === "ignorado" ? .995 : .93, totalReputationImpact: outcome === "forte" ? 4 : outcome === "moderado" ? 1 : outcome === "negativo" ? -5 : 0, revealed: false }];
+              weeklyNews.push({ id: Date.now() + company.id + 2035, week: nextWeek, category: "negocios", headline: `${company.ceo} autoriza campanha na ${company.name}`, body: `O CEO comprometeu ${money.format(ceoSpend)} em uma campanha de três semanas para ${marketingAudienceLabels[audience].toLowerCase()}. A chance estimada de crescimento forte era ${forecast.probabilities.forte}%.`, impact: "neutro" });
+              ceoLastDecision = "Lançou uma campanha de expansão com risco calculado";
+            } else {
+              ceoExtraCost -= ceoSpend;
+              ceoLastDecision = "Adiou nova campanha para evitar saturação";
+            }
           }
           if (ceoStyle === "eficiencia") {
             ceoEfficiencyGain = 0.018 + ceoSpend / 3000000;
@@ -6079,6 +6342,9 @@ export default function Home() {
             1,
             company.projects.filter((p) => p.status === "ativo").length,
           );
+        let productReputationImpact = 0;
+        let productCustomerImpact = 0;
+        let productEmergencyCost = 0;
         let nextProjects = company.projects.map((p) => {
           if (p.status === "concluido") {
             if (p.kind !== "produto" || p.lifecycle !== "mercado")
@@ -6101,6 +6367,28 @@ export default function Home() {
                 : marketStage === "maturidade"
                   ? 0.12
                   : 0;
+            const complexity = p.complexity ?? 3;
+            const support = (p.preparation?.suporte ?? 0) + (p.supportLevel ?? 0);
+            let bugLevel = clamp((p.bugLevel ?? 0) + Math.max(0, (p.updateNeed ?? 0) - 55) * .035 - support * .8);
+            let updateNeed = clamp((p.updateNeed ?? 0) + complexity * .65 + Math.max(0, bugLevel - 25) * .04 - support * .7);
+            let customerSatisfaction = clamp((p.customerSatisfaction ?? 70) + (p.quality - 65) * .025 - bugLevel * .035 + support * .32);
+            let feedback = p.feedback ?? [];
+            if (Math.random() < .09 + bugLevel / 260) {
+              const negative = Math.random() * 100 > customerSatisfaction;
+              const rating = negative ? Math.max(1, Math.round(customerSatisfaction / 25)) : Math.min(5, 3 + Math.round(customerSatisfaction / 45));
+              const texts = negative ? ["O produto prometeu mais do que entregou.", "Encontrei falhas e o suporte demorou a responder.", "A atualização deixou tudo mais instável.", "O preço não combina com a experiência."] : ["Resolveu um problema real sem complicação.", "A nova versão ficou melhor do que eu esperava.", "O suporte respondeu rápido e salvou a experiência.", "Já recomendei para outras pessoas."];
+              feedback = [{ id: `feedback-${p.id}-${nextWeek}`, week: nextWeek, rating, text: texts[(nextWeek + p.id) % texts.length], tone: negative ? "negativo" as const : "positivo" as const }, ...feedback].slice(0, 8);
+              customerSatisfaction = clamp(customerSatisfaction + (negative ? -2 : 1));
+            }
+            if (Math.random() < bugLevel / 900) {
+              const severity = 6 + Math.round(Math.random() * 14);
+              bugLevel = clamp(bugLevel + severity);
+              updateNeed = clamp(updateNeed + severity * .7);
+              customerSatisfaction = clamp(customerSatisfaction - severity * .35);
+              productEmergencyCost += Math.round(severity * 900);
+              productReputationImpact -= severity / 8;
+              weeklyNews.push({ id: Date.now() + p.id + 2210, week: nextWeek, category: "negocios", headline: `${p.name} apresenta falha para clientes`, body: `O problema elevou os bugs para ${Math.round(bugLevel)}%, gerou custo emergencial de ${money.format(Math.round(severity * 900))} e aumentou a necessidade de atualização.`, impact: "negativo" });
+            }
             return {
               ...p,
               marketWeeks,
@@ -6111,16 +6399,22 @@ export default function Home() {
                   effectValue("productQualityDelta") +
                   ceoQualityBoost,
               ),
+              bugLevel,
+              updateNeed,
+              customerSatisfaction,
+              feedback,
+              emergencyWeeks: Math.max(0, (p.emergencyWeeks ?? 0) - 1),
               lawsuitWeeks: Math.max(0, (p.lawsuitWeeks ?? 0) - 1),
             };
           }
-          const setback =
-            Math.random() < p.risk / 650
-              ? 8 + Math.round(Math.random() * 13)
-              : 0;
+          const riskProfile = p.kind === "produto" ? productRiskProfile(p, company) : null;
+          if (p.kind === "produto" && (p.delayWeeks ?? 0) > 0) return { ...p, delayWeeks: Math.max(0, (p.delayWeeks ?? 0) - 1), risk: clamp(p.risk + 1) };
+          const delayTriggered = Boolean(riskProfile && Math.random() < riskProfile.delayChance / 260);
+          const setback = delayTriggered || Math.random() < p.risk / 650 ? 8 + Math.round(Math.random() * 13) : 0;
           const availableCount = company.employees.filter(
             (e) => (e.leaveWeeks ?? 0) <= 0,
           ).length;
+          const roleBlocked = Boolean(riskProfile && riskProfile.complexity >= 4 && riskProfile.coverage.ratio < .5);
           const progress =
             p.progress +
             Math.round(
@@ -6129,18 +6423,27 @@ export default function Home() {
                 p.risk / 27 +
                 ceoProgressBoost,
             ) -
-            setback;
+            setback - (riskProfile?.teamShortage ?? 0) * 2.5 - (roleBlocked ? 9 : 0);
+          if (delayTriggered && p.kind === "produto") weeklyNews.push({ id: Date.now() + p.id + 2200, week: nextWeek, category: "negocios", headline: `${p.name} sofre atraso no desenvolvimento`, body: `${riskProfile?.coverage.missing.length ? `Faltam competências de ${riskProfile.coverage.missing.join(" e ")}. ` : ""}A complexidade e a preparação atual criaram ${riskProfile?.delayChance}% de risco estimado de atraso.`, impact: "negativo" });
           return progress >= 100
-            ? {
+            ? (() => {
+                if (p.kind !== "produto") return {
+                  ...p, progress: 100, status: "concluido" as const,
+                };
+                const launchRoll = Math.random() * 100;
+                const failureChance = riskProfile?.failureChance ?? 35;
+                const launchOutcome: Project["launchOutcome"] = launchRoll < failureChance * .22 ? "desastre" : launchRoll < failureChance ? "falha" : launchRoll < failureChance + 22 ? "morno" : "sucesso";
+                const launchData = launchOutcome === "sucesso" ? { quality: 4, recurring: 1.08, bugs: 4, satisfaction: 82, reputation: 4, customers: 3, emergency: 0 } : launchOutcome === "morno" ? { quality: 0, recurring: .84, bugs: 12, satisfaction: 66, reputation: 0, customers: 0, emergency: 0 } : launchOutcome === "falha" ? { quality: -8, recurring: .58, bugs: 38, satisfaction: 43, reputation: -6, customers: -3, emergency: 3 } : { quality: -15, recurring: .3, bugs: 68, satisfaction: 24, reputation: -12, customers: -7, emergency: 5 };
+                productReputationImpact += launchData.reputation;
+                productCustomerImpact += launchData.customers;
+                productEmergencyCost += launchData.emergency * 9000;
+                weeklyNews.push({ id: Date.now() + p.id + 2190, week: nextWeek, category: "negocios", headline: launchOutcome === "sucesso" ? `${p.name} estreia acima das expectativas` : launchOutcome === "morno" ? `${p.name} chega ao mercado sem empolgar` : `${p.name} enfrenta ${launchOutcome === "desastre" ? "crise" : "problemas"} no lançamento`, body: `O produto tinha ${failureChance}% de chance estimada de falha. O lançamento terminou como ${launchOutcome}, com satisfação inicial de ${launchData.satisfaction}% e bugs em ${launchData.bugs}%.`, impact: launchOutcome === "sucesso" ? "positivo" : launchOutcome === "morno" ? "neutro" : "negativo" });
+                return {
                 ...p,
                 progress: 100,
                 status: "concluido" as const,
-                lifecycle:
-                  p.kind === "produto" ? ("mercado" as const) : p.lifecycle,
-                marketStage:
-                  p.kind === "produto"
-                    ? ("lancamento" as const)
-                    : p.marketStage,
+                lifecycle: "mercado" as const,
+                marketStage: "lancamento" as const,
                 marketWeeks: 0,
                 productPrice: p.productPrice ?? company.price,
                 productMarketing: p.productMarketing ?? 0,
@@ -6148,12 +6451,23 @@ export default function Home() {
                 patented: p.patented ?? false,
                 rightsOwned: p.rightsOwned ?? 100,
                 royaltyRevenue: p.royaltyRevenue ?? 0,
-              }
+                launchOutcome,
+                quality: clamp(p.quality + launchData.quality),
+                recurring: Math.round((p.recurring ?? 9000) * launchData.recurring),
+                bugLevel: launchData.bugs,
+                customerSatisfaction: launchData.satisfaction,
+                updateNeed: launchData.bugs * .55,
+                supportLevel: p.supportLevel ?? 0,
+                feedback: p.feedback ?? [],
+                emergencyWeeks: launchData.emergency,
+              };
+              })()
             : {
                 ...p,
                 progress: Math.max(0, progress),
                 quality: clamp(p.quality + cm.skill / 55 - setback / 4),
                 risk: clamp(p.risk + (setback ? 7 : -1)),
+                delayWeeks: delayTriggered ? 1 + Math.floor(Math.random() * 2) : Math.max(0, p.delayWeeks ?? 0),
               };
         });
         const productCadence =
@@ -6255,7 +6569,10 @@ export default function Home() {
         const campaignGain = newlyCompleted.some((p) => p.kind === "campanha")
           ? 6
           : Math.max(0, (company.campaignWeeks ?? 0) - 1);
-        const marketingPulse = rollMarketingPulse(company, cm, nextWeek);
+        const marketingPulse = rollMarketingPulse({ ...company, marketingCampaigns }, cm, nextWeek);
+        const runningMarketingCampaigns = marketingCampaigns.filter((campaign) => campaign.weeksLeft > 0);
+        const newlyRevealedCampaign = runningMarketingCampaigns.find((campaign) => !campaign.revealed);
+        const finishingCampaign = runningMarketingCampaigns.find((campaign) => campaign.weeksLeft === 1);
         const commercialCapacity = companyCommercialCapacity(company);
         const referencePrice = sectorData[company.sector].price;
         const pricePressure = Math.max(0, company.price / Math.max(1, referencePrice) - 1) * 5;
@@ -6270,16 +6587,20 @@ export default function Home() {
         );
         const capacityOverflow = Math.max(0, company.customers - commercialCapacity.customerCapacity);
         const serviceChurn = capacityOverflow > 0 ? Math.max(1, Math.round(capacityOverflow * .22)) : 0;
-        const customerDelta = organicCustomerDelta + marketingPulse.customerDelta - serviceChurn;
-        if (company.marketing > 0 && ["forte", "negativo"].includes(marketingPulse.outcome)) {
+        const customerDelta = organicCustomerDelta + marketingPulse.customerDelta - serviceChurn + productCustomerImpact;
+        if (newlyRevealedCampaign) {
           weeklyNews.push({
             id: Date.now() + company.id + 2065,
             week: nextWeek,
             category: "negocios",
-            headline: marketingPulse.outcome === "forte" ? `Campanha da ${company.name} supera as projeções` : `Campanha da ${company.name} provoca reação negativa`,
-            body: `${marketingPulse.detail} O investimento de ${money.format(company.marketing)} teve eficiência estimada em ${marketingPulse.efficiency}% e ${marketingPulse.customerDelta >= 0 ? "trouxe" : "custou"} ${Math.abs(marketingPulse.customerDelta)} cliente${Math.abs(marketingPulse.customerDelta) === 1 ? "" : "s"}.`,
-            impact: marketingPulse.outcome === "forte" ? "positivo" : "negativo",
+            headline: newlyRevealedCampaign.outcome === "forte" ? `${newlyRevealedCampaign.name} começa acima das projeções` : newlyRevealedCampaign.outcome === "negativo" ? `${newlyRevealedCampaign.name} enfrenta rejeição inicial` : `${newlyRevealedCampaign.name} revela sua primeira resposta`,
+            body: `Os primeiros sinais apontam ${marketingOutcomeLabels[newlyRevealedCampaign.outcome]}. O efeito completo do investimento de ${money.format(newlyRevealedCampaign.totalBudget)} continuará aparecendo por ${newlyRevealedCampaign.duration} semanas.`,
+            impact: newlyRevealedCampaign.outcome === "forte" ? "positivo" : newlyRevealedCampaign.outcome === "negativo" ? "negativo" : "neutro",
           });
+        } else if (finishingCampaign) {
+          weeklyNews.push({ id: Date.now() + company.id + 2065, week: nextWeek, category: "negocios", headline: `${finishingCampaign.name} encerra sua circulação`, body: `A campanha terminou com ${marketingOutcomeLabels[finishingCampaign.outcome]}, impacto acumulado estimado de ${finishingCampaign.totalCustomerImpact >= 0 ? "+" : ""}${finishingCampaign.totalCustomerImpact} clientes e efeito de ${finishingCampaign.totalReputationImpact >= 0 ? "+" : ""}${finishingCampaign.totalReputationImpact} na reputação.`, impact: finishingCampaign.outcome === "forte" ? "positivo" : finishingCampaign.outcome === "negativo" ? "negativo" : "neutro" });
+        } else if (!runningMarketingCampaigns.length && company.marketing > 0 && ["forte", "negativo"].includes(marketingPulse.outcome)) {
+          weeklyNews.push({ id: Date.now() + company.id + 2065, week: nextWeek, category: "negocios", headline: marketingPulse.outcome === "forte" ? `Presença de marca da ${company.name} ganha tração` : `Comunicação rotineira da ${company.name} é rejeitada`, body: `${marketingPulse.detail} A verba semanal de ${money.format(company.marketing)} ${marketingPulse.customerDelta >= 0 ? "trouxe" : "custou"} ${Math.abs(marketingPulse.customerDelta)} cliente${Math.abs(marketingPulse.customerDelta) === 1 ? "" : "s"}.`, impact: marketingPulse.outcome === "forte" ? "positivo" : "negativo" });
         }
         if (serviceChurn > 0) {
           weeklyNews.push({
@@ -6530,6 +6851,7 @@ export default function Home() {
           autonomyEffect +
           sharedSavings -
           legalCost -
+          productEmergencyCost -
           ceoExtraCost;
         const dividend =
           cm.profit > 0 && (company.dividendRate ?? 0) > 0
@@ -6769,11 +7091,14 @@ export default function Home() {
                   : -1
                 : 0) +
               effectValue("reputationDelta") +
+              (marketingPulse.reputationDelta ?? 0) +
+              productReputationImpact +
               ceoReputationBoost,
           ),
           productRevenue,
-          marketingMultiplier: marketingPulse.multiplier,
+          marketingMultiplier: runningMarketingCampaigns.length ? 1 : marketingPulse.multiplier,
           marketingPulse,
+          marketingCampaigns: marketingCampaigns.map((campaign) => campaign.weeksLeft > 0 ? { ...campaign, weeksLeft: campaign.weeksLeft - 1, revealed: true } : campaign).filter((campaign) => campaign.weeksLeft > 0 || nextWeek - campaign.startedWeek <= 12),
           efficiency: Math.max(
             0.68,
             (company.efficiency ?? 1) - efficiencyGain - ceoEfficiencyGain,
@@ -8058,9 +8383,10 @@ export default function Home() {
               )),
             },
       ),
+      financialLedger: cashDelta !== 0 ? [{ id: `${s.week}-${active.id}-product-${Date.now()}`, week: s.week, companyId: active.id, companyName: active.name, category: "eventos", label: `Produto: ${managedProduct.name}`, amount: cashDelta, detail: cashDelta < 0 ? "Investimento em desenvolvimento, proteção, suporte ou correção." : "Receita extraordinária ligada aos direitos do produto." }, ...(s.financialLedger ?? [])].slice(0, 180) : s.financialLedger,
     }));
     setGame((state) => evolveIdentity(
-      state,
+      { ...state, financialLedger: [{ id: `${state.week}-${active.id}-development-${Date.now()}`, week: state.week, companyId: active.id, companyName: active.name, category: "eventos", label: `Desenvolvimento de ${p.name}`, amount: -actualBudget, detail: p.kind === "produto" ? `Produto de complexidade ${complexity}/5.` : "Novo projeto iniciado." }, ...(state.financialLedger ?? [])].slice(0, 180) },
       { negociacao: 2, pessoas: increase > 0.08 ? 3 : increase >= 0 ? 1 : -3, prudencia: increase < 0 ? 2 : 0 },
       `acordo salarial com ${employee.name}`,
     ));
@@ -8071,7 +8397,7 @@ export default function Home() {
   };
 
   const createProject = (kind: "seguro" | "ousado" | "marca") => {
-    if (!isCEO) return;
+    if (!isCEO || !active) return;
     const templates = {
       seguro: {
         name: "Melhoria contínua",
@@ -8102,13 +8428,18 @@ export default function Home() {
       },
     };
     const p = templates[kind];
+    const complexity = (kind === "ousado" ? 4 : 2) as 1 | 2 | 3 | 4 | 5;
+    const blueprint = productBlueprint(active?.sector ?? "Tecnologia", complexity);
+    const actualBudget = p.kind === "produto" ? blueprint.developmentCost : p.budget;
+    if (active.cash < actualBudget) { notify(`A empresa precisa de ${money.format(actualBudget)} para iniciar este projeto.`); return; }
     updateActive((c) => ({
       ...c,
-      cash: c.cash - p.budget,
+      cash: c.cash - actualBudget,
       projects: [
         ...c.projects,
         {
           ...p,
+          budget: actualBudget,
           id: Date.now(),
           progress: 0,
           status: "ativo",
@@ -8121,6 +8452,7 @@ export default function Home() {
           patented: false,
           rightsOwned: 100,
           royaltyRevenue: 0,
+          ...(p.kind === "produto" ? { complexity, ...productBlueprint(c.sector, complexity), developmentCost: actualBudget, preparation: {}, bugLevel: 0, customerSatisfaction: 70, updateNeed: 0, supportLevel: 0, feedback: [] } : {}),
         },
       ],
     }));
@@ -8134,7 +8466,7 @@ export default function Home() {
   };
 
   const openProductDecision = (product: Project) => {
-    if (!isCEO || product.kind !== "produto" || product.status !== "concluido")
+    if (!isCEO || product.kind !== "produto")
       return;
     setSelectedProduct(product);
     setRightsOffer(null);
@@ -8160,21 +8492,48 @@ export default function Home() {
     setSelectedProduct((p) => (p ? { ...p, ...changes } : p));
   };
 
-  const launchProductVersion = () => {
-    if (!active || !managedProduct || active.cash < 35000) return;
-    updateManagedProduct(
-      {
-        version: (managedProduct.version ?? 1) + 1,
-        quality: clamp(managedProduct.quality + 12),
-        marketWeeks: 6,
-        marketStage: "crescimento",
-        risk: clamp(managedProduct.risk - 4),
-      },
-      -35000,
-    );
-    notify(
-      `Versão ${(managedProduct.version ?? 1) + 1} lançada. O produto voltou a crescer.`,
-    );
+  const investProductPreparation = (kind: ProductPreparation) => {
+    if (!active || !managedProduct || managedProduct.status !== "ativo") return;
+    const level = managedProduct.preparation?.[kind] ?? 0;
+    const base = productPreparationLabels[kind];
+    const cost = base.cost * (level + 1);
+    if (level >= 3 || active.cash < cost) return;
+    const preparation = { ...(managedProduct.preparation ?? {}), [kind]: level + 1 };
+    const changes: Partial<Project> = { preparation, risk: clamp(managedProduct.risk - (kind === "piloto" ? 7 : kind === "testes" || kind === "qualidade" ? 5 : 3)), quality: clamp(managedProduct.quality + (kind === "prototipo" || kind === "qualidade" ? 3 : 1)), supportLevel: kind === "suporte" ? (managedProduct.supportLevel ?? 0) + 1 : managedProduct.supportLevel };
+    updateManagedProduct(changes, -cost);
+    notify(`${base.label} recebeu ${money.format(cost)}. O risco caiu, mas não desapareceu.`);
+  };
+
+  const emergencyProductFix = () => {
+    if (!active || !managedProduct) return;
+    const cost = Math.round(18000 + (managedProduct.bugLevel ?? 0) * 850);
+    if (active.cash < cost) return;
+    updateManagedProduct({ bugLevel: clamp((managedProduct.bugLevel ?? 0) - 28 - (managedProduct.preparation?.testes ?? 0) * 4), updateNeed: clamp((managedProduct.updateNeed ?? 0) - 24), customerSatisfaction: clamp((managedProduct.customerSatisfaction ?? 70) + 6), emergencyWeeks: 0 }, -cost);
+    setGame((state) => ({ ...state, news: [{ id: Date.now(), week: state.week, category: "negocios", headline: `${active.name} libera correção emergencial para ${managedProduct.name}`, body: `A força-tarefa custou ${money.format(cost)}. Bugs e reclamações caíram, mas a confiança será recuperada gradualmente.`, impact: "neutro" }, ...state.news].slice(0, 60) }));
+    notify("A correção emergencial foi liberada.");
+  };
+
+  const investProductSupport = () => {
+    if (!active || !managedProduct) return;
+    const level = managedProduct.supportLevel ?? 0;
+    const cost = 15000 * (level + 1);
+    if (level >= 3 || active.cash < cost) return;
+    updateManagedProduct({ supportLevel: level + 1, customerSatisfaction: clamp((managedProduct.customerSatisfaction ?? 70) + 5), bugLevel: clamp((managedProduct.bugLevel ?? 0) - 4), updateNeed: clamp((managedProduct.updateNeed ?? 0) - 7) }, -cost);
+    notify(`Suporte pós-venda elevado ao nível ${level + 1}.`);
+  };
+
+  const launchProductVersion = (strategy: "economica" | "equilibrada" | "robusta") => {
+    if (!active || !managedProduct || managedProduct.status !== "concluido") return;
+    const costs = { economica: 20000, equilibrada: 40000, robusta: 70000 };
+    const cost = costs[strategy];
+    if (active.cash < cost) return;
+    const danger = productVersionRisk(managedProduct, strategy);
+    const roll = Math.random() * 100;
+    const outcome: NonNullable<Project["lastVersionOutcome"]> = roll >= danger + 18 ? "melhoria" : roll >= danger ? "ignorada" : roll < danger * .22 ? "rejeitada" : roll < danger * .52 ? "bugs" : "canibalizacao";
+    const changes: Partial<Project> = outcome === "melhoria" ? { version: (managedProduct.version ?? 1) + 1, quality: clamp(managedProduct.quality + 9), marketWeeks: 6, marketStage: "crescimento", bugLevel: clamp((managedProduct.bugLevel ?? 0) - 10), updateNeed: clamp((managedProduct.updateNeed ?? 0) - 25), customerSatisfaction: clamp((managedProduct.customerSatisfaction ?? 70) + 7), recurring: Math.round((managedProduct.recurring ?? 9000) * 1.12), lastVersionOutcome: outcome } : outcome === "ignorada" ? { version: (managedProduct.version ?? 1) + 1, recurring: Math.round((managedProduct.recurring ?? 9000) * .98), lastVersionOutcome: outcome } : outcome === "bugs" ? { version: (managedProduct.version ?? 1) + 1, bugLevel: clamp((managedProduct.bugLevel ?? 0) + 26), updateNeed: clamp((managedProduct.updateNeed ?? 0) + 22), customerSatisfaction: clamp((managedProduct.customerSatisfaction ?? 70) - 9), recurring: Math.round((managedProduct.recurring ?? 9000) * .9), emergencyWeeks: 3, lastVersionOutcome: outcome } : outcome === "rejeitada" ? { version: (managedProduct.version ?? 1) + 1, customerSatisfaction: clamp((managedProduct.customerSatisfaction ?? 70) - 18), recurring: Math.round((managedProduct.recurring ?? 9000) * .8), updateNeed: clamp((managedProduct.updateNeed ?? 0) + 18), lastVersionOutcome: outcome } : { version: (managedProduct.version ?? 1) + 1, quality: clamp(managedProduct.quality + 4), recurring: Math.round((managedProduct.recurring ?? 9000) * .74), customerSatisfaction: clamp((managedProduct.customerSatisfaction ?? 70) - 5), lastVersionOutcome: outcome };
+    setGame((state) => ({ ...state, companies: state.companies.map((company) => company.id !== active.id ? company : { ...company, cash: company.cash - cost, customers: Math.max(1, company.customers + (outcome === "melhoria" ? 3 : outcome === "rejeitada" ? -5 : outcome === "bugs" ? -2 : 0)), reputation: clamp(company.reputation + (outcome === "melhoria" ? 3 : outcome === "rejeitada" ? -6 : outcome === "bugs" ? -3 : 0)), projects: company.projects.map((product) => product.id === managedProduct.id ? { ...product, ...changes } : product) }), news: [{ id: Date.now(), week: state.week, category: "negocios", headline: outcome === "melhoria" ? `${managedProduct.name} acerta em nova versão` : `Nova versão de ${managedProduct.name} termina ${outcome}`, body: `A estratégia ${strategy} custou ${money.format(cost)}. O risco calculado de problema era ${Math.round(danger)}% e o mercado respondeu com ${outcome}.`, impact: outcome === "melhoria" ? "positivo" : outcome === "ignorada" ? "neutro" : "negativo" }, ...state.news].slice(0, 60), financialLedger: [{ id: `${state.week}-${active.id}-version-${Date.now()}`, week: state.week, companyId: active.id, companyName: active.name, category: "eventos", label: `Nova versão de ${managedProduct.name}`, amount: -cost, detail: `Estratégia ${strategy}; resultado: ${outcome}.` }, ...(state.financialLedger ?? [])].slice(0, 180) }));
+    setSelectedProduct((product) => product ? { ...product, ...changes } : product);
+    notify(`A nova versão foi ${outcome}.`);
   };
 
   const patentProduct = () => {
@@ -10551,21 +10910,20 @@ export default function Home() {
                       : `${Math.round(p.progress)}% pronto`}
                   </b>
                   <b>Qualidade {Math.round(p.quality)}</b>
+                  {p.kind === "produto" && <b>Complexidade {p.complexity ?? 3}/5</b>}
                   <b>
                     {p.kind === "produto"
                       ? `${compact.format(productWeeklyRevenue(p))}/sem.`
                       : `${compact.format(p.reward)} entrega`}
                   </b>
                 </div>
-                {p.status === "concluido" &&
-                  p.kind === "produto" &&
-                  p.lifecycle === "mercado" && (
+                {p.kind === "produto" && (p.status === "ativo" || p.lifecycle === "mercado") && (
                     <button
                       className="product-manage"
                       disabled={!isCEO}
                       onClick={() => openProductDecision(p)}
                     >
-                      Gerenciar produto
+                      {p.status === "ativo" ? "Preparar produto" : "Gerenciar produto"}
                     </button>
                   )}
               </article>
@@ -10748,12 +11106,12 @@ export default function Home() {
               />
             </label>
             <label>
-              <span>Marketing semanal</span>
+              <span>Presença semanal da marca</span>
               <b>{money.format(active.marketing)}</b>
               <input
                 type="range"
                 min="0"
-                max="35000"
+                max="15000"
                 step="1000"
                 value={active.marketing}
                 onChange={(e) =>
@@ -10763,6 +11121,7 @@ export default function Home() {
                   }))
                 }
               />
+              <small>Manutenção contínua. Campanhas maiores são apostas separadas.</small>
             </label>
             <div>
               <span>Valor estimado</span>
@@ -10770,6 +11129,20 @@ export default function Home() {
               <small>O comprador pode oferecer mais — ou menos.</small>
             </div>
           </div>
+          <section className="marketing-campaign-strip">
+            <header>
+              <div><small>MARKETING COM RISCO REAL</small><h3>Campanhas estratégicas</h3><p>Escolha público, objetivo e produto. O dinheiro é comprometido no lançamento e o mercado reage durante duas a seis semanas.</p></div>
+              <button disabled={!isCEO || active.cash < 5000 || (active.marketingCampaigns ?? []).filter((campaign) => campaign.weeksLeft > 0).length >= 2} onClick={() => { setCampaignProductId(marketableProducts[0]?.id); setDialog("marketing"); }}>Planejar campanha</button>
+            </header>
+            {(active.marketingCampaigns ?? []).filter((campaign) => campaign.weeksLeft > 0).length > 0 ? <div className="active-campaign-list">
+              {(active.marketingCampaigns ?? []).filter((campaign) => campaign.weeksLeft > 0).map((campaign) => <article key={campaign.id} className={campaign.revealed ? campaign.outcome : "pending"}>
+                <small>{marketingObjectiveLabels[campaign.objective]} · {marketingAudienceLabels[campaign.audience]}</small>
+                <b>{campaign.name}</b>
+                <div><span>{campaign.weeksLeft} semana{campaign.weeksLeft === 1 ? "" : "s"} restante{campaign.weeksLeft === 1 ? "" : "s"}</span><strong>{campaign.revealed ? marketingOutcomeLabels[campaign.outcome] : "aguardando reação"}</strong></div>
+                <i style={{ width: `${Math.round((campaign.duration - campaign.weeksLeft) / campaign.duration * 100)}%` }} />
+              </article>)}
+            </div> : <p className="no-active-campaign">Nenhuma campanha estratégica ativa. A empresa depende da presença semanal, reputação e indicação.</p>}
+          </section>
         </section>
       )}
 
@@ -11454,7 +11827,7 @@ export default function Home() {
               <b>Produto revolucionário</b>
               <p>
                 Grande investimento. Pode mudar a empresa ou consumir seus
-                recursos.
+                recursos. Desenvolvimento estimado em {money.format(productBlueprint(active?.sector ?? "Tecnologia", 4).developmentCost)}.
               </p>
             </button>
             <button onClick={() => createProject("marca")}>
@@ -11489,21 +11862,40 @@ export default function Home() {
                     .replace("lancamento", "lançamento")
                     .replace("declinio", "declínio")}{" "}
                   · qualidade {Math.round(managedProduct.quality)} ·{" "}
+                  complexidade {managedProduct.complexity ?? 3}/5 ·{" "}
                   {managedProduct.rightsOwned ?? 100}% dos direitos pertencem à
                   empresa.
                 </p>
               </div>
               <div className="product-revenue">
-                <small>RECEITA SEMANAL ESTIMADA</small>
-                <b>{money.format(productWeeklyRevenue(managedProduct))}</b>
+                <small>{managedProduct.status === "ativo" ? "RISCO DE FALHA NO LANÇAMENTO" : "RECEITA SEMANAL ESTIMADA"}</small>
+                <b>{managedProduct.status === "ativo" ? `${managedProductRisk?.failureChance ?? 0}%` : money.format(productWeeklyRevenue(managedProduct))}</b>
                 <span>
-                  {managedProduct.licensee
+                  {managedProduct.status === "ativo" ? `${managedProductRisk?.delayChance ?? 0}% de risco de atraso por ciclo` : managedProduct.licensee
                     ? `inclui royalties de ${managedProduct.licensee}`
                     : "vendas diretas"}
                 </span>
               </div>
             </header>
-            {rightsOffer ? (
+            {managedProduct.status === "ativo" ? (
+              <div className="product-development-room">
+                <section className="product-risk-board">
+                  <div><small>PROGRESSO</small><b>{Math.round(managedProduct.progress)}%</b></div>
+                  <div><small>EQUIPE NECESSÁRIA</small><b>{managedProduct.requiredTeam ?? 3} pessoas</b></div>
+                  <div><small>RISCO DE ATRASO</small><b>{managedProductRisk?.delayChance ?? 0}%</b></div>
+                  <div><small>RISCO DE FALHA</small><b>{managedProductRisk?.failureChance ?? 0}%</b></div>
+                </section>
+                <div className="product-role-check"><small>COMPETÊNCIAS NECESSÁRIAS</small>{managedProductRisk?.coverage.requirements.map((role) => <span className={managedProductRisk.coverage.missing.includes(role) ? "missing" : "covered"} key={role}>{managedProductRisk.coverage.missing.includes(role) ? "FALTA" : "OK"} · {role.replaceAll("|", " ou ")}</span>)}</div>
+                <section className="product-preparation-grid">
+                  {(Object.entries(productPreparationLabels) as [ProductPreparation, typeof productPreparationLabels[ProductPreparation]][]).map(([key, item]) => {
+                    const level = managedProduct.preparation?.[key] ?? 0;
+                    const cost = item.cost * (level + 1);
+                    return <button key={key} disabled={level >= 3 || active.cash < cost} onClick={() => investProductPreparation(key)}><small>NÍVEL {level}/3</small><b>{item.label}</b><span>{item.detail}</span><strong>{level >= 3 ? "Preparação máxima" : money.format(cost)}</strong></button>;
+                  })}
+                </section>
+                <p className="product-risk-note">Nenhum investimento elimina totalmente o risco. Sem as competências necessárias, produtos complexos avançam mais devagar e acumulam atrasos.</p>
+              </div>
+            ) : rightsOffer ? (
               <div className="product-decision">
                 <div className="rights-offer">
                   <small>PROPOSTA FORMAL</small>
@@ -11528,6 +11920,19 @@ export default function Home() {
               </div>
             ) : (
               <div className="product-management-grid">
+                <section className="product-health-panel">
+                  <h3>Saúde do produto</h3>
+                  <div className="product-stat-grid">
+                    <span>Satisfação <b>{Math.round(managedProduct.customerSatisfaction ?? 70)}%</b></span>
+                    <span>Bugs <b>{Math.round(managedProduct.bugLevel ?? 0)}%</b></span>
+                    <span>Atualização necessária <b>{Math.round(managedProduct.updateNeed ?? 0)}%</b></span>
+                    <span>Manutenção semanal <b>{money.format((managedProduct.maintenanceCost ?? productBlueprint(active.sector, managedProduct.complexity ?? 3).maintenanceCost) * (1 + (managedProduct.bugLevel ?? 0) / 80))}</b></span>
+                  </div>
+                  <p>Resultado do lançamento: <b>{managedProduct.launchOutcome ?? "legado anterior"}</b>{managedProduct.lastVersionOutcome ? ` · última versão ${managedProduct.lastVersionOutcome}` : ""}.</p>
+                  <button disabled={active.cash < 18000 + (managedProduct.bugLevel ?? 0) * 850 || (managedProduct.bugLevel ?? 0) < 5} onClick={emergencyProductFix}>Correção emergencial · {money.format(18000 + (managedProduct.bugLevel ?? 0) * 850)}</button>
+                  <button disabled={(managedProduct.supportLevel ?? 0) >= 3 || active.cash < 15000 * ((managedProduct.supportLevel ?? 0) + 1)} onClick={investProductSupport}>Suporte pós-venda nível {(managedProduct.supportLevel ?? 0) + 1} · {money.format(15000 * ((managedProduct.supportLevel ?? 0) + 1))}</button>
+                  <div className="customer-feedback-list"><small>FEEDBACK RECENTE</small>{(managedProduct.feedback ?? []).length ? (managedProduct.feedback ?? []).slice(0, 4).map((feedback) => <blockquote className={feedback.tone} key={feedback.id}><b>{"★".repeat(feedback.rating)}{"☆".repeat(5 - feedback.rating)}</b> “{feedback.text}” <small>S{feedback.week}</small></blockquote>) : <p>Ainda não há avaliações suficientes.</p>}</div>
+                </section>
                 <section>
                   <h3>Mercado e posicionamento</h3>
                   <label>
@@ -11594,12 +11999,12 @@ export default function Home() {
                       <b>{managedProduct.rightsOwned ?? 100}%</b>
                     </span>
                   </div>
-                  <button
-                    disabled={active.cash < 35000}
-                    onClick={launchProductVersion}
-                  >
-                    Lançar nova versão · R$ 35 mil
-                  </button>
+                  <p>Nova versão é uma aposta: pode melhorar, ser ignorada, criar bugs, desagradar clientes ou canibalizar a versão anterior.</p>
+                  <div className="version-strategies">
+                    <button disabled={active.cash < 20000} onClick={() => launchProductVersion("economica")}><b>Econômica · R$ 20 mil</b><span>{Math.round(productVersionRisk(managedProduct, "economica"))}% de risco · rápida, sujeita a bugs e rejeição.</span></button>
+                    <button disabled={active.cash < 40000} onClick={() => launchProductVersion("equilibrada")}><b>Equilibrada · R$ 40 mil</b><span>{Math.round(productVersionRisk(managedProduct, "equilibrada"))}% de risco · mais testes, sem garantia de retorno.</span></button>
+                    <button disabled={active.cash < 70000} onClick={() => launchProductVersion("robusta")}><b>Robusta · R$ 70 mil</b><span>{Math.round(productVersionRisk(managedProduct, "robusta"))}% de risco · ainda pode ser ignorada.</span></button>
+                  </div>
                   <button
                     disabled={managedProduct.patented || active.cash < 45000}
                     onClick={patentProduct}
@@ -12735,6 +13140,32 @@ export default function Home() {
                   Encerrar operação voluntariamente
                 </button>
               </section>}
+            </div>
+          </div>
+        </GameModal>
+      )}
+      {dialog === "marketing" && active && campaignForecast && (
+        <GameModal onClose={() => setDialog(null)}>
+          <div className="marketing-room">
+            <ModalTitle label="AGÊNCIA DE CAMPANHAS" title="Dinheiro compra alcance. Não compra certeza." text="Monte a campanha e veja a estimativa antes de investir. Qualidade, preço, reputação, produto, equipe, economia e concorrentes alteram as probabilidades." />
+            <div className="marketing-planner">
+              <section className="campaign-setup">
+                <label>Orçamento total <b>{money.format(campaignBudget)}</b><input type="range" min="5000" max="150000" step="5000" value={campaignBudget} onChange={(event) => setCampaignBudget(Number(event.target.value))} /><small>O valor inteiro sai do caixa ao confirmar.</small></label>
+                <label>Duração<select value={campaignDuration} onChange={(event) => setCampaignDuration(Number(event.target.value))}>{[2, 3, 4, 5, 6].map((weeks) => <option value={weeks} key={weeks}>{weeks} semanas</option>)}</select><small>O resultado é distribuído durante todo o período.</small></label>
+                <div><span>OBJETIVO</span><div className="campaign-choice-grid">{(Object.keys(marketingObjectiveLabels) as MarketingObjective[]).map((objective) => <button key={objective} className={campaignObjective === objective ? "active" : ""} disabled={objective === "lancamento" && marketableProducts.length === 0} onClick={() => setCampaignObjective(objective)}>{marketingObjectiveLabels[objective]}</button>)}</div></div>
+                <div><span>PÚBLICO</span><div className="campaign-choice-grid">{(Object.keys(marketingAudienceLabels) as MarketingAudience[]).map((audience) => <button key={audience} className={campaignAudience === audience ? "active" : ""} onClick={() => setCampaignAudience(audience)}>{marketingAudienceLabels[audience]}</button>)}</div></div>
+                {marketableProducts.length > 0 && <label>Produto principal<select value={campaignProductId ?? ""} onChange={(event) => setCampaignProductId(event.target.value ? Number(event.target.value) : undefined)}><option value="">Marca da empresa</option>{marketableProducts.map((product) => <option key={product.id} value={product.id}>{product.name} · qualidade {Math.round(product.quality)}%</option>)}</select></label>}
+              </section>
+              <section className="campaign-forecast">
+                <header><small>PREVISÃO DA AGÊNCIA</small><b>Compatibilidade {campaignForecast.score}%</b><span>Orçamento de referência: {money.format(campaignForecast.idealBudget)}</span></header>
+                <div className="probability-stack">
+                  {(Object.keys(marketingOutcomeLabels) as MarketingCampaignOutcome[]).map((outcome) => <div className={outcome} key={outcome}><span>{marketingOutcomeLabels[outcome]}</span><b>{campaignForecast.probabilities[outcome]}%</b><i><em style={{ width: `${campaignForecast.probabilities[outcome]}%` }} /></i></div>)}
+                </div>
+                <ul>{campaignForecast.factors.map((factor) => <li key={factor}>{factor}</li>)}</ul>
+                {campaignBudget > campaignForecast.idealBudget * 2 && <p className="campaign-risk-warning">Você está acima da saturação. Mais dinheiro aumenta a exposição, mas também o risco de rejeição e desperdício.</p>}
+                {active.cash - campaignBudget < 30000 && <p className="campaign-risk-warning">A campanha deixará a empresa com somente {money.format(active.cash - campaignBudget)} em caixa.</p>}
+                <button className="launch-campaign-button" disabled={active.cash < campaignBudget || campaignObjective === "lancamento" && (!marketableProducts.length || !campaignProductId)} onClick={startMarketingCampaign}>Lançar campanha · {money.format(campaignBudget)}</button>
+              </section>
             </div>
           </div>
         </GameModal>
