@@ -368,6 +368,10 @@ button {
   right: 10%;
   top: 25%;
 }
+.hotspot.facilities {
+  left: 27%;
+  bottom: 15%;
+}
 .week-brief {
   position: absolute;
   right: 3vw;
@@ -1272,6 +1276,59 @@ button {
 .hire-list > button > strong {
   font: 700 11px var(--font-geist-mono);
 }
+.facility-room { padding: 38px; }
+.facility-overview {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 24px 0 16px;
+  border: 1px solid var(--line);
+}
+.facility-overview > div { padding: 17px; border-right: 1px solid var(--line); }
+.facility-overview > div:last-child { border: 0; }
+.facility-overview small,
+.maintenance-policy small,
+.facility-card header small { display: block; color: var(--rust); font: 700 8px var(--font-geist-mono); letter-spacing: .12em; }
+.facility-overview b { display: block; margin: 6px 0; font: 700 20px var(--font-geist-mono); }
+.facility-overview span { color: #71716c; font-size: 9px; }
+.maintenance-policy { padding: 18px; margin-bottom: 16px; color: #f5eee3; background: #17282f; }
+.maintenance-policy > header { display: flex; align-items: end; justify-content: space-between; margin-bottom: 12px; }
+.maintenance-policy h3 { margin: 5px 0 0; font: 400 22px Georgia, serif; }
+.maintenance-policy > div { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.maintenance-policy button { min-height: 100px; padding: 12px; text-align: left; color: #d9dfdc; border: 1px solid rgba(255,255,255,.15); background: rgba(255,255,255,.04); }
+.maintenance-policy button.active { border-color: var(--gold); background: rgba(217,155,73,.13); }
+.maintenance-policy button b,
+.maintenance-policy button span { display: block; }
+.maintenance-policy button b { font-size: 10px; }
+.maintenance-policy button span { margin-top: 5px; color: var(--gold); font: 700 8px var(--font-geist-mono); }
+.maintenance-policy button p { margin: 8px 0 0; color: #aeb8b5; font-size: 8px; line-height: 1.4; }
+.facility-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+.facility-card { position: relative; padding: 17px; border: 1px solid var(--line); background: #e6ded1; }
+.facility-card:before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--teal); }
+.facility-card.condition-warning:before { background: var(--gold); }
+.facility-card.condition-bad:before { background: var(--rust); }
+.facility-card > header { display: flex; justify-content: space-between; align-items: center; }
+.facility-card > header b { font: 700 9px var(--font-geist-mono); }
+.facility-card h3 { margin: 10px 0 4px; font: 400 21px Georgia, serif; }
+.facility-card > p { min-height: 30px; margin: 0; color: #686963; font-size: 9px; line-height: 1.45; }
+.facility-effects { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0; }
+.facility-effects span { padding: 5px 7px; border: 1px solid rgba(25,31,32,.16); font-size: 7px; text-transform: uppercase; }
+.facility-condition { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; }
+.facility-condition > span { height: 5px; overflow: hidden; background: rgba(20,25,25,.13); }
+.facility-condition i { display: block; height: 100%; background: var(--teal); }
+.condition-warning .facility-condition i { background: var(--gold); }
+.condition-bad .facility-condition i { background: var(--rust); }
+.facility-condition b { font: 700 7px var(--font-geist-mono); }
+.facility-card dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 12px 0; }
+.facility-card dl div { padding: 7px; background: rgba(255,255,255,.36); }
+.facility-card dt { color: #777; font-size: 7px; }
+.facility-card dd { margin: 4px 0 0; font: 700 8px var(--font-geist-mono); }
+.facility-actions { display: grid; gap: 5px; }
+.facility-actions > button { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 10px; border: 0; color: #fff; background: #183039; }
+.facility-actions > button.facility-repair { color: #203035; border: 1px solid rgba(25,31,32,.24); background: transparent; }
+.facility-actions > button:disabled { opacity: .35; }
+.facility-actions > button span { font-size: 8px; }
+.facility-actions > button b { font: 700 9px var(--font-geist-mono); }
+.facility-max { display: block; padding: 10px; text-align: center; color: var(--teal); border: 1px solid var(--teal); font: 700 8px var(--font-geist-mono); }
 .director-area-tabs {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -2776,6 +2833,11 @@ button {
   .director-candidate-columns {
     grid-template-columns: 1fr;
   }
+  .facility-overview,
+  .maintenance-policy > div,
+  .facility-grid { grid-template-columns: 1fr; }
+  .facility-overview > div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .facility-room { padding: 25px; }
   .company-directors > header { align-items: flex-start; flex-direction: column; }
   .capital-room,
   .board-room {
