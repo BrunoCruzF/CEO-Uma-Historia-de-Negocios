@@ -37,7 +37,10 @@ yarn-error.log*
 # typescript
 next-env.d.ts
 /dist/
-/build/
+# O plugin abaixo faz parte da configuração do projeto e precisa acompanhar
+# clones e downloads ZIP. Outros arquivos temporários de build continuam fora.
+/build/*
+!/build/sites-vite-plugin.ts
 /.wrangler/
 /outputs/
 /work/

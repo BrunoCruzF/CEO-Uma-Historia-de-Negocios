@@ -127,6 +127,8 @@ npm install
 
 Evite executar o jogo diretamente de dentro do arquivo ZIP. Extraia todo o conteúdo antes.
 
+Avisos de `npm audit`, pacotes procurando financiamento ou `allow-scripts` não significam necessariamente que o jogo falhou. Não execute `npm audit fix --force`, pois isso pode trocar dependências por versões incompatíveis. O erro importante é o texto em vermelho exibido depois que o servidor tenta iniciar.
+
 ### Como reiniciar o progresso
 
 O save fica no navegador. Dentro do jogo, use a opção de reiniciar quando disponível. Também é possível limpar os dados do site `localhost` nas configurações do navegador, mas isso apaga definitivamente o progresso local.
