@@ -89,7 +89,24 @@ type FinancialEntry = {
   amount: number;
   detail: string;
 };
-type StaffAlert = { id: string; companyId: number; companyName: string; employeeName: string; role: string; reason: "demissao" | "desligamento"; week: number; responsible: string; headcountAfter: number; resolved?: boolean };
+type StaffAlert = {
+  id: string;
+  companyId: number;
+  companyName: string;
+  employeeName: string;
+  role: string;
+  reason: "demissao" | "desligamento";
+  week: number;
+  responsible: string;
+  headcountAfter: number;
+  resolved?: boolean;
+  ceoNotifiedWeek?: number;
+  ceoReaction?: "positiva" | "negativa";
+  ceoDeadline?: number;
+  ceoCommitment?: string;
+  ceoMessageId?: string;
+  lastResponse?: string;
+};
 type FactionAgenda = "crescimento" | "seguranca" | "inovacao" | "pessoas" | "familia" | "retorno";
 type HoldingFaction = {
   id: string;
@@ -5665,6 +5682,23 @@ export default function Home() {
   const selectedPartnerAge = selectedPartner ? Math.max(0, game.week - (selectedPartner.signedWeek ?? 0)) : 0;
   const selectedPartnerEarlyPenalty = selectedPartnerEarly && selectedPartner ? clamp(18 + selectedPartner.weeksLeft * 1.35 + Math.max(0, 5 - selectedPartnerAge) * 5, 18, 58) : 0;
   const pendingStaffAlerts = (game.staffAlerts ?? []).filter((alert) => !alert.resolved);
+  const primaryStaffAlert = pendingStaffAlerts[0] ?? null;
+  const primaryStaffCompany = primaryStaffAlert
+    ? game.companies.find((company) => company.id === primaryStaffAlert.companyId) ?? null
+    : null;
+  const primaryStaffResponsePending = primaryStaffAlert?.ceoMessageId
+    ? game.unread.some((message) => message.id === primaryStaffAlert.ceoMessageId)
+    : false;
+  const primaryStaffDelegated = Boolean(primaryStaffCompany && primaryStaffCompany.ceo !== currentLeader && primaryStaffAlert?.responsible !== currentLeader);
+  const primaryStaffButtonLabel = !primaryStaffDelegated
+    ? "Abrir mercado de talentos"
+    : primaryStaffResponsePending
+      ? "Ler resposta do CEO"
+      : primaryStaffAlert?.ceoDeadline && primaryStaffAlert.ceoDeadline >= game.week
+        ? "Acompanhar compromisso"
+        : primaryStaffAlert?.ceoNotifiedWeek
+          ? "Cobrar CEO novamente"
+          : "Cobrar CEO responsável";
   const [leadershipTitle, leadershipDescription] = leadershipArchetype(game.leadershipIdentity);
   const selectedFaction = (game.factions ?? []).find((faction) => faction.id === selectedFactionId) ?? game.factions?.[0] ?? null;
   const currentAnnualSnapshot = annualSnapshot(game);
@@ -5873,14 +5907,128 @@ export default function Home() {
     const company = game.companies.find((item) => item.id === alert.companyId);
     if (!company) return;
     setGame((state) => ({ ...state, activeCompanyId: company.id }));
-    if (company.ceo === currentLeader) {
+    if (company.ceo === currentLeader || alert.responsible === currentLeader) {
       setView("pessoas");
       setDialog("hire");
-    } else {
+      return;
+    }
+
+    const pendingResponse = alert.ceoMessageId
+      ? game.unread.find((message) => message.id === alert.ceoMessageId)
+      : undefined;
+    if (pendingResponse) {
+      setSelectedMessage(pendingResponse);
+      setDialog("inbox");
+      return;
+    }
+    if (alert.ceoDeadline && alert.ceoDeadline >= game.week) {
       setHoldingCompanyId(company.id);
       setView("portfolio");
       setDialog("holding-company");
+      notify(`${company.ceo} assumiu o compromisso: ${alert.ceoCommitment ?? `resolver a vaga até a semana ${alert.ceoDeadline}`}.`);
+      return;
     }
+
+    const trust = company.ceoTrust ?? 65;
+    const loyalty = company.ceoLoyalty ?? 65;
+    const memory = characterMemoryScore(company.ceoMemories, game.week);
+    const cooperationChance = clamp(
+      28 + trust * .32 + loyalty * .25 + memory * .45 +
+      (company.ceoStyle === "pessoas" ? 12 : company.ceoStyle === "eficiencia" ? 6 : company.ceoStyle === "crescimento" ? -4 : 2) +
+      (company.autonomy === "independente" ? -7 : company.autonomy === "supervisionada" ? 4 : 0),
+      18,
+      92,
+    );
+    const positive = Math.random() * 100 < cooperationChance;
+    const reaction: NonNullable<StaffAlert["ceoReaction"]> = positive ? "positiva" : "negativa";
+    const messageId = `staff-ceo-response-${alert.id}-${game.week}`;
+    const ceoName = company.ceo ?? "CEO responsável";
+    const updateCommitment = (
+      state: GameState,
+      mode: "prazo" | "autonomia" | "conciliar",
+    ): GameState => {
+      const deadline = state.week + (mode === "conciliar" ? 4 : 2);
+      const commitment = mode === "prazo"
+        ? `apresentar um candidato até a semana ${deadline}`
+        : mode === "autonomia"
+          ? `contratar diretamente até a semana ${deadline}`
+          : `reorganizar o orçamento e resolver a vaga até a semana ${deadline}`;
+      const trustChange = mode === "autonomia" ? 4 : mode === "conciliar" ? 2 : positive ? 1 : -6;
+      const loyaltyChange = mode === "autonomia" ? 2 : mode === "conciliar" ? 2 : positive ? 1 : -4;
+      return {
+        ...state,
+        companies: state.companies.map((item) => item.id !== company.id ? item : ({
+          ...item,
+          autonomy: mode === "autonomia" ? "independente" as const : item.autonomy,
+          ceoTrust: clamp((item.ceoTrust ?? 65) + trustChange),
+          ceoLoyalty: clamp((item.ceoLoyalty ?? 65) + loyaltyChange),
+          ceoAmbition: clamp((item.ceoAmbition ?? 50) + (mode === "prazo" && !positive ? 3 : 0)),
+          ceoHireCooldown: 0,
+          ceoLastDecision: `Assumiu compromisso de ${commitment}`,
+          ceoHistory: [`Semana ${state.week}: após cobrança da holding, comprometeu-se a ${commitment}.`, ...(item.ceoHistory ?? [])].slice(0, 8),
+          ceoMemories: addCharacterMemory(item.ceoMemories, characterMemory(
+            state.week,
+            "contratacao",
+            mode === "autonomia"
+              ? "Você cobrou a reposição, mas confiou em mim para contratar sem nova aprovação."
+              : mode === "conciliar"
+                ? "Você ouviu minhas limitações antes de definir um novo prazo para a vaga."
+                : "Você exigiu um prazo curto para repor a vaga sob minha responsabilidade.",
+            mode === "autonomia" ? "grato" : mode === "conciliar" ? "respeitado" : positive ? "pressionado" : "magoado",
+            mode === "autonomia" ? 6 : mode === "conciliar" ? 4 : positive ? 1 : -8,
+            mode === "prazo" ? 82 : 70,
+          )),
+        })),
+        staffAlerts: (state.staffAlerts ?? []).map((item) => item.id !== alert.id ? item : ({
+          ...item,
+          responsible: mode === "autonomia" ? ceoName : item.responsible,
+          ceoReaction: reaction,
+          ceoDeadline: deadline,
+          ceoCommitment: commitment,
+          lastResponse: positive
+            ? `${ceoName} aceitou a cobrança e assumiu um prazo.`
+            : `${ceoName} reagiu mal, mas recebeu uma orientação formal.`,
+        })),
+        news: [{
+          id: Date.now(),
+          week: state.week,
+          category: "pessoas" as const,
+          headline: `${ceoName} responde pela vaga aberta na ${company.name}`,
+          body: `${positive ? "O CEO recebeu a cobrança de forma profissional." : "O CEO contestou a pressão da holding."} A decisão final foi ${commitment}.`,
+          impact: positive || mode !== "prazo" ? "neutro" as const : "negativo" as const,
+        }, ...state.news].slice(0, 60),
+      };
+    };
+    const response: StoryMessage = {
+      id: messageId,
+      from: ceoName,
+      role: `CEO da ${company.name}`,
+      initials: ceoName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
+      color: positive ? "#5d8c70" : "#a8553a",
+      subject: positive ? `Vou assumir a reposição de ${alert.role}` : `Discordo da forma como fui cobrado pela vaga`,
+      body: positive
+        ? `Recebi sua cobrança sobre a saída de ${alert.employeeName}. Você tem razão: a reposição é minha responsabilidade. Posso apresentar um candidato rapidamente, mas preciso saber quanta autonomia terei para fechar a contratação.`
+        : `Recebi sua cobrança sobre a saída de ${alert.employeeName}, mas considero injusto tratar a vaga como simples demora da gestão. Caixa, faixa salarial e aprovações da holding limitaram minhas opções. Se você mantiver um prazo curto, isso afetará nossa relação.`,
+      choices: [
+        { label: "Exigir candidato em 2 semanas", tone: positive ? "good" : "risk", hint: positive ? "CEO aceita a meta · acompanhamento direto" : "CEO obedece · confiança e lealdade caem", result: `${ceoName} recebeu um prazo formal de duas semanas.`, effect: (state) => updateCommitment(state, "prazo") },
+        { label: "Dar autonomia para contratar", tone: "good", hint: "CEO escolhe e contrata · existe risco de uma escolha ruim", result: `${ceoName} recebeu autonomia para resolver a vaga.`, effect: (state) => updateCommitment(state, "autonomia") },
+        { label: "Ouvir a justificativa e negociar prazo", hint: "Preserva a relação · reposição pode levar quatro semanas", result: `Você e ${ceoName} renegociaram recursos e prazo.`, effect: (state) => updateCommitment(state, "conciliar") },
+      ],
+    };
+    setGame((state) => ({
+      ...state,
+      unread: [...state.unread, response],
+      staffAlerts: (state.staffAlerts ?? []).map((item) => item.id !== alert.id ? item : ({
+        ...item,
+        ceoNotifiedWeek: state.week,
+        ceoReaction: reaction,
+        ceoMessageId: messageId,
+        lastResponse: positive ? `${ceoName} respondeu de forma construtiva.` : `${ceoName} reagiu de forma defensiva.`,
+      })),
+    }));
+    setSelectedMessage(response);
+    setDialog("inbox");
+    setSpeed(0);
   };
 
   const partnerAction = (action: "aceitar" | "renovar" | "pressionar" | "relacionamento" | "encerrar") => {
@@ -11211,7 +11359,7 @@ export default function Home() {
           <small>Ver noticiário ›</small>
         </button>
       )}
-      {!!pendingStaffAlerts.length && <div className="staff-alert-bar"><div><small>VAGA ABERTA · {pendingStaffAlerts[0].reason === "demissao" ? "PEDIDO DE DEMISSÃO" : "DESLIGAMENTO"}</small><b>{pendingStaffAlerts[0].employeeName} deixou a {pendingStaffAlerts[0].companyName}</b><span>{pendingStaffAlerts[0].role} · reposição sob responsabilidade de {pendingStaffAlerts[0].responsible}</span></div><button onClick={() => openStaffReplacement(pendingStaffAlerts[0])}>{game.companies.find((company) => company.id === pendingStaffAlerts[0].companyId)?.ceo === currentLeader ? "Abrir mercado de talentos" : "Cobrar CEO responsável"}</button>{pendingStaffAlerts.length > 1 && <i>+{pendingStaffAlerts.length - 1} vagas</i>}</div>}
+      {!!primaryStaffAlert && <div className={`staff-alert-bar ${primaryStaffAlert.ceoReaction ?? ""}`}><div><small>VAGA ABERTA · {primaryStaffAlert.reason === "demissao" ? "PEDIDO DE DEMISSÃO" : "DESLIGAMENTO"}</small><b>{primaryStaffAlert.employeeName} deixou a {primaryStaffAlert.companyName}</b><span>{primaryStaffAlert.role} · reposição sob responsabilidade de {primaryStaffAlert.responsible}{primaryStaffAlert.ceoReaction ? ` · reação ${primaryStaffAlert.ceoReaction}${primaryStaffAlert.ceoDeadline ? ` · prazo: semana ${primaryStaffAlert.ceoDeadline}` : ""}` : ""}</span></div><button onClick={() => openStaffReplacement(primaryStaffAlert)}>{primaryStaffButtonLabel}</button>{pendingStaffAlerts.length > 1 && <i>+{pendingStaffAlerts.length - 1} vagas</i>}</div>}
 
       {view === "escritorio" && active && operationalAccess && (
         <section className="office-stage">
