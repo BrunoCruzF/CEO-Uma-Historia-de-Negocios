@@ -1246,6 +1246,12 @@ button {
   gap: 8px;
   margin-top: 25px;
 }
+.talent-market-summary { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 20px; border: 1px solid var(--line); background: #17282f; }
+.talent-market-summary > div { padding: 13px; color: #fff; border-right: 1px solid rgba(255,255,255,.12); }
+.talent-market-summary > div:last-child { border: 0; }
+.talent-market-summary small { display: block; color: var(--gold); font: 700 7px var(--font-geist-mono); letter-spacing: .1em; }
+.talent-market-summary b { display: block; margin: 6px 0 3px; font: 700 13px var(--font-geist-mono); }
+.talent-market-summary span { color: #b8c0bd; font-size: 8px; line-height: 1.35; }
 .hire-list button {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -1278,9 +1284,13 @@ button {
     serif;
   margin-top: 7px;
 }
+.hire-list .candidate-chance { display: block; width: fit-content; margin-top: 7px; padding: 4px 6px; color: #7c603e; background: rgba(217,155,73,.13); font: 700 7px var(--font-geist-mono); }
+.hire-list .candidate-chance.high { color: #276b52; background: rgba(66,142,107,.12); }
+.hire-list .candidate-chance.low { color: #9b3f34; background: rgba(181,73,58,.1); }
 .hire-list > button > strong {
   font: 700 11px var(--font-geist-mono);
 }
+.hire-list > button > strong small { display: block; margin-top: 5px; color: #777; font: 400 7px Arial; text-align: right; line-height: 1.4; }
 .facility-room { padding: 38px; }
 .facility-overview {
   display: grid;
@@ -2840,7 +2850,9 @@ button {
   }
   .facility-overview,
   .maintenance-policy > div,
-  .facility-grid { grid-template-columns: 1fr; }
+  .facility-grid,
+  .talent-market-summary { grid-template-columns: 1fr; }
+  .talent-market-summary > div { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.12); }
   .facility-overview > div { border-right: 0; border-bottom: 1px solid var(--line); }
   .facility-room { padding: 25px; }
   .company-directors > header { align-items: flex-start; flex-direction: column; }
