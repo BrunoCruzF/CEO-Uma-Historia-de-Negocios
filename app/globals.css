@@ -224,6 +224,30 @@ button {
   color: #172028;
   border-color: var(--gold);
 }
+.time-jump-controls {
+  display: flex;
+  min-width: 174px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+.time-jump-controls button {
+  flex: 1;
+  min-width: 54px;
+  border: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 9px 8px;
+  background: transparent;
+  color: #f4eee3;
+  font: 800 8px var(--font-geist-mono);
+  white-space: nowrap;
+}
+.time-jump-controls button:last-child { border-right: 0; }
+.time-jump-controls button:hover { background: rgba(217, 155, 73, 0.18); }
+.time-jump-controls button:disabled { opacity: .3; cursor: not-allowed; }
+.time-jump-controls.running { border-color: var(--gold); }
+.time-jump-controls .time-jump-stop {
+  color: #172028;
+  background: var(--gold);
+}
 .cycle-expansao {
   color: #76b99a;
 }
@@ -2750,6 +2774,10 @@ button {
   .time-controls button {
     width: 25px;
   }
+  .hud-stats > .time-controls,
+  .hud-stats > .time-jump-controls { display: flex; }
+  .time-jump-controls { min-width: 82px; }
+  .time-jump-controls button { min-width: 0; padding: 8px 5px; font-size: 7px; }
   .game-nav {
     padding: 0 8px;
     overflow-x: auto;

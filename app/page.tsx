@@ -5245,6 +5245,11 @@ export default function Home() {
   const [pageGuideView, setPageGuideView] = useState<View | null>(null);
   const [companyName, setCompanyName] = useState("");
   const [speed, setSpeed] = useState<0 | 1 | 2>(0);
+  const [timeAdvance, setTimeAdvance] = useState<{
+    remaining: number;
+    total: number;
+    label: string;
+  } | null>(null);
   const [targetRival, setTargetRival] = useState<Competitor | null>(null);
   const [selectedRivalId, setSelectedRivalId] = useState<number | null>(null);
   const [salaryEmployee, setSalaryEmployee] = useState<Employee | null>(null);
@@ -6370,8 +6375,9 @@ export default function Home() {
   };
 
   const advanceWeek = () => {
-    if (!active || active.sold || active.bankrupt || game.dynastyConcluded) return;
+    if (!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded || game.unread.length > 0) return;
     setGame((current) => {
+      if (current.unread.length > 0 || current.dynastyConcluded) return current;
       const nextWeek = current.week + 1;
       const controlledExecutive = current.playerExecutive ?? current.founder;
       const directorBefore = current.narrativeDirector ?? initialState.narrativeDirector!;
@@ -8690,6 +8696,49 @@ export default function Home() {
       return nextState;
     });
   };
+
+  const requestTimeAdvance = (weeks: number, label: string) => {
+    if (!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded) {
+      notify("Não existe uma empresa ativa capaz de continuar a simulação.");
+      return;
+    }
+    if (game.unread.length > 0) {
+      setSelectedMessage(game.unread[0]);
+      setDialog("inbox");
+      notify("Resolva a decisão urgente antes de avançar o calendário.");
+      return;
+    }
+    setSpeed(0);
+    setTimeAdvance({ remaining: weeks, total: weeks, label });
+  };
+
+  useEffect(() => {
+    if (!timeAdvance) return;
+    const currentCompany = game.companies.find((company) => company.id === game.activeCompanyId);
+    const interrupted =
+      game.unread.length > 0 ||
+      Boolean(dialog) ||
+      game.dynastyConcluded ||
+      !currentCompany ||
+      currentCompany.sold ||
+      currentCompany.bankrupt ||
+      currentCompany.closed;
+    if (interrupted) {
+      setTimeAdvance(null);
+      if (game.unread.length > 0)
+        notify(`Calendário pausado na semana ${game.week}: uma decisão precisa de você.`);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      advanceWeek();
+      setTimeAdvance((current) =>
+        !current || current.remaining <= 1
+          ? null
+          : { ...current, remaining: current.remaining - 1 },
+      );
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [timeAdvance, game.week, game.unread.length, game.activeCompanyId, game.dynastyConcluded, dialog]);
 
   useEffect(() => {
     if (
@@ -11081,30 +11130,36 @@ export default function Home() {
           <div className="time-controls" aria-label="Velocidade do tempo">
             <button
               className={speed === 0 ? "active" : ""}
-              onClick={() => setSpeed(0)}
+              onClick={() => { setTimeAdvance(null); setSpeed(0); }}
             >
               Ⅱ
             </button>
             <button
               className={speed === 1 ? "active" : ""}
-              onClick={() => setSpeed(1)}
+              onClick={() => { setTimeAdvance(null); setSpeed(1); }}
             >
               ▶
             </button>
             <button
               className={speed === 2 ? "active" : ""}
-              onClick={() => setSpeed(2)}
+              onClick={() => { setTimeAdvance(null); setSpeed(2); }}
             >
               ▶▶
             </button>
           </div>
-          <button
-            className="advance-button"
-            onClick={advanceWeek}
-            disabled={!active || active.sold || active.bankrupt}
-          >
-            + 1 semana
-          </button>
+          <div className={`time-jump-controls ${timeAdvance ? "running" : ""}`} aria-label="Avanço do calendário">
+            {timeAdvance ? (
+              <button className="time-jump-stop" onClick={() => setTimeAdvance(null)} title="Interromper o avanço do calendário">
+                Parar {timeAdvance.label} · {timeAdvance.remaining} sem.
+              </button>
+            ) : (
+              <>
+                <button onClick={() => requestTimeAdvance(1, "semana")} disabled={!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded} title="Simular uma semana">+1 sem.</button>
+                <button onClick={() => requestTimeAdvance(4, "mês")} disabled={!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded} title="Simular quatro semanas; para se surgir uma decisão urgente">+1 mês</button>
+                <button onClick={() => requestTimeAdvance(13, "trimestre")} disabled={!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded} title="Simular treze semanas; para se surgir uma decisão urgente">+1 tri.</button>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
