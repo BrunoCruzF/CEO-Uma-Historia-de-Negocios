@@ -203,6 +203,8 @@ type Project = {
   royaltyRevenue?: number;
   lawsuitWeeks?: number;
   legalOpponent?: string;
+  legalCooldownUntil?: number;
+  lawsuitsFiled?: number;
   proposedByEmployeeId?: number;
   proposedByEmployeeName?: string;
   estimatedSuccess?: number;
@@ -764,7 +766,7 @@ type DifficultyProfile = {
 const difficultyProfiles: Record<GameDifficulty, DifficultyProfile> = {
   relaxado: { title: "Relaxado", description: "Mais capital e avisos, parceiros pacientes e crises curtas para aprender sem perder as consequências.", stress: .72, economyDemand: 1.035, economyCosts: .975, departure: .55, rival: -.7, reward: .85, crisisFrequency: .68, crisisDuration: .78, ceoIntelligence: 1.15, rivalIntelligence: .78, partnerTolerance: 1.28, creditAccess: 1.22, investorPressure: .72, productFailure: .76, warningWeeks: 5, startingCash: 180000 },
   executivo: { title: "Executivo", description: "A experiência equilibrada: decisões difíceis, avisos razoáveis e consequências proporcionais.", stress: 1, economyDemand: 1, economyCosts: 1, departure: 1, rival: 0, reward: 1, crisisFrequency: 1, crisisDuration: 1, ceoIntelligence: 1, rivalIntelligence: 1, partnerTolerance: 1, creditAccess: 1, investorPressure: 1, productFailure: 1, warningWeeks: 3, startingCash: 120000 },
-  implacavel: { title: "Implacável", description: "Menos caixa e avisos, crises longas, contratos duros, capital exigente e rivais que exploram fraquezas.", stress: 1.28, economyDemand: .965, economyCosts: 1.035, departure: 1.55, rival: .9, reward: 1.3, crisisFrequency: 1.42, crisisDuration: 1.3, ceoIntelligence: 1.08, rivalIntelligence: 1.28, partnerTolerance: .72, creditAccess: .76, investorPressure: 1.35, productFailure: 1.32, warningWeeks: 1, startingCash: 85000 },
+  implacavel: { title: "Implacável", description: "Menos caixa e avisos, crises longas, contratos duros, capital exigente e rivais que exploram fraquezas.", stress: 1.28, economyDemand: .94, economyCosts: 1.06, departure: 1.55, rival: .9, reward: 1.3, crisisFrequency: 1.42, crisisDuration: 1.3, ceoIntelligence: 1.08, rivalIntelligence: 1.28, partnerTolerance: .72, creditAccess: .76, investorPressure: 1.35, productFailure: 1.32, warningWeeks: 1, startingCash: 85000 },
 };
 const difficultySystemSummary: Record<GameDifficulty, string[]> = {
   relaxado: ["R$ 180 mil iniciais + reserva única de R$ 45 mil", "crises 32% menos frequentes e 22% mais curtas", "alertas econômicos com até 5 semanas", "falhas de produto 24% menores"],
@@ -4513,6 +4515,21 @@ function companyMetrics(
   return { payroll, morale, skill, revenue, preliminaryRevenue, baseCosts, costs, profit, preTaxProfit, taxes, complexityCost, idleCashCost, requiredReserve, cashCoverage, liquidityFactor, scale, scaleProfile, valuation, productMaintenance, facilityMaintenance, customerCapacity: commercial.customerCapacity, productRevenueCapacity: commercial.productRevenueCapacity };
 }
 
+function competitorAcquisitionPrice(rival: Competitor, buyer: Company, economy: Economy, difficulty: GameDifficulty = "executivo") {
+  const productValue = (rival.products ?? []).reduce((sum, product) => {
+    const stageMultiplier = product.stage === "crescimento" ? 1.25 : product.stage === "maduro" ? 1.05 : product.stage === "declínio" ? .62 : .88;
+    return sum + product.quality * 8200 * stageMultiplier;
+  }, 0);
+  const statusMultiplier = rival.status === "crise" ? .72 : rival.status === "crescendo" ? 1.18 : 1;
+  const ageMultiplier = 1 + Math.min(.55, (rival.age ?? 0) / 180);
+  const difficultySellerMultiplier = difficulty === "relaxado" ? .9 : difficulty === "implacavel" ? 1.2 : 1;
+  const standalone = (Math.max(0, rival.cash ?? 0) * .82 + rival.score * 46000 + rival.reputation * 11500 + productValue) * statusMultiplier * ageMultiplier * difficultySellerMultiplier;
+  const buyerValue = companyMetrics(buyer, economy).valuation;
+  const strategicRate = (difficulty === "relaxado" ? .07 : difficulty === "implacavel" ? .18 : .11) + rival.score / 1200;
+  const dominancePremium = buyerValue * strategicRate * (rival.relationship === "rival" ? 1.14 : 1);
+  return Math.max(250000, Math.round(Math.max(standalone, dominancePremium) / 10000) * 10000);
+}
+
 function buildFinancialEntries(previous: GameState, companies: Company[], economy: Economy, week: number): FinancialEntry[] {
   const entries: FinancialEntry[] = [];
   companies.filter((company) => !company.sold && !company.bankrupt && !company.closed).forEach((company, companyIndex) => {
@@ -5529,6 +5546,8 @@ export default function Home() {
               rightsOwned: p.rightsOwned ?? 100,
               royaltyRevenue: p.royaltyRevenue ?? 0,
               lawsuitWeeks: p.lawsuitWeeks ?? 0,
+              legalCooldownUntil: p.legalCooldownUntil ?? 0,
+              lawsuitsFiled: p.lawsuitsFiled ?? 0,
               ...((p.kind ?? (c.sector === "Agência" ? "contrato" : "produto")) === "produto" ? productBlueprint(c.sector, p.complexity ?? 3) : {}),
               complexity: p.complexity ?? ((p.kind ?? (c.sector === "Agência" ? "contrato" : "produto")) === "produto" ? 3 : undefined),
               requiredTeam: p.requiredTeam ?? ((p.kind ?? "produto") === "produto" ? productBlueprint(c.sector, p.complexity ?? 3).requiredTeam : undefined),
@@ -7150,11 +7169,11 @@ export default function Home() {
           (p) =>
             p.kind === "produto" &&
             p.lifecycle === "mercado" &&
-            !p.patented &&
             (p.lawsuitWeeks ?? 0) === 0 &&
             p.quality > 62,
         );
-        if (exposedProduct && Math.random() < 0.018 * eventPressure) {
+        const disputeChance = exposedProduct ? (exposedProduct.patented ? .006 : .018) * eventPressure * difficulty.productFailure : 0;
+        if (exposedProduct && Math.random() < disputeChance) {
           exposedProduct.lawsuitWeeks = 5;
           exposedProduct.legalOpponent =
             current.competitors.find(
@@ -7167,7 +7186,7 @@ export default function Home() {
             week: nextWeek,
             category: "negocios",
             headline: `${company.name} enfrenta disputa sobre ${exposedProduct.name}`,
-            body: `${exposedProduct.legalOpponent} alega semelhanças comerciais e pede indenização. A ausência de patente aumenta a incerteza jurídica.`,
+            body: `${exposedProduct.legalOpponent} alega semelhanças comerciais e pede indenização. ${exposedProduct.patented ? "A patente fortalece a defesa, mas escopo, anterioridade e provas ainda serão discutidos." : "A ausência de patente aumenta a incerteza jurídica."}`,
             impact: "negativo",
           });
         }
@@ -7186,6 +7205,10 @@ export default function Home() {
               ? Math.round(Math.random() * 5000)
               : 0;
         const sharedSavings = company.sharedServices ? 2800 : 0;
+        const hardModePressureCost = (current.difficulty ?? "executivo") === "implacavel"
+          ? Math.round(Math.max(0, cm.profit) * .26 + Math.max(0, company.cash - cm.requiredReserve * 1.5) * .0012)
+          : 0;
+        if (hardModePressureCost > 0 && nextWeek % 13 === company.id % 13) weeklyNews.push({ id: Date.now() + company.id + 2410, week: nextWeek, category: "economia", headline: `Escala da ${company.name} atrai custos e reação competitiva`, body: `No Implacável, fiscalização, retenção de talentos, defesa de mercado e concorrência consumiram ${money.format(hardModePressureCost)} nesta semana. Crescer continua valioso, mas margens extraordinárias atraem reação.`, impact: "negativo" });
         const grossCash =
           company.cash +
           cm.profit +
@@ -7195,7 +7218,8 @@ export default function Home() {
           legalCost -
           productEmergencyCost -
           facilityIncidentCost -
-          ceoExtraCost;
+          ceoExtraCost -
+          hardModePressureCost;
         const dividend =
           cm.profit > 0 && (company.dividendRate ?? 0) > 0
             ? Math.min(
@@ -7592,11 +7616,16 @@ export default function Home() {
         .sort((a, b) => b.openedWeek - a.openedWeek)
         .slice(0, 30);
 
+      const sectorPlayerValues = new Map<Sector, number>();
+      companies.filter((company) => !company.sold && !company.bankrupt && !company.closed).forEach((company) => sectorPlayerValues.set(company.sector, Math.max(sectorPlayerValues.get(company.sector) ?? 0, companyMetrics(company, economyRoll.economy).valuation)));
       let competitors = current.competitors.map((rival) => {
         if (rival.status === "fechada" || rival.status === "vendida")
           return rival;
         const shock = Math.random();
         const age = (rival.age ?? 0) + 1;
+        const playerBenchmark = sectorPlayerValues.get(rival.sector) ?? 500000;
+        const targetScore = clamp(28 + Math.log10(Math.max(1, playerBenchmark) / 250000) * 24, 28, 96);
+        const catchUpGrowth = Math.max(0, targetScore - rival.score) * .055 * difficulty.rivalIntelligence;
         const cycleEffect =
           economyRoll.economy.cycle === "recessao"
             ? -1.2
@@ -7618,7 +7647,7 @@ export default function Home() {
               ? -0.4
               : 0;
         let change = Math.round(
-          personalityEffect * difficulty.rivalIntelligence + cycleEffect + partnershipEffect + difficulty.rival,
+          personalityEffect * difficulty.rivalIntelligence + cycleEffect + partnershipEffect + difficulty.rival + catchUpGrowth,
         );
         let cash =
           (rival.cash ?? 180000) +
@@ -7644,6 +7673,15 @@ export default function Home() {
         });
         let lastDecision = rival.lastDecision ?? "Manter posição";
         let history = rival.history ?? [];
+        const fundingCadence = current.difficulty === "implacavel" ? 9 : current.difficulty === "relaxado" ? 18 : 13;
+        if ((nextWeek + rival.id) % fundingCadence === 0 && playerBenchmark > 1500000 && cash < playerBenchmark * .12) {
+          const funding = Math.min(8000000, Math.max(140000, Math.round(playerBenchmark * .03 * difficulty.rivalIntelligence)));
+          cash += funding;
+          change += current.difficulty === "implacavel" ? 4 : 2;
+          lastDecision = `Captou ${money.format(funding)} para enfrentar a consolidação do setor`;
+          history = [`Semana ${nextWeek}: recebeu capital institucional de ${money.format(funding)}.`, ...history].slice(0, 8);
+          weeklyNews.push({ id: Date.now() + rival.id + 2060, week: nextWeek, category: "negocios", headline: `${rival.name} recebe capital para acelerar crescimento`, body: `Investidores aportaram ${money.format(funding)} depois que a liderança da ${current.holdingName} elevou o valor e a disputa do setor. A concorrente promete produtos, contratações e aquisições.`, impact: "neutro" });
+        }
         if (Math.random() < 0.24) {
           const decisionRoll = Math.random();
           if (cash > 170000 && decisionRoll < 0.28) {
@@ -7736,7 +7774,8 @@ export default function Home() {
             });
           }
         }
-        if (crisisWeeks >= 10 && shock < 0.035 && age > 28 && cash < 0) {
+        const closureThreshold = current.difficulty === "implacavel" ? 16 : current.difficulty === "executivo" ? 12 : 10;
+        if (crisisWeeks >= closureThreshold && shock < 0.035 / difficulty.rivalIntelligence && age > 28 && cash < 0) {
           weeklyNews.push({
             id: Date.now() + rival.id,
             week: nextWeek,
@@ -8415,7 +8454,8 @@ export default function Home() {
       const generationRewardCash = missionProgress.completed.reduce((sum, mission) => sum + mission.rewardCash, 0);
       const generationRewardLegacy = missionProgress.completed.reduce((sum, mission) => sum + mission.rewardLegacy, 0);
       missionProgress.completed.forEach((mission, index) => weeklyNews.push({ id: Date.now() + 2100 + index, week: nextWeek, category: "negocios", headline: `Meta da geração concluída: ${mission.title}`, body: `${mission.rewardTitle} conquistado. A holding recebe ${money.format(mission.rewardCash)} e ${mission.rewardLegacy} pontos de legado.`, impact: "positivo" }));
-      const wealthManagementCost = personalWealthCost(current.personalCash);
+      const wealthDifficultyMultiplier = current.difficulty === "implacavel" ? 1.8 : current.difficulty === "relaxado" ? .7 : 1;
+      const wealthManagementCost = Math.round(personalWealthCost(current.personalCash) * wealthDifficultyMultiplier);
       if (wealthManagementCost > 0 && nextWeek % 13 === 0) weeklyNews.push({ id: Date.now() + 2345, week: nextWeek, category: "economia", headline: `Fortuna de ${controlledExecutive} exige uma estrutura própria`, body: `Gestão patrimonial, impostos, seguros e assessoria consumiram ${money.format(wealthManagementCost)} nesta semana. Patrimônio muito alto continua valioso, mas deixou de ser gratuito.`, impact: "neutro" });
       const dynastyEndingReady = current.dynastyMode && ((current.generation ?? 2) >= 4 && nextWeek - (current.dynastyStartedWeek ?? nextWeek) >= 80 || operatingDynasty.length === 0 || 100 - outsideFamilyEquity < 15);
       const finalWeeklyNews = dedupeNewsItems(weeklyNews, current.news);
@@ -9091,13 +9131,14 @@ export default function Home() {
     if (action === "acordo") {
       if (active.cash < 50000) return;
       updateManagedProduct(
-        { lawsuitWeeks: 0, legalOpponent: undefined },
+        { lawsuitWeeks: 0, legalOpponent: undefined, legalCooldownUntil: game.week + 10 },
         -50000,
       );
       notify("Acordo judicial assinado. A disputa foi encerrada.");
       return;
     }
-    const cost = action === "defesa" ? 25000 : 30000;
+    if (action === "processar" && (!managedProduct.patented || (managedProduct.legalCooldownUntil ?? 0) > game.week)) return;
+    const cost = action === "defesa" ? 35000 : 45000;
     if (active.cash < cost) return;
     const opponent =
       action === "processar"
@@ -9107,22 +9148,27 @@ export default function Home() {
               !["fechada", "vendida"].includes(r.status),
           )
         : game.competitors.find((r) => r.name === managedProduct.legalOpponent);
-    const winChance =
-      (managedProduct.patented ? 0.72 : 0.34) + managedProduct.quality / 500;
-    const won = Math.random() < winChance;
-    const award = won ? Math.round(45000 + managedProduct.quality * 1200) : 0;
+    if (action === "processar" && !opponent) return;
+    const difficultyLegal = game.difficulty === "relaxado" ? 8 : game.difficulty === "implacavel" ? -12 : 0;
+    const preparationEvidence = (managedProduct.preparation?.pesquisa ?? 0) * 3 + (managedProduct.preparation?.qualidade ?? 0) * 4 + (managedProduct.preparation?.seguranca ?? 0) * 2;
+    const opponentDefense = (opponent?.score ?? 50) * .2 + (opponent?.reputation ?? 50) * .13;
+    const repeatedPenalty = action === "processar" ? (managedProduct.lawsuitsFiled ?? 0) * 6 : 0;
+    const winChance = clamp((action === "defesa" ? 34 : 26) + (managedProduct.patented ? 23 : 0) + managedProduct.quality * .2 + preparationEvidence - opponentDefense + difficultyLegal - repeatedPenalty, 12, 78);
+    const won = Math.random() * 100 < winChance;
+    const award = won ? action === "defesa" ? 8000 : Math.round(22000 + managedProduct.quality * 480 + (opponent?.products?.length ?? 1) * 4000) : 0;
+    const lossPenalty = won ? 0 : action === "defesa" ? 40000 : Math.round(25000 + (opponent?.score ?? 50) * 300);
     updateManagedProduct(
-      { lawsuitWeeks: 0, legalOpponent: undefined },
-      award - cost,
+      { lawsuitWeeks: 0, legalOpponent: undefined, legalCooldownUntil: game.week + (action === "processar" ? 26 : 12), lawsuitsFiled: (managedProduct.lawsuitsFiled ?? 0) + (action === "processar" ? 1 : 0) },
+      award - cost - lossPenalty,
     );
-    if (opponent)
-      setGame((s) => ({
+    setGame((s) => ({
         ...s,
+        companies: s.companies.map((company) => company.id === active.id ? { ...company, reputation: clamp(company.reputation + (won ? 1 : -5)) } : company),
         competitors: s.competitors.map((r) =>
-          r.id === opponent.id
+          opponent && r.id === opponent.id
             ? {
                 ...r,
-                cash: (r.cash ?? 0) - award,
+                cash: (r.cash ?? 0) - (action === "processar" ? award : 0),
                 relation: -80,
                 relationship: "rival" as const,
               }
@@ -9137,8 +9183,8 @@ export default function Home() {
               ? `${active.name} vence disputa sobre ${managedProduct.name}`
               : `${active.name} perde batalha judicial de propriedade intelectual`,
             body: won
-              ? `A decisão reconheceu os direitos da empresa e determinou indenização de ${money.format(award)}.`
-              : "A Justiça rejeitou a tese apresentada. Custas e desgaste de reputação ficam com a empresa.",
+              ? `Com chance estimada em ${Math.round(winChance)}%, a decisão reconheceu parte da tese. O resultado financeiro foi ${action === "defesa" ? "apenas uma recuperação parcial das custas" : `indenização de ${money.format(award)}`}.`
+              : `A Justiça rejeitou a tese apresentada. Além dos ${money.format(cost)} do jurídico, custas e sucumbência somaram ${money.format(lossPenalty)}. Uma nova ofensiva ficará bloqueada por um período.`,
             impact: won ? "positivo" : "negativo",
           },
           ...s.news,
@@ -9146,8 +9192,8 @@ export default function Home() {
       }));
     notify(
       won
-        ? `Vitória judicial: ${money.format(award)} em indenização.`
-        : "A empresa perdeu a disputa judicial.",
+        ? action === "defesa" ? "A defesa venceu, mas recuperou apenas parte das custas." : `Vitória judicial: ${money.format(award)} antes dos custos.`
+        : `A empresa perdeu e arcou com ${money.format(cost + lossPenalty)}.`,
     );
   };
 
@@ -9431,9 +9477,7 @@ export default function Home() {
 
   const acquireRival = (mode: "subsidiary" | "merge") => {
     if (!active || !targetRival || !isCEO) return;
-    const price = Math.round(
-      targetRival.score * 17500 + targetRival.reputation * 4200,
-    );
+    const price = competitorAcquisitionPrice(targetRival, active, game.economy, game.difficulty ?? "executivo");
     if (active.cash < price) return;
     const rival = targetRival;
     setGame((s) => {
@@ -11502,9 +11546,7 @@ export default function Home() {
               )
               .slice(0, 3)
               .map((rival, index) => {
-                const acquisitionPrice = Math.round(
-                  rival.score * 17500 + rival.reputation * 4200,
-                );
+                const acquisitionPrice = competitorAcquisitionPrice(rival, active, game.economy, game.difficulty ?? "executivo");
                 return (
                   <article
                     className={`rival-building rival-${rival.status}`}
@@ -12675,10 +12717,10 @@ export default function Home() {
                           Fazer acordo · R$ 50 mil
                         </button>
                         <button
-                          disabled={active.cash < 25000}
+                          disabled={active.cash < 35000}
                           onClick={() => productLegalAction("defesa")}
                         >
-                          Levar ao tribunal · R$ 25 mil
+                          Levar ao tribunal · R$ 35 mil
                         </button>
                       </div>
                     </>
@@ -12686,16 +12728,17 @@ export default function Home() {
                     <>
                       <p>
                         {managedProduct.patented
-                          ? "A patente permite atacar cópias concorrentes com maior chance de vitória."
+                          ? "A patente melhora sua prova, mas não garante vitória: escopo do registro, qualidade das evidências e força jurídica do rival também pesam."
                           : "Sem patente, produtos de alta qualidade ficam mais expostos a disputas e imitações."}
                       </p>
+                      {(managedProduct.legalCooldownUntil ?? 0) > game.week && <p className="legal-alert">Nova ofensiva jurídica disponível na semana {managedProduct.legalCooldownUntil}. Processos repetidos perdem credibilidade e não podem ser usados como renda recorrente.</p>}
                       <button
                         disabled={
-                          !managedProduct.patented || active.cash < 30000
+                          !managedProduct.patented || active.cash < 45000 || (managedProduct.legalCooldownUntil ?? 0) > game.week
                         }
                         onClick={() => productLegalAction("processar")}
                       >
-                        Processar concorrente por cópia · R$ 30 mil
+                        Processar concorrente por cópia · R$ 45 mil
                       </button>
                     </>
                   )}
@@ -12881,7 +12924,7 @@ export default function Home() {
           <ModalTitle
             label="FUSÕES E AQUISIÇÕES"
             title={`Comprar a ${targetRival.name}?`}
-            text={`${targetRival.founder} aceita negociar por ${money.format(Math.round(targetRival.score * 17500 + targetRival.reputation * 4200))}. A compra elimina um rival, mas a integração pode criar conflitos e consumir caixa.`}
+            text={`${targetRival.founder} aceita negociar por ${money.format(competitorAcquisitionPrice(targetRival, active, game.economy, game.difficulty ?? "executivo"))}. O preço considera caixa, produtos, maturidade, crescimento e o prêmio estratégico cobrado de uma holding dominante.`}
           />
           <div className="choice-cards acquisition-cards">
             <button onClick={() => acquireRival("subsidiary")}>

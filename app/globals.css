@@ -3546,3 +3546,51 @@ button {
 @media (max-width: 720px) {
   .capital-difficulty-note { align-items: flex-start; flex-direction: column; }
 }
+
+/* Cartões mais compactos sem reduzir a tipografia. */
+.ui-confortavel .people-grid,
+.ui-confortavel .project-wall,
+.partner-grid,
+.market-map { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.ui-ampliado .project-wall { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.person-card { padding: 16px; }
+.person-card .portrait { width: 72px; height: 72px; }
+.person-card h2 { margin-block: 7px; }
+.person-summary-metrics { gap: 5px; margin: 10px 0; }
+.person-summary-metrics div,
+.person-summary-metrics span { padding: 7px 5px; }
+.person-summary-metrics b { font-size: 15px; }
+.project-note { min-height: 0; padding: 18px; }
+.project-note h2 { margin: 9px 0; }
+.project-note > p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.partner-grid article { min-height: 0; padding: 13px; }
+.partner-grid h4 { margin: 7px 0 3px; }
+.partner-value { margin: 9px 0; padding: 7px; }
+.partner-grid article > em,
+.market-map article > p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.market-map article { min-height: 0; padding: 18px; }
+.market-map h2 { margin-block: 8px; }
+.rival-summary { margin-top: 10px; }
+@media (max-width: 1100px) {
+  .ui-confortavel .people-grid,
+  .ui-confortavel .project-wall,
+  .partner-grid,
+  .market-map { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .ui-confortavel .people-grid,
+  .ui-confortavel .project-wall,
+  .ui-ampliado .project-wall,
+  .partner-grid,
+  .market-map { grid-template-columns: 1fr; }
+}
