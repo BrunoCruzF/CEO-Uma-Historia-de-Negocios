@@ -83,7 +83,7 @@ type FinancialEntry = {
   week: number;
   companyId: number;
   companyName: string;
-  category: "receita" | "equipe" | "marketing" | "estrutura" | "contratos" | "juros" | "eventos" | "transferencia";
+  category: "receita" | "equipe" | "marketing" | "estrutura" | "contratos" | "juros" | "tributos" | "eventos" | "transferencia";
   label: string;
   amount: number;
   detail: string;
@@ -150,7 +150,11 @@ type Employee = {
   leaveWeeks?: number;
   memories?: CharacterMemory[];
   department?: DirectorArea;
+  talentTier?: TalentTier;
+  requiredEmployerScore?: number;
+  signingBonus?: number;
 };
+type TalentTier = "iniciante" | "junior" | "pleno" | "senior" | "elite";
 type DirectorArea = "pessoas" | "operacoes" | "produto" | "comercial";
 type CompanyDirector = {
   id: string;
@@ -165,6 +169,15 @@ type CompanyDirector = {
   lastAction: string;
   origin: "promovido" | "contratado";
 };
+type FacilityKey = "escritorio" | "equipamentos" | "lazer" | "beneficios" | "treinamento" | "seguranca" | "infraestrutura";
+type FacilityLevel = 0 | 1 | 2 | 3 | 4 | 5;
+type FacilityState = {
+  level: FacilityLevel;
+  condition: number;
+  lastUpgradeWeek: number;
+  incidents: number;
+};
+type FacilityMaintenanceMode = "economico" | "adequado" | "premium";
 type Project = {
   id: number;
   name: string;
@@ -256,6 +269,10 @@ type Company = {
   marketingPulse?: MarketingPulse;
   marketingCampaigns?: MarketingCampaign[];
   directors?: CompanyDirector[];
+  facilities?: Partial<Record<FacilityKey, FacilityState>>;
+  facilityMaintenanceMode?: FacilityMaintenanceMode;
+  employerBrand?: number;
+  rejectedCandidates?: { name: string; untilWeek: number }[];
   parentCompanyId?: number;
   acquisitionPrice?: number;
   origin?: "fundada" | "adquirida";
@@ -1834,6 +1851,65 @@ function directorStrength(directors: CompanyDirector[], area: DirectorArea) {
   if (!director) return 0;
   return clamp(director.competence * .5 + director.trust * .28 + director.authority * .22);
 }
+const facilityKeys: FacilityKey[] = ["escritorio", "equipamentos", "lazer", "beneficios", "treinamento", "seguranca", "infraestrutura"];
+const facilityDefinitions: Record<FacilityKey, {
+  label: string;
+  short: string;
+  description: string;
+  upgradeCosts: number[];
+  weeklyMaintenance: number[];
+}> = {
+  escritorio: { label: "Escritório e ambiente", short: "Ambiente", description: "Melhora imagem, moral e capacidade de receber clientes e equipe.", upgradeCosts: [0, 35000, 85000, 180000, 360000, 700000], weeklyMaintenance: [0, 900, 1900, 3600, 6800, 12500] },
+  equipamentos: { label: "Equipamentos e ferramentas", short: "Ferramentas", description: "Acelera projetos, reduz retrabalho e melhora a produtividade.", upgradeCosts: [0, 28000, 70000, 150000, 310000, 620000], weeklyMaintenance: [0, 750, 1650, 3200, 6100, 11200] },
+  lazer: { label: "Lazer e convivência", short: "Convivência", description: "Reduz estresse e melhora o clima, mas pode virar luxo caro sem gestão.", upgradeCosts: [0, 20000, 50000, 110000, 240000, 480000], weeklyMaintenance: [0, 650, 1350, 2700, 5200, 9800] },
+  beneficios: { label: "Benefícios e bem-estar", short: "Benefícios", description: "Aumenta lealdade, retenção e recuperação da equipe.", upgradeCosts: [0, 25000, 65000, 140000, 290000, 580000], weeklyMaintenance: [0, 1200, 2600, 5100, 9400, 17000] },
+  treinamento: { label: "Treinamento e academia", short: "Treinamento", description: "Desenvolve competência e qualidade ao longo do tempo.", upgradeCosts: [0, 18000, 48000, 105000, 230000, 500000], weeklyMaintenance: [0, 850, 1800, 3500, 6800, 12800] },
+  seguranca: { label: "Segurança e continuidade", short: "Segurança", description: "Reduz falhas, fraudes, invasões e crises operacionais.", upgradeCosts: [0, 24000, 60000, 135000, 300000, 650000], weeklyMaintenance: [0, 700, 1550, 3300, 6900, 14000] },
+  infraestrutura: { label: "Infraestrutura e capacidade", short: "Infraestrutura", description: "Sustenta mais clientes, produtos e crescimento sem sobrecarga.", upgradeCosts: [0, 40000, 100000, 220000, 480000, 950000], weeklyMaintenance: [0, 1100, 2400, 4800, 9200, 17500] },
+};
+const facilityModeLabels: Record<FacilityMaintenanceMode, { label: string; multiplier: number; conditionDelta: number; detail: string }> = {
+  economico: { label: "Manutenção econômica", multiplier: .55, conditionDelta: -1.5, detail: "Corta despesas agora, mas desgasta a estrutura e aumenta incidentes." },
+  adequado: { label: "Manutenção adequada", multiplier: 1, conditionDelta: .15, detail: "Preserva os investimentos com custo e risco equilibrados." },
+  premium: { label: "Manutenção premium", multiplier: 1.55, conditionDelta: 1.8, detail: "Recupera condição e extrai mais resultado, com custo elevado." },
+};
+
+function normalizedFacilities(company: Company): Record<FacilityKey, FacilityState> {
+  return Object.fromEntries(facilityKeys.map((key) => [key, {
+    level: company.facilities?.[key]?.level ?? 0,
+    condition: company.facilities?.[key]?.condition ?? 100,
+    lastUpgradeWeek: company.facilities?.[key]?.lastUpgradeWeek ?? company.founded,
+    incidents: company.facilities?.[key]?.incidents ?? 0,
+  }])) as Record<FacilityKey, FacilityState>;
+}
+
+function facilitySummary(company: Company) {
+  const facilities = normalizedFacilities(company);
+  const mode = company.facilityMaintenanceMode ?? "adequado";
+  const maintenance = facilityModeLabels[mode];
+  const effective = (key: FacilityKey) => facilities[key].level * clamp(facilities[key].condition / 100, .25, 1.08);
+  const office = effective("escritorio");
+  const equipment = effective("equipamentos");
+  const leisure = effective("lazer");
+  const benefits = effective("beneficios");
+  const training = effective("treinamento");
+  const security = effective("seguranca");
+  const infrastructure = effective("infraestrutura");
+  const weeklyMaintenance = Math.round(facilityKeys.reduce((sum, key) => sum + facilityDefinitions[key].weeklyMaintenance[facilities[key].level], 0) * maintenance.multiplier);
+  const averageCondition = facilityKeys.reduce((sum, key) => sum + facilities[key].condition, 0) / facilityKeys.length;
+  return {
+    facilities, mode, weeklyMaintenance, averageCondition,
+    moraleBoost: office * .18 + leisure * .72 + benefits * .55 + training * .12,
+    stressRelief: leisure * .62 + benefits * .32 + office * .1,
+    loyaltyBoost: benefits * .36 + training * .16,
+    progressBoost: equipment * .72 + training * .42 + infrastructure * .35,
+    qualityBoost: equipment * .15 + training * .28 + security * .16,
+    efficiencyGain: equipment * .006 + infrastructure * .008,
+    capacityMultiplier: 1 + office * .012 + infrastructure * .045,
+    reputationBoost: office * .08 + security * .05,
+    securityProtection: clamp(security * 11 + infrastructure * 3),
+    skillGrowth: training * .055,
+  };
+}
 const productPreparationLabels: Record<ProductPreparation, { label: string; cost: number; detail: string }> = {
   pesquisa: { label: "Pesquisa", cost: 12000, detail: "Reduz incompatibilidade com o mercado e atrasos." },
   prototipo: { label: "Protótipo", cost: 18000, detail: "Descobre problemas antes de comprometer o lançamento." },
@@ -1879,12 +1955,40 @@ function productVersionRisk(product: Project, strategy: "economica" | "equilibra
 const laborTraits = ["Analítico", "Carismático", "Criativo", "Competitivo", "Diplomático", "Disciplinado", "Empático", "Inventivo", "Pragmático", "Questionador", "Resiliente", "Visionário"];
 const laborAmbitions = ["Quer liderar uma equipe", "Busca estabilidade", "Quer virar diretor", "Sonha em criar um produto", "Quer participação na empresa", "Busca autonomia", "Quer aprender rápido", "Pretende abrir o próprio negócio", "Quer reconhecimento público", "Valoriza equilíbrio pessoal"];
 const laborColors = ["#778ad9", "#d982a8", "#6da88c", "#df9d5d", "#7d72ad", "#57a7a0", "#bd735f", "#8d9a61"];
+const talentTierLabels: Record<TalentTier, string> = { iniciante: "Iniciante", junior: "Júnior", pleno: "Pleno", senior: "Sênior", elite: "Talento de elite" };
 
-function createLaborMarket(sector: Sector, companyId: number, week: number, existingNames: string[] = [], count = 10): Employee[] {
+function talentTierFor(skill: number): TalentTier {
+  return skill >= 89 ? "elite" : skill >= 77 ? "senior" : skill >= 63 ? "pleno" : skill >= 50 ? "junior" : "iniciante";
+}
+
+function employerAttraction(company: Company) {
+  const structure = facilitySummary(company);
+  const morale = company.employees.length ? company.employees.reduce((sum, employee) => sum + employee.morale, 0) / company.employees.length : 50;
+  const stress = company.employees.length ? company.employees.reduce((sum, employee) => sum + (employee.stress ?? 25), 0) / company.employees.length : 25;
+  const metrics = companyMetrics(company);
+  const scalePrestige: Record<BusinessScale, number> = { nascente: 25, pequena: 38, media: 55, grande: 72, corporacao: 86, global: 96 };
+  const benefitLevel = structure.facilities.beneficios.level;
+  const trainingLevel = structure.facilities.treinamento.level;
+  const officeLevel = structure.facilities.escritorio.level;
+  const score = clamp((company.employerBrand ?? company.reputation * .62) * .32 + company.reputation * .18 + morale * .15 + (100 - stress) * .08 + scalePrestige[metrics.scale] * .1 + (benefitLevel * 8 + trainingLevel * 6 + officeLevel * 4) * .17);
+  const label = score >= 86 ? "Empregadora de elite" : score >= 70 ? "Empresa desejada" : score >= 52 ? "Carreira promissora" : score >= 35 ? "Empresa em construção" : "Aposta arriscada";
+  return { score: Math.round(score), label, morale: Math.round(morale), stress: Math.round(stress) };
+}
+
+function candidateAcceptance(company: Company, candidate: Employee) {
+  const attraction = employerAttraction(company);
+  const gap = (candidate.requiredEmployerScore ?? 35) - attraction.score;
+  const payPremium = candidate.salary / Math.max(1, candidate.market) - 1;
+  return Math.round(clamp(88 - Math.max(0, gap) * 1.45 + Math.max(0, -gap) * .18 + payPremium * 90, 28, 97));
+}
+
+function createLaborMarket(sector: Sector, companyId: number, week: number, existingNames: string[] = [], count = 10, company?: Company): Employee[] {
   const marketCycle = Math.floor(Math.max(1, week) / 2);
-  const used = new Set(existingNames);
+  const unavailable = company?.rejectedCandidates?.filter((candidate) => candidate.untilWeek > week).map((candidate) => candidate.name) ?? [];
+  const used = new Set([...existingNames, ...unavailable]);
+  const employerScore = company ? employerAttraction(company).score : 28;
   const result: Employee[] = [];
-  for (let index = 0; index < count * 3 && result.length < count; index += 1) {
+  for (let index = 0; index < count * 5 && result.length < count; index += 1) {
     const seed = companyId * 97 + marketCycle * 53 + index * 29 + sector.length * 17;
     const firstName = laborFirstNames[seed % laborFirstNames.length];
     const lastName = laborLastNames[(seed * 7 + companyId * 11) % laborLastNames.length];
@@ -1892,10 +1996,15 @@ function createLaborMarket(sector: Sector, companyId: number, week: number, exis
     if (used.has(name)) continue;
     used.add(name);
     const role = laborRoles[sector][(seed * 5 + index) % laborRoles[sector].length];
-    const skill = 58 + (seed % 37);
+    const skill = Math.round(clamp(36 + (seed % 35) + employerScore * .27 + (index % 5 === 0 ? -8 : 0), 36, 96));
+    const talentTier = talentTierFor(skill);
+    const requiredEmployerScore = talentTier === "elite" ? 82 : talentTier === "senior" ? 66 : talentTier === "pleno" ? 46 : talentTier === "junior" ? 28 : 12;
+    if (requiredEmployerScore > employerScore + 18 && result.length >= Math.max(3, Math.floor(count * .7))) continue;
     const rolePremium = ["Engenharia", "Dados", "Cibersegurança", "Estratégia", "Expansão"].includes(role) ? 900 : 0;
-    const market = Math.round((2400 + skill * 43 + rolePremium) / 100) * 100;
-    const salary = Math.round((market * (0.86 + ((seed >> 2) % 15) / 100)) / 100) * 100;
+    const market = Math.round((1300 + skill * 45 + rolePremium + (talentTier === "elite" ? 2400 : talentTier === "senior" ? 900 : 0)) / 100) * 100;
+    const attractionGap = Math.max(0, requiredEmployerScore - employerScore);
+    const salary = Math.round((market * (.88 + ((seed >> 2) % 11) / 100 + attractionGap / 260)) / 100) * 100;
+    const signingBonus = Math.round((1200 + skill * (talentTier === "elite" ? 150 : talentTier === "senior" ? 90 : talentTier === "pleno" ? 55 : 25)) / 500) * 500;
     result.push({
       id: 200000000 + companyId * 100000 + marketCycle * 100 + result.length,
       name,
@@ -1904,6 +2013,9 @@ function createLaborMarket(sector: Sector, companyId: number, week: number, exis
       salary,
       market,
       skill,
+      talentTier,
+      requiredEmployerScore,
+      signingBonus,
       morale: 67 + ((seed * 3) % 25),
       loyalty: 48 + ((seed * 7) % 40),
       trait: laborTraits[(seed + index * 3) % laborTraits.length],
@@ -2058,12 +2170,12 @@ function createCEOHireCandidate(company: Company, week: number, style: CEOStyle)
     pessoas: ["Quer construir uma cultura admirada", "Busca formar novos líderes"],
   };
   const seed = week * 7 + company.id * 11 + company.employees.length * 3;
-  const market = createLaborMarket(company.sector, company.id, week, company.employees.map((employee) => employee.name), 12);
+  const market = createLaborMarket(company.sector, company.id, week, company.employees.map((employee) => employee.name), 12, company);
   const preferredRoles = roles[style];
   const selected = market.find((candidate) => preferredRoles.some((role) => candidate.role.includes(role))) ?? market[seed % market.length];
   const name = selected.name;
   const role = roles[style][seed % roles[style].length];
-  const skill = 70 + (seed % 22);
+  const skill = Math.round(clamp(selected.skill + (style === "inovacao" ? 4 : 2), 42, 96));
   const marketSalary = Math.max(selected.market, Math.round((3900 + skill * 38 + (style === "inovacao" ? 700 : 0)) / 100) * 100);
   const salary = Math.round((marketSalary * (0.91 + (seed % 5) / 100)) / 100) * 100;
   return {
@@ -2073,6 +2185,7 @@ function createCEOHireCandidate(company: Company, week: number, style: CEOStyle)
     salary,
     market: marketSalary,
     skill,
+    talentTier: talentTierFor(skill),
     morale: 76 + (seed % 11),
     loyalty: 58 + (seed % 25),
     trait: traits[style][seed % traits[style].length],
@@ -2089,7 +2202,9 @@ function createCEOHireCandidate(company: Company, week: number, style: CEOStyle)
 function ceoHireProposalMessage(company: Company, candidate: Employee, reason: string): StoryMessage {
   const hireCandidate = (state: GameState, negotiated = false): GameState => {
     const offeredSalary = negotiated ? Math.round((candidate.salary * .88) / 100) * 100 : candidate.salary;
-    const accepts = !negotiated || Math.random() < clamp(.72 + (company.reputation - 50) / 180 - (candidate.skill - 75) / 160);
+    const acceptance = clamp(candidateAcceptance(company, { ...candidate, salary: offeredSalary }) + (negotiated ? -8 : 8), 20, 98);
+    const accepts = Math.random() * 100 < acceptance;
+    const onboardingCost = 2500 + (candidate.signingBonus ?? 0);
     return {
       ...state,
       companies: state.companies.map((item) => {
@@ -2098,12 +2213,15 @@ function ceoHireProposalMessage(company: Company, candidate: Employee, reason: s
           ...item,
           ceoTrust: clamp((item.ceoTrust ?? 65) - 1),
           ceoHireCooldown: 5,
+          employerBrand: clamp((item.employerBrand ?? 35) - .4),
+          rejectedCandidates: [{ name: candidate.name, untilWeek: state.week + 8 }, ...(item.rejectedCandidates ?? [])].slice(0, 12),
           ceoLastDecision: `${candidate.name} recusou a contraproposta da holding`,
           ceoHistory: [`Semana ${state.week}: contraproposta de ${money.format(offeredSalary)} recusada por ${candidate.name}.`, ...(item.ceoHistory ?? [])].slice(0, 8),
         };
         return {
           ...item,
-          cash: item.cash - 9000,
+          cash: item.cash - onboardingCost,
+          employerBrand: clamp((item.employerBrand ?? 35) + .6),
           employees: [...item.employees, {
             ...candidate,
             salary: offeredSalary,
@@ -2400,6 +2518,10 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
     workforceTarget: foundingTeam.length,
     partners: createBusinessPartners(sector, id),
     directors: [],
+    facilities: {},
+    facilityMaintenanceMode: "adequado",
+    employerBrand: 32,
+    rejectedCandidates: [],
   };
 }
 
@@ -2428,7 +2550,7 @@ const initialState: GameState = {
     weeksLeft: 16,
   },
   providers: [],
-  balanceVersion: 2,
+  balanceVersion: 3,
   difficulty: "executivo",
   difficultyApplied: "executivo",
   holdingName: "Grupo Alex",
@@ -4183,11 +4305,38 @@ function narrativeEvent(company: Company, state: GameState): StoryMessage {
   };
 }
 
+type BusinessScale = "nascente" | "pequena" | "media" | "grande" | "corporacao" | "global";
+const businessScaleProfiles: Record<BusinessScale, { label: string; minRevenue: number; taxRate: number; administration: number; complianceRate: number; reserveWeeks: number; valuationMultiple: number }> = {
+  nascente: { label: "Empresa nascente", minRevenue: 0, taxRate: .05, administration: 1200, complianceRate: .002, reserveWeeks: 2, valuationMultiple: 2.65 },
+  pequena: { label: "Pequena empresa", minRevenue: 50000, taxRate: .1, administration: 4200, complianceRate: .004, reserveWeeks: 3, valuationMultiple: 2.35 },
+  media: { label: "Empresa média", minRevenue: 180000, taxRate: .16, administration: 13500, complianceRate: .0065, reserveWeeks: 4, valuationMultiple: 2.05 },
+  grande: { label: "Grande empresa", minRevenue: 650000, taxRate: .22, administration: 42000, complianceRate: .009, reserveWeeks: 6, valuationMultiple: 1.78 },
+  corporacao: { label: "Corporação", minRevenue: 2200000, taxRate: .28, administration: 135000, complianceRate: .012, reserveWeeks: 8, valuationMultiple: 1.52 },
+  global: { label: "Grupo global", minRevenue: 7000000, taxRate: .32, administration: 420000, complianceRate: .016, reserveWeeks: 10, valuationMultiple: 1.32 },
+};
+
+function businessScaleFor(revenue: number): BusinessScale {
+  return (["global", "corporacao", "grande", "media", "pequena", "nascente"] as BusinessScale[]).find((scale) => revenue >= businessScaleProfiles[scale].minRevenue) ?? "nascente";
+}
+
+function saleSettlement(gross: number) {
+  const rate = gross >= 500000000 ? .24 : gross >= 50000000 ? .2 : gross >= 5000000 ? .15 : gross >= 500000 ? .1 : .06;
+  const taxes = Math.round(gross * rate);
+  const advisory = Math.round(Math.max(12000, gross * .018));
+  return { gross, rate, taxes, advisory, net: Math.max(0, gross - taxes - advisory) };
+}
+
+function personalWealthCost(wealth: number) {
+  if (wealth <= 1000000) return 0;
+  return Math.round((wealth - 1000000) * .00022 + Math.max(0, wealth - 10000000) * .0001 + Math.max(0, wealth - 100000000) * .00008);
+}
+
 function companyCommercialCapacity(company: Company) {
+  const structure = facilitySummary(company);
   const available = company.employees.filter((employee) => (employee.leaveWeeks ?? 0) <= 0);
   const morale = company.employees.length ? company.employees.reduce((sum, employee) => sum + employee.morale, 0) / company.employees.length : 40;
   const skill = available.length ? available.reduce((sum, employee) => sum + employee.skill, 0) / available.length : 20;
-  const operatingCapacity = Math.max(.35, available.length) * skill * (morale / 100);
+  const operatingCapacity = Math.max(.35, available.length) * skill * (morale / 100) * structure.capacityMultiplier;
   const sectorMultiplier = company.sector === "Agência" ? 1.75 : company.sector === "Alimentação" ? .78 : 1;
   const customerCapacity = Math.max(5, Math.round(operatingCapacity * 410 * sectorMultiplier / Math.max(1, company.price)));
   const productRevenueCapacity = Math.max(9000, Math.round(operatingCapacity * (company.sector === "Tecnologia" ? 720 : company.sector === "Agência" ? 420 : 520)));
@@ -4304,7 +4453,7 @@ function companyMetrics(
     (multiplier, effect) => multiplier * (effect.costMultiplier ?? 1),
     1,
   );
-  const revenue = Math.round(
+  const preliminaryRevenue = Math.round(
     (baseRevenue + recurringRevenue + contractRevenue) *
       (0.75 + company.reputation / 250) *
       economy.demand *
@@ -4320,15 +4469,28 @@ function companyMetrics(
     0,
   );
   const productMaintenance = company.projects.filter((product) => product.kind === "produto" && product.lifecycle === "mercado").reduce((sum, product) => sum + (product.maintenanceCost ?? productBlueprint(company.sector, product.complexity ?? 3).maintenanceCost) * (1 + (product.bugLevel ?? 0) / 80), 0);
-  const costs =
-    ((weeklyPayroll + company.marketing + productMarketing + productMaintenance + weeklyOverhead + supplierCosts) *
+  const facilityMaintenance = facilitySummary(company).weeklyMaintenance;
+  const baseCosts =
+    ((weeklyPayroll + company.marketing + productMarketing + productMaintenance + facilityMaintenance + weeklyOverhead + supplierCosts) *
       economy.costs *
       (company.efficiency ?? 1) +
       company.debt * economy.interest) *
     effectCosts;
+  const scale = businessScaleFor(preliminaryRevenue);
+  const scaleProfile = businessScaleProfiles[scale];
+  const complexityCost = Math.round((scaleProfile.administration + preliminaryRevenue * scaleProfile.complianceRate + Math.pow(Math.max(0, company.employees.length - 4), 1.35) * 380) * economy.costs);
+  const requiredReserve = Math.round((baseCosts + complexityCost) * scaleProfile.reserveWeeks);
+  const cashCoverage = requiredReserve > 0 ? company.cash / requiredReserve : 1;
+  const liquidityFactor = cashCoverage >= 1 ? 1 : clamp(.78 + Math.max(0, cashCoverage) * .22, .72, 1);
+  const revenue = Math.round(preliminaryRevenue * liquidityFactor);
+  const preTaxProfit = revenue - baseCosts - complexityCost;
+  const taxes = Math.round(Math.max(0, preTaxProfit) * scaleProfile.taxRate);
+  const idleCashThreshold = Math.max(requiredReserve * 4, 1000000);
+  const idleCashCost = Math.round(Math.max(0, company.cash - idleCashThreshold) * .00035);
+  const costs = baseCosts + complexityCost + taxes + idleCashCost;
   const profit = Math.round(revenue - costs);
-  const valuation = Math.max(30000, Math.round(company.cash * .68 + Math.max(0, profit) * 52 * 3.2 + revenue * 3.5 + company.reputation * 2600 - company.debt * 1.05));
-  return { payroll, morale, skill, revenue, costs, profit, valuation, productMaintenance, customerCapacity: commercial.customerCapacity, productRevenueCapacity: commercial.productRevenueCapacity };
+  const valuation = Math.max(30000, Math.round(company.cash * .58 + Math.max(0, profit) * 52 * scaleProfile.valuationMultiple + revenue * 2.4 + company.reputation * 2300 - company.debt * 1.08));
+  return { payroll, morale, skill, revenue, preliminaryRevenue, baseCosts, costs, profit, preTaxProfit, taxes, complexityCost, idleCashCost, requiredReserve, cashCoverage, liquidityFactor, scale, scaleProfile, valuation, productMaintenance, facilityMaintenance, customerCapacity: commercial.customerCapacity, productRevenueCapacity: commercial.productRevenueCapacity };
 }
 
 function buildFinancialEntries(previous: GameState, companies: Company[], economy: Economy, week: number): FinancialEntry[] {
@@ -4340,11 +4502,12 @@ function buildFinancialEntries(previous: GameState, companies: Company[], econom
     const productMarketing = company.projects.reduce((sum, product) => sum + (product.lifecycle === "mercado" ? product.productMarketing ?? 0 : 0), 0);
     const weeklyOverhead = (12500 + company.employees.length * 800) / 4.33;
     const productMaintenance = metrics.productMaintenance;
+    const facilityMaintenance = metrics.facilityMaintenance;
     const supplierCosts = (company.partners ?? []).filter((partner) => partner.kind === "fornecedor" && partner.status === "ativo").reduce((sum, partner) => sum + partner.weeklyValue, 0);
     const interest = company.debt * economy.interest;
     const launchedCampaignSpend = (company.marketingCampaigns ?? []).filter((campaign) => campaign.startedWeek === week).reduce((sum, campaign) => sum + campaign.totalBudget, 0);
-    const nominalCosts = weeklyPayroll + company.marketing + productMarketing + productMaintenance + weeklyOverhead + supplierCosts + interest;
-    const costFactor = nominalCosts > 0 ? metrics.costs / nominalCosts : 1;
+    const nominalCosts = weeklyPayroll + company.marketing + productMarketing + productMaintenance + facilityMaintenance + weeklyOverhead + supplierCosts + interest;
+    const costFactor = nominalCosts > 0 ? metrics.baseCosts / nominalCosts : 1;
     const add = (category: FinancialEntry["category"], label: string, amount: number, detail: string) => {
       if (Math.abs(amount) < 1) return;
       entries.push({ id: `${week}-${company.id}-${category}-${companyIndex}-${entries.length}`, week, companyId: company.id, companyName: company.name, category, label, amount: Math.round(amount), detail });
@@ -4354,9 +4517,13 @@ function buildFinancialEntries(previous: GameState, companies: Company[], econom
     add("marketing", "Marketing e divulgação", -(company.marketing + productMarketing) * costFactor, company.marketingPulse ? company.marketingPulse.detail : "Campanhas da empresa e dos produtos.");
     add("marketing", "Nova campanha estratégica", -launchedCampaignSpend, "Orçamento comprometido no lançamento; os resultados serão distribuídos nas próximas semanas.");
     add("estrutura", "Estrutura operacional", -weeklyOverhead * costFactor, "Escritório, ferramentas, suporte e manutenção.");
+    add("estrutura", "Investimentos físicos", -facilityMaintenance * costFactor, `${facilityModeLabels[company.facilityMaintenanceMode ?? "adequado"].label}; condição média de ${Math.round(facilitySummary(company).averageCondition)}%.`);
     add("estrutura", "Manutenção dos produtos", -productMaintenance * costFactor, "Suporte, infraestrutura, correções e operação dos produtos no mercado.");
     add("contratos", "Fornecedores", -supplierCosts * costFactor, "Contratos de fornecimento ativos nesta semana.");
     add("juros", "Juros da dívida", -interest * costFactor, `Dívida atual de ${money.format(company.debt)}.`);
+    add("estrutura", "Administração e conformidade", -metrics.complexityCost, `${metrics.scaleProfile.label}: processos, controles, licenças e gestão da complexidade.`);
+    add("tributos", "Impostos sobre o resultado", -metrics.taxes, `Alíquota efetiva da faixa: ${Math.round(metrics.scaleProfile.taxRate * 100)}%.`);
+    add("estrutura", "Gestão de caixa excedente", -metrics.idleCashCost, "Tesouraria, seguros, controles e custo de manter capital ocioso acima da reserva estratégica.");
     if (before) {
       const expectedCashChange = metrics.profit - launchedCampaignSpend;
       const actualCashChange = company.cash - before.cash;
@@ -4647,6 +4814,9 @@ function buildWeeklyReport(
       if (activeSupplierValue > 0) costReasons.push(reason("Fornecedores estratégicos", `${money.format(activeSupplierValue)} por semana sustentam insumos, tecnologia, mídia ou logística.`, "negativo"));
       if (economy.costs !== previous.economy.costs) costReasons.push(reason("Inflação de custos", `O multiplicador econômico passou de ${(previous.economy.costs * 100).toFixed(0)}% para ${(economy.costs * 100).toFixed(0)}%.`, economy.costs <= previous.economy.costs ? "positivo" : "negativo"));
       if (company.debt > 0) costReasons.push(reason("Juros da dívida", `${money.format(company.debt)} de dívida geram juros semanais de ${(economy.interest * 100).toFixed(1)}%.`, "negativo"));
+      if (after.complexityCost > 0) costReasons.push(reason(after.scaleProfile.label, `${money.format(after.complexityCost)} foram consumidos por administração, licenças e conformidade nesta escala.`, "negativo"));
+      if (after.taxes > 0) costReasons.push(reason("Impostos sobre resultado", `${money.format(after.taxes)} foram recolhidos com alíquota de ${Math.round(after.scaleProfile.taxRate * 100)}%.`, "negativo"));
+      if (after.cashCoverage < 1) revenueReasons.push(reason("Capital de giro insuficiente", `O caixa cobre ${Math.max(0, Math.round(after.cashCoverage * 100))}% da reserva recomendada de ${money.format(after.requiredReserve)}, reduzindo a capacidade de atender e vender.`, "negativo"));
       if ((company.effects ?? []).length) costReasons.push(reason("Consequências ativas", (company.effects ?? []).map((effect) => `${effect.name} (${effect.weeksLeft} sem.)`).join("; "), "neutro"));
 
       const cashReasons: IndicatorReason[] = [reason("Resultado operacional", `${after.profit >= 0 ? "Lucro" : "Prejuízo"} estimado de ${money.format(Math.abs(after.profit))} na operação.`, after.profit >= 0 ? "positivo" : "negativo")];
@@ -5005,6 +5175,7 @@ export default function Home() {
     | "finance"
     | "marketing"
     | "directors"
+    | "facilities"
     | "partner"
     | "factions"
     | "annual-plan"
@@ -5087,11 +5258,11 @@ export default function Home() {
                 parsed.companies?.[0]?.sector ?? "Tecnologia",
               ),
           news: parsed.news ?? [],
-          balanceVersion: 2,
+          balanceVersion: 3,
           difficulty: parsed.difficulty ?? "executivo",
           difficultyApplied: parsed.difficultyApplied ?? "executivo",
           economy:
-            parsed.balanceVersion === 2
+            (parsed.balanceVersion ?? 1) >= 2
               ? (parsed.economy ?? initialState.economy)
               : initialState.economy,
           providers: parsed.providers?.length
@@ -5246,6 +5417,10 @@ export default function Home() {
             marketingPulse: c.marketingPulse,
             marketingCampaigns: c.marketingCampaigns ?? [],
             directors: c.directors ?? [],
+            facilities: c.facilities ?? {},
+            facilityMaintenanceMode: c.facilityMaintenanceMode ?? "adequado",
+            employerBrand: c.employerBrand ?? clamp(c.reputation * .62),
+            rejectedCandidates: c.rejectedCandidates ?? [],
             parentCompanyId: c.parentCompanyId,
             acquisitionPrice: c.acquisitionPrice,
             origin: c.origin ?? "fundada",
@@ -5334,11 +5509,11 @@ export default function Home() {
             employees: c.employees.map((e) => ({
               ...e,
               salary:
-                parsed.balanceVersion === 2
+                (parsed.balanceVersion ?? 1) >= 2
                   ? e.salary
                   : Math.round((e.salary * 0.78) / 100) * 100,
               market:
-                parsed.balanceVersion === 2
+                (parsed.balanceVersion ?? 1) >= 2
                   ? e.market
                   : Math.round((e.market * 0.84) / 100) * 100,
               stress: Math.min(e.stress ?? 25, 48),
@@ -5347,6 +5522,7 @@ export default function Home() {
               leaveWeeks: e.leaveWeeks ?? 0,
               memories: e.memories ?? [],
               department: e.department ?? inferDepartment(e.role),
+              talentTier: e.talentTier ?? talentTierFor(e.skill),
             })),
           })),
         });
@@ -5426,6 +5602,7 @@ export default function Home() {
     () => (active ? companyMetrics(active, game.economy) : null),
     [active, game.economy],
   );
+  const activeFacilitySummary = active ? facilitySummary(active) : null;
   const marketableProducts = active?.projects.filter((product) => product.kind === "produto" && product.lifecycle === "mercado") ?? [];
   const campaignForecast = active ? marketingCampaignForecast(active, game.economy, game.competitors, campaignBudget, campaignDuration, campaignAudience, campaignObjective, campaignProductId) : null;
   const empireValue =
@@ -6067,13 +6244,13 @@ export default function Home() {
         body: `A Northstar quer comprar 100% da ${company.name}. A oferta é alta o bastante para mudar sua vida, mas a equipe provavelmente será reestruturada.`,
         choices: [
           {
-            label: `Aceitar ${compact.format(valuation * 1.35)}`,
+            label: `Aceitar ${compact.format(valuation * 1.35)} · líquido ${compact.format(saleSettlement(Math.round(valuation * 1.35)).net)}`,
             tone: "good",
             result:
               "Você vendeu sua primeira empresa. Agora joga com o próprio patrimônio.",
             effect: (s) => ({
               ...s,
-              personalCash: s.personalCash + Math.round(valuation * 1.35),
+              personalCash: s.personalCash + saleSettlement(Math.round(valuation * 1.35)).net,
               companies: s.companies.map((c) =>
                 c.id === company.id ? { ...c, sold: true } : c,
               ),
@@ -6177,8 +6354,30 @@ export default function Home() {
                 ? (effect[field] as number)
                 : 0),
             0,
-          );
+        );
         const cm = companyMetrics(company, economyRoll.economy);
+        let employerBrand = company.employerBrand ?? clamp(company.reputation * .62);
+        const liquidityPressure = cm.cashCoverage >= 1 ? 0 : clamp((1 - cm.cashCoverage) * 3.5, 0, 3.5);
+        if (cm.cashCoverage < .55 && nextWeek % 6 === company.id % 6) weeklyNews.push({ id: Date.now() + company.id + 2320, week: nextWeek, category: "economia", headline: `${company.name} cresce sem capital de giro suficiente`, body: `A reserva cobre apenas ${Math.max(0, Math.round(cm.cashCoverage * 100))}% da necessidade de ${money.format(cm.requiredReserve)}. Fornecedores, equipe e clientes já percebem atrasos e cautela.`, impact: "negativo" });
+        let facilities = normalizedFacilities(company);
+        const maintenanceMode = company.facilityMaintenanceMode ?? "adequado";
+        const maintenancePlan = facilityModeLabels[maintenanceMode];
+        facilities = Object.fromEntries(facilityKeys.map((key) => [key, {
+          ...facilities[key],
+          condition: facilities[key].level === 0 ? 100 : clamp(facilities[key].condition + maintenancePlan.conditionDelta + (Math.random() * .8 - .4), 15, 100),
+        }])) as Record<FacilityKey, FacilityState>;
+        let structure = facilitySummary({ ...company, facilities });
+        let facilityIncidentCost = 0;
+        const vulnerableFacilities = facilityKeys.filter((key) => facilities[key].level > 0).sort((a, b) => facilities[a].condition - facilities[b].condition);
+        const facilityIncidentChance = clamp((100 - structure.averageCondition) * .0013 + (maintenanceMode === "economico" ? .018 : 0) - structure.securityProtection / 5000, .002, .11);
+        if (vulnerableFacilities.length && Math.random() < facilityIncidentChance * eventPressure) {
+          const affected = vulnerableFacilities[0];
+          const severity = 7 + Math.round(Math.random() * 11);
+          facilityIncidentCost = 6000 + facilities[affected].level * 5500 + severity * 700;
+          facilities[affected] = { ...facilities[affected], condition: clamp(facilities[affected].condition - severity, 10, 100), incidents: facilities[affected].incidents + 1 };
+          structure = facilitySummary({ ...company, facilities });
+          weeklyNews.push({ id: Date.now() + company.id + 2290, week: nextWeek, category: "negocios", headline: `Falha em ${facilityDefinitions[affected].short.toLowerCase()} interrompe a ${company.name}`, body: `A condição da estrutura caiu para ${Math.round(facilities[affected].condition)}%. Reparos emergenciais custaram ${money.format(facilityIncidentCost)}. Segurança e manutenção preventiva poderiam reduzir esse risco.`, impact: "negativo" });
+        }
         const delegated = company.ceo !== controlledExecutive;
         const executive = executives.find((item) => item.name === company.ceo);
         let ceoStyle = company.ceoStyle ?? executive?.style ?? "crescimento";
@@ -6270,6 +6469,9 @@ export default function Home() {
         ceoCustomerBoost += commercialDirectorStrength > 0 ? Math.round(Math.max(-2, (commercialDirectorStrength - 48) / 18)) : 0;
         ceoReputationBoost += commercialDirectorStrength > 0 ? Math.max(-.7, (commercialDirectorStrength - 50) / 65) : 0;
         ceoEfficiencyGain += operationsDirectorStrength > 0 ? Math.max(-.012, (operationsDirectorStrength - 48) / 3200) : 0;
+        ceoProgressBoost += structure.progressBoost;
+        ceoQualityBoost += structure.qualityBoost;
+        ceoEfficiencyGain += structure.efficiencyGain;
         directors = directors.map((director) => {
           const score = directorStrength([director], director.area);
           const review = (nextWeek + director.employeeId) % 6 === 0;
@@ -6711,9 +6913,14 @@ export default function Home() {
           const areaDirector = directors.find((director) => director.area === employeeArea);
           const areaLeadership = areaDirector ? directorStrength([areaDirector], employeeArea) : 0;
           const localMoraleBoost = areaLeadership > 0 ? Math.max(-.5, (areaLeadership - 48) / 65) : 0;
+          const evolvedSkill = clamp(e.skill + structure.skillGrowth);
+          const evolvedTier = talentTierFor(evolvedSkill);
+          if (evolvedTier !== (e.talentTier ?? talentTierFor(e.skill)) && ["senior", "elite"].includes(evolvedTier)) weeklyNews.push({ id: Date.now() + e.id + 2360, week: nextWeek, category: "pessoas", headline: `${e.name} alcança nível ${talentTierLabels[evolvedTier].toLowerCase()} na ${company.name}`, body: `Treinamento, experiência e projetos elevaram a competência de ${e.role.toLowerCase()} para ${Math.round(evolvedSkill)}. O mercado também passará a disputar esse profissional com mais força.`, impact: "positivo" });
           return {
             ...e,
             department: employeeArea,
+            skill: evolvedSkill,
+            talentTier: evolvedTier,
             weeks: (e.weeks ?? 0) + 1,
             leaveWeeks: Math.max(0, (e.leaveWeeks ?? 0) - 1),
             market: Math.round(
@@ -6732,6 +6939,8 @@ export default function Home() {
                 ceoMoraleBoost +
                 directorMoraleBoost +
                 localMoraleBoost +
+                structure.moraleBoost -
+                liquidityPressure * .7 +
                 (creditedProduct ? 9 : 0),
             ),
             loyalty: clamp(
@@ -6739,6 +6948,7 @@ export default function Home() {
                 (company.culture === "Pessoas" ? 0.6 : 0) -
                 careerStagnation -
                 (stress > 82 ? 1 : 0) +
+                structure.loyaltyBoost +
                 (creditedProduct ? 7 : 0),
             ),
             relation: clamp(
@@ -6749,7 +6959,7 @@ export default function Home() {
                 (creditedProduct ? 6 : 0),
             ),
             stress: clamp(
-              stress + effectValue("stressDelta") - ceoStressRelief - directorStressRelief,
+              stress + effectValue("stressDelta") + liquidityPressure - ceoStressRelief - directorStressRelief - structure.stressRelief,
             ),
             memories: creditedProduct
               ? addCharacterMemory(
@@ -6771,6 +6981,7 @@ export default function Home() {
           const leaves =
             e.loyalty < 18 && (e.weeks ?? 0) > 8 && Math.random() < 0.24 * difficulty.departure * retentionEffect;
           if (leaves) {
+            employerBrand = clamp(employerBrand - 2.2);
             weeklyNews.push({
               id: Date.now() + e.id,
               week: nextWeek,
@@ -6787,6 +6998,7 @@ export default function Home() {
           const directorIds = new Set(directors.map((director) => director.employeeId));
           const dismissal = [...employees].filter((employee) => !directorIds.has(employee.id)).sort((a, b) => a.skill + a.morale * .35 - (b.skill + b.morale * .35))[0];
           if (dismissal && (dismissal.skill < 58 || dismissal.morale < 30)) {
+            employerBrand = clamp(employerBrand - 1.2);
             employees = employees.filter((employee) => employee.id !== dismissal.id);
             newStaffAlerts.push({ id: `staff-${company.id}-${dismissal.id}-${nextWeek}`, companyId: company.id, companyName: company.name, employeeName: dismissal.name, role: dismissal.role, reason: "desligamento", week: nextWeek, responsible: company.ceo ?? "CEO", headcountAfter: employees.length });
             ceoLastDecision = `Desligou ${dismissal.name} por baixo desempenho`;
@@ -6831,9 +7043,10 @@ export default function Home() {
               ? `Temos ${activeProjectCount} projetos ativos para uma equipe de ${employees.length} pessoas.`
               : "A demanda cresceu além da capacidade segura da equipe.";
         const plannedHire = createCEOHireCandidate({ ...company, employees }, nextWeek, ceoStyle);
+        const ceoOnboardingCost = 2500 + (plannedHire.signingBonus ?? 0);
         const hiringReserve = replacementVacancy
-          ? 15000 + plannedHire.salary * 2 + 9000
-          : 45000 + plannedHire.salary * 8 + 9000;
+          ? 15000 + plannedHire.salary * 2 + ceoOnboardingCost
+          : 45000 + plannedHire.salary * 8 + ceoOnboardingCost;
         const hiringReviewDue = replacementVacancy
           ? true
           : (nextWeek + company.id) % (ceoStyle === "crescimento" ? 9 : ceoStyle === "pessoas" ? 10 : 12) === 0;
@@ -6860,7 +7073,8 @@ export default function Home() {
             memories: [characterMemory(nextWeek, "contratacao", `${company.ceo} me contratou com autonomia para reforçar a ${company.name}.`, "confiante", 4, 70)],
           };
           employees = [...employees, autonomousHire];
-          ceoExtraCost += 9000;
+          employerBrand = clamp(employerBrand + (badHire ? -.5 : .7));
+          ceoExtraCost += ceoOnboardingCost;
           ceoHireCooldown = replacementVacancy ? 8 : 12;
           ceoInfluence = clamp(ceoInfluence + 1);
           ceoTrust = clamp(ceoTrust + (badHire ? -3 : 1));
@@ -6911,6 +7125,9 @@ export default function Home() {
           });
         }
         directors = directors.filter((director) => employees.some((employee) => employee.id === director.employeeId));
+        const evolvedMorale = employees.length ? employees.reduce((sum, employee) => sum + employee.morale, 0) / employees.length : 40;
+        const evolvedStress = employees.length ? employees.reduce((sum, employee) => sum + (employee.stress ?? 25), 0) / employees.length : 80;
+        employerBrand = clamp(employerBrand + (evolvedMorale - 62) / 90 - Math.max(0, evolvedStress - 65) / 120 + structure.facilities.beneficios.level * .06 + structure.facilities.treinamento.level * .04 + (company.reputation - employerBrand) / 500);
         const legalCost = nextProjects.reduce(
           (sum, p) => sum + ((p.lawsuitWeeks ?? 0) > 0 ? 9000 : 0),
           0,
@@ -6930,11 +7147,12 @@ export default function Home() {
           sharedSavings -
           legalCost -
           productEmergencyCost -
+          facilityIncidentCost -
           ceoExtraCost;
         const dividend =
           cm.profit > 0 && (company.dividendRate ?? 0) > 0
             ? Math.min(
-                Math.max(0, grossCash - 50000),
+                Math.max(0, grossCash - cm.requiredReserve),
                 Math.round((cm.profit * (company.dividendRate ?? 0)) / 100),
               )
             : 0;
@@ -7171,13 +7389,19 @@ export default function Home() {
               effectValue("reputationDelta") +
               (marketingPulse.reputationDelta ?? 0) +
               productReputationImpact +
-              ceoReputationBoost,
+              ceoReputationBoost -
+              liquidityPressure * .18 +
+              (nextWeek % 4 === company.id % 4 ? structure.reputationBoost : 0),
           ),
           productRevenue,
           marketingMultiplier: runningMarketingCampaigns.length ? 1 : marketingPulse.multiplier,
           marketingPulse,
           marketingCampaigns: marketingCampaigns.map((campaign) => campaign.weeksLeft > 0 ? { ...campaign, weeksLeft: campaign.weeksLeft - 1, revealed: true } : campaign).filter((campaign) => campaign.weeksLeft > 0 || nextWeek - campaign.startedWeek <= 12),
           directors,
+          facilities,
+          facilityMaintenanceMode: maintenanceMode,
+          employerBrand,
+          rejectedCandidates: (company.rejectedCandidates ?? []).filter((candidate) => candidate.untilWeek > nextWeek),
           efficiency: Math.max(
             0.68,
             (company.efficiency ?? 1) - efficiencyGain - ceoEfficiencyGain,
@@ -7213,6 +7437,18 @@ export default function Home() {
           history: [...company.history, nextCash].slice(-20),
         };
       });
+
+      const holdingOperations = companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+      const holdingOverhead = holdingOperations.length > 1 ? Math.round(5000 * Math.pow(holdingOperations.length - 1, 1.45)) : 0;
+      if (holdingOverhead > 0) {
+        const totalOperatingRevenue = Math.max(1, holdingOperations.reduce((sum, company) => sum + companyMetrics(company, economyRoll.economy).revenue, 0));
+        companies = companies.map((company) => {
+          if (company.sold || company.bankrupt || company.closed) return company;
+          const share = companyMetrics(company, economyRoll.economy).revenue / totalOperatingRevenue;
+          return { ...company, cash: company.cash - Math.round(holdingOverhead * share) };
+        });
+        if (nextWeek % 13 === 0) weeklyNews.push({ id: Date.now() + 2335, week: nextWeek, category: "economia", headline: `${current.holdingName} sente o custo de coordenar ${holdingOperations.length} empresas`, body: `Conselho, auditoria, sistemas compartilhados e governança consumiram ${money.format(holdingOverhead)} nesta semana. Abrir ou adquirir subsidiárias agora aumenta a complexidade da holding.`, impact: "neutro" });
+      }
 
       let auditCases = [...(current.auditCases ?? []), ...newAuditCases].map(
         (auditCase) => {
@@ -8126,6 +8362,8 @@ export default function Home() {
       const generationRewardCash = missionProgress.completed.reduce((sum, mission) => sum + mission.rewardCash, 0);
       const generationRewardLegacy = missionProgress.completed.reduce((sum, mission) => sum + mission.rewardLegacy, 0);
       missionProgress.completed.forEach((mission, index) => weeklyNews.push({ id: Date.now() + 2100 + index, week: nextWeek, category: "negocios", headline: `Meta da geração concluída: ${mission.title}`, body: `${mission.rewardTitle} conquistado. A holding recebe ${money.format(mission.rewardCash)} e ${mission.rewardLegacy} pontos de legado.`, impact: "positivo" }));
+      const wealthManagementCost = personalWealthCost(current.personalCash);
+      if (wealthManagementCost > 0 && nextWeek % 13 === 0) weeklyNews.push({ id: Date.now() + 2345, week: nextWeek, category: "economia", headline: `Fortuna de ${controlledExecutive} exige uma estrutura própria`, body: `Gestão patrimonial, impostos, seguros e assessoria consumiram ${money.format(wealthManagementCost)} nesta semana. Patrimônio muito alto continua valioso, mas deixou de ser gratuito.`, impact: "neutro" });
       const dynastyEndingReady = current.dynastyMode && ((current.generation ?? 2) >= 4 && nextWeek - (current.dynastyStartedWeek ?? nextWeek) >= 80 || operatingDynasty.length === 0 || 100 - outsideFamilyEquity < 15);
       const finalWeeklyNews = dedupeNewsItems(weeklyNews, current.news);
       const weeklyReport = buildWeeklyReport(current, companies, economyAfterNews, nextWeek);
@@ -8137,7 +8375,7 @@ export default function Home() {
         week: nextWeek,
         chapter: Math.max(current.chapter, founderAct(nextWeek).id),
         difficultyApplied: current.difficulty ?? "executivo",
-        personalCash: current.personalCash + holdingDividends + generationRewardCash,
+        personalCash: Math.max(0, current.personalCash + Math.round(holdingDividends * .88) + generationRewardCash - wealthManagementCost),
         survivedRecessions:
           (current.survivedRecessions ?? 0) +
           (current.economy.cycle === "recessao" &&
@@ -8353,33 +8591,71 @@ export default function Home() {
   }, [speed, dialog, game.unread.length, active?.id, active?.sold, game.week]);
 
   const hire = (candidate: Employee) => {
-    if (!active || !isCEO || active.cash < 9000) return;
-    updateActive((c) => ({
-      ...c,
-      cash: c.cash - 9000,
-      employees: [...c.employees, {
-        ...candidate,
-        id: Date.now(),
-        department: candidate.department ?? inferDepartment(candidate.role),
-        memories: addCharacterMemory(candidate.memories, characterMemory(
-          game.week,
-          "contratacao",
-          "Você apostou em mim e abriu as portas desta empresa.",
-          "confiante",
-          7,
-          72,
-        )),
-      }],
-      workforceTarget: Math.max(c.workforceTarget ?? c.employees.length, c.employees.length + 1),
-    }));
-    setGame((state) => evolveIdentity({ ...state, staffAlerts: (state.staffAlerts ?? []).map((alert) => alert.companyId === active.id && !alert.resolved ? { ...alert, resolved: true } : alert) }, { pessoas: 1 }, `contratação de ${candidate.name}`));
+    if (!active || !isCEO) return;
+    const acceptance = candidateAcceptance(active, candidate);
+    const onboardingCost = 2500 + (candidate.signingBonus ?? 0);
+    if (active.cash < onboardingCost) return;
+    if (Math.random() * 100 > acceptance) {
+      const processCost = Math.min(2000, active.cash);
+      setGame((state) => ({ ...state, companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, cash: company.cash - processCost, employerBrand: clamp((company.employerBrand ?? 35) - .4), rejectedCandidates: [{ name: candidate.name, untilWeek: state.week + 8 }, ...(company.rejectedCandidates ?? [])].slice(0, 12) })), news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${candidate.name} recusa proposta da ${active.name}`, body: `O candidato de nível ${talentTierLabels[candidate.talentTier ?? talentTierFor(candidate.skill)].toLowerCase()} avaliou salário, reputação e estrutura antes de seguir outro caminho. O processo custou ${money.format(processCost)}.`, impact: "negativo" }, ...state.news].slice(0, 60) }));
+      setDialog(null);
+      notify(`${candidate.name} recusou a proposta. Chance estimada era ${acceptance}%.`);
+      return;
+    }
+    setGame((state) => evolveIdentity({
+      ...state,
+      companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, cash: company.cash - onboardingCost, employerBrand: clamp((company.employerBrand ?? 35) + .6), employees: [...company.employees, { ...candidate, id: Date.now(), department: candidate.department ?? inferDepartment(candidate.role), memories: addCharacterMemory(candidate.memories, characterMemory(state.week, "contratacao", "Você apostou em mim e abriu as portas desta empresa.", "confiante", 7, 72)) }], workforceTarget: Math.max(company.workforceTarget ?? company.employees.length, company.employees.length + 1) })),
+      staffAlerts: (state.staffAlerts ?? []).map((alert) => alert.companyId === active.id && !alert.resolved ? { ...alert, resolved: true } : alert),
+      financialLedger: [{ id: `${state.week}-${active.id}-hire-${Date.now()}`, week: state.week, companyId: active.id, companyName: active.name, category: "equipe", label: `Contratação de ${candidate.name}`, amount: -onboardingCost, detail: `Recrutamento, integração e bônus de entrada de ${money.format(candidate.signingBonus ?? 0)}.` }, ...(state.financialLedger ?? [])].slice(0, 180),
+    }, { pessoas: 1 }, `contratação de ${candidate.name}`));
     setDialog(null);
-    notify(`${candidate.name} aceitou sua proposta.`);
+    notify(`${candidate.name} aceitou. Integração custou ${money.format(onboardingCost)}.`);
+  };
+
+  const upgradeFacility = (key: FacilityKey) => {
+    if (!active || !isCEO) return;
+    const currentFacility = normalizedFacilities(active)[key];
+    if (currentFacility.level >= 5) return;
+    const nextLevel = (currentFacility.level + 1) as FacilityLevel;
+    const cost = facilityDefinitions[key].upgradeCosts[nextLevel];
+    if (active.cash < cost) return;
+    setGame((state) => ({
+      ...state,
+      companies: state.companies.map((company) => company.id !== active.id ? company : ({
+        ...company,
+        cash: company.cash - cost,
+        facilities: { ...company.facilities, [key]: { ...currentFacility, level: nextLevel, condition: 100, lastUpgradeWeek: state.week } },
+        employees: company.employees.map((employee) => ({ ...employee, morale: clamp(employee.morale + (key === "lazer" || key === "beneficios" ? 4 : 1)), loyalty: clamp(employee.loyalty + (key === "beneficios" || key === "treinamento" ? 3 : 0)) })),
+      })),
+      financialLedger: [{ id: `${state.week}-${active.id}-facility-${key}-${Date.now()}`, week: state.week, companyId: active.id, companyName: active.name, category: "estrutura", label: `${facilityDefinitions[key].label} · nível ${nextLevel}`, amount: -cost, detail: "Investimento físico com manutenção semanal permanente." }, ...(state.financialLedger ?? [])].slice(0, 180),
+      news: [{ id: Date.now(), week: state.week, category: "negocios", headline: `${active.name} inaugura ${facilityDefinitions[key].short.toLowerCase()} de nível ${nextLevel}`, body: `A empresa investiu ${money.format(cost)}. A melhoria começa a afetar a operação imediatamente, mas cria uma nova despesa semanal de manutenção.`, impact: "positivo" }, ...state.news].slice(0, 60),
+    }));
+    notify(`${facilityDefinitions[key].label} chegou ao nível ${nextLevel}.`);
+  };
+
+  const changeFacilityMaintenance = (mode: FacilityMaintenanceMode) => {
+    if (!active || !isCEO) return;
+    updateActive((company) => ({ ...company, facilityMaintenanceMode: mode }));
+    notify(`${facilityModeLabels[mode].label} selecionada.`);
+  };
+
+  const repairFacility = (key: FacilityKey) => {
+    if (!active || !isCEO) return;
+    const facility = normalizedFacilities(active)[key];
+    if (facility.level === 0 || facility.condition >= 98) return;
+    const cost = 8000 + facility.level * 6000;
+    if (active.cash < cost) return;
+    setGame((state) => ({
+      ...state,
+      companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, cash: company.cash - cost, facilities: { ...company.facilities, [key]: { ...facility, condition: clamp(facility.condition + 35) } } })),
+      financialLedger: [{ id: `${state.week}-${active.id}-repair-${key}-${Date.now()}`, week: state.week, companyId: active.id, companyName: active.name, category: "estrutura", label: `Reparo de ${facilityDefinitions[key].short.toLowerCase()}`, amount: -cost, detail: "Recuperação emergencial da condição física." }, ...(state.financialLedger ?? [])].slice(0, 180),
+    }));
+    notify(`${facilityDefinitions[key].short} recebeu reparos.`);
   };
 
   const appointDirector = (employee: Employee, area: DirectorArea, external = false) => {
     if (!active || !isCEO || (active.directors ?? []).some((director) => director.area === area)) return;
-    const hiringCost = external ? 25000 : 12000;
+    const hiringCost = external ? 25000 + (employee.signingBonus ?? 0) : 12000;
     if (active.cash < hiringCost) return;
     const promotedSalary = Math.round(Math.max(employee.salary * (external ? 1.48 : 1.25), employee.market * 1.08) / 100) * 100;
     const appointmentId = Date.now();
@@ -8411,7 +8687,7 @@ export default function Home() {
     setGame((state) => ({
       ...state,
       reputation: clamp(state.reputation - 2),
-      companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, employees: company.employees.filter((person) => person.id !== employee.id), directors: (company.directors ?? []).filter((director) => director.employeeId !== employee.id), workforceTarget: Math.max(2, (company.workforceTarget ?? company.employees.length) - 1), reputation: clamp(company.reputation - 2) })),
+      companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, employees: company.employees.filter((person) => person.id !== employee.id), directors: (company.directors ?? []).filter((director) => director.employeeId !== employee.id), workforceTarget: Math.max(2, (company.workforceTarget ?? company.employees.length) - 1), reputation: clamp(company.reputation - 2), employerBrand: clamp((company.employerBrand ?? 35) - (employee.skill >= 77 ? 3 : 1.5)) })),
       staffAlerts: [{ id: `staff-${active.id}-${employee.id}-${state.week}`, companyId: active.id, companyName: active.name, employeeName: employee.name, role: employee.role, reason: "desligamento", week: state.week, responsible: currentLeader, headcountAfter: active.employees.length - 1 }, ...(state.staffAlerts ?? [])].slice(0, 20),
       news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${employee.name} é desligado da ${active.name}`, body: `${currentLeader} decidiu encerrar o vínculo de ${employee.role.toLowerCase()}. A empresa precisará decidir se elimina a posição ou busca reposição.`, impact: "negativo" }, ...state.news].slice(0, 60),
     }));
@@ -8861,6 +9137,8 @@ export default function Home() {
 
   const sellProductRights = () => {
     if (!active || !selectedProduct || !rightsOffer) return;
+    const transactionCosts = Math.round(rightsOffer.value * .08 + 4000);
+    const rightsNet = Math.max(0, rightsOffer.value - transactionCosts);
     setGame((s) => ({
       ...s,
       companies: s.companies.map((c) =>
@@ -8868,7 +9146,7 @@ export default function Home() {
           ? c
           : {
               ...c,
-              cash: c.cash + rightsOffer.value,
+              cash: c.cash + rightsNet,
               projects: c.projects.map((p) =>
                 p.id === selectedProduct.id
                   ? { ...p, lifecycle: "direitos_vendidos" }
@@ -8882,7 +9160,7 @@ export default function Home() {
           week: s.week,
           category: "negocios",
           headline: `${active.name} vende direitos de ${selectedProduct.name} para ${rightsOffer.buyer}`,
-          body: `A transação de ${money.format(rightsOffer.value)} encerra o produto dentro da empresa e transfere sua exploração comercial ao comprador.`,
+          body: `A transação bruta de ${money.format(rightsOffer.value)} deixou ${money.format(rightsNet)} após impostos e custos jurídicos, encerrando a exploração do produto pela empresa.`,
           impact: "positivo",
         },
         ...s.news,
@@ -8898,6 +9176,7 @@ export default function Home() {
   const sellCompany = () => {
     if (!active || !metrics || !isCEO) return;
     const offer = Math.round(metrics.valuation * (0.9 + Math.random() * 0.45));
+    const settlement = saleSettlement(offer);
     const buyer = [
       "Grupo Meridian",
       "Northstar Capital",
@@ -8907,7 +9186,7 @@ export default function Home() {
     ][Math.floor(Math.random() * 5)];
     setGame((s) => ({
       ...s,
-      personalCash: s.personalCash + offer,
+      personalCash: s.personalCash + settlement.net,
       companies: s.companies.map((c) =>
         c.id === active.id ? { ...c, sold: true, buyer } : c,
       ),
@@ -8920,7 +9199,7 @@ export default function Home() {
           week: s.week,
           category: "negocios",
           headline: `${buyer} compra ${active.name} por ${compact.format(offer)}`,
-          body: `A venda encerra um ciclo para o fundador e inicia especulações sobre seu próximo negócio. Funcionários aguardam detalhes sobre a transição.`,
+          body: `Após ${money.format(settlement.taxes)} em tributos e ${money.format(settlement.advisory)} em assessoria, ${money.format(settlement.net)} chegaram ao patrimônio pessoal. Funcionários aguardam detalhes sobre a transição.`,
           impact: "neutro",
         },
         ...s.news,
@@ -8929,7 +9208,7 @@ export default function Home() {
     setGame((state) => evolveIdentity(state, { negociacao: 4, prudencia: 3, visao: -1 }, `venda da ${active.name}`));
     setDialog(null);
     setView("portfolio");
-    notify(`Empresa vendida por ${money.format(offer)}.`);
+    notify(`Venda concluída: ${money.format(settlement.net)} líquidos.`);
   };
 
   const foundCompany = (sector: Sector) => {
@@ -10280,14 +10559,16 @@ export default function Home() {
       return;
     }
     if (kind === "dividendo") {
+      const holdingMetrics = companyMetrics(holdingCompany, game.economy);
       const amount = Math.min(
         Math.round(holdingCompany.cash * 0.08),
-        Math.max(0, holdingCompany.cash - 50000),
+        Math.max(0, holdingCompany.cash - holdingMetrics.requiredReserve),
       );
       if (amount <= 0) return;
+      const dividendTax = Math.round(amount * .12);
       setGame((s) => ({
         ...s,
-        personalCash: s.personalCash + amount,
+        personalCash: s.personalCash + amount - dividendTax,
         companies: s.companies.map((c) =>
           c.id === holdingCompany.id
             ? {
@@ -10298,7 +10579,7 @@ export default function Home() {
             : c,
         ),
       }));
-      notify(`${money.format(amount)} distribuídos ao patrimônio do fundador.`);
+      notify(`${money.format(amount - dividendTax)} líquidos distribuídos ao fundador.`);
       return;
     }
     const enabling = !holdingCompany.sharedServices;
@@ -10320,6 +10601,7 @@ export default function Home() {
       companyMetrics(holdingCompany, game.economy).valuation *
         (0.88 + Math.random() * 0.3),
     );
+    const settlement = saleSettlement(offer);
     const buyer = [
       "Grupo Meridian",
       "Aurora Partners",
@@ -10328,7 +10610,7 @@ export default function Home() {
     ][Math.floor(Math.random() * 4)];
     setGame((s) => ({
       ...s,
-      personalCash: s.personalCash + offer,
+      personalCash: s.personalCash + settlement.net,
       companies: s.companies.map((c) =>
         c.id === holdingCompany.id ? { ...c, sold: true, buyer } : c,
       ),
@@ -10338,7 +10620,7 @@ export default function Home() {
           week: s.week,
           category: "negocios",
           headline: `${s.holdingName} vende ${holdingCompany.name}`,
-          body: `${buyer} pagou ${money.format(offer)} pela empresa. O grupo perde a operação e ganha liquidez.`,
+          body: `${buyer} pagou ${money.format(offer)}. Tributos e assessoria consumiram ${money.format(settlement.taxes + settlement.advisory)}, deixando ${money.format(settlement.net)} líquidos.`,
           impact: "neutro",
         },
         ...s.news,
@@ -10346,7 +10628,7 @@ export default function Home() {
     }));
     setDialog(null);
     setHoldingCompanyId(null);
-    notify(`Empresa vendida por ${money.format(offer)}.`);
+    notify(`Empresa vendida por ${money.format(settlement.net)} líquidos.`);
   };
 
   const mergeHoldingCompany = () => {
@@ -10822,6 +11104,10 @@ export default function Home() {
                 <i>↗</i>
                 <span>Observar o mercado</span>
               </button>
+              <button className="hotspot facilities" onClick={() => setDialog("facilities")}>
+                <i>{facilityKeys.reduce((sum, key) => sum + (active.facilities?.[key]?.level ?? 0), 0)}</i>
+                <span>Investir na estrutura</span>
+              </button>
             </>
           )}
           <aside className="week-brief">
@@ -10849,6 +11135,14 @@ export default function Home() {
               <b className={(active.boardSupport ?? 50) < 35 ? "bad" : "good"}>
                 {Math.round(active.boardSupport ?? 50)}%
               </b>
+            </div>
+            <div>
+              <small>{metrics?.scaleProfile.label ?? "Escala"} · capital de giro</small>
+              <b className={(metrics?.cashCoverage ?? 1) < .7 ? "bad" : (metrics?.cashCoverage ?? 1) >= 1 ? "good" : ""}>{Math.max(0, Math.round((metrics?.cashCoverage ?? 1) * 100))}% de {money.format(metrics?.requiredReserve ?? 0)}</b>
+            </div>
+            <div>
+              <small>Estrutura física</small>
+              <b>{Math.round(activeFacilitySummary?.averageCondition ?? 100)}% · {money.format(activeFacilitySummary?.weeklyMaintenance ?? 0)}/sem.</b>
             </div>
             {(active.effects?.length ?? 0) > 0 && (
               <div className="active-consequences">
@@ -10944,6 +11238,7 @@ export default function Home() {
                   <p>“{e.ambition}.”</p>
                   <div className="traits">
                     <span>{directorAreaLabels[e.department ?? inferDepartment(e.role)]}</span>
+                    <span>{talentTierLabels[e.talentTier ?? talentTierFor(e.skill)]} · competência {Math.round(e.skill)}</span>
                     <span>{e.trait}</span>
                     <span>Lealdade {Math.round(e.loyalty)}</span>
                     <span>Relação {Math.round(e.relation)}</span>
@@ -11922,6 +12217,51 @@ export default function Home() {
           </div>
         </GameModal>
       )}
+      {dialog === "facilities" && active && activeFacilitySummary && (
+        <GameModal wide onClose={() => setDialog(null)}>
+          <div className="facility-room">
+          <ModalTitle
+            label="ESTRUTURA DA EMPRESA"
+            title="O crescimento precisa caber em algum lugar."
+            text="Cada melhoria tem investimento inicial, manutenção semanal e condição própria. Cortar manutenção libera caixa agora, mas desgasta o patrimônio e aumenta o risco de interrupções."
+          />
+          <section className="facility-overview">
+            <div><small>CONDIÇÃO MÉDIA</small><b>{Math.round(activeFacilitySummary.averageCondition)}%</b><span>{activeFacilitySummary.averageCondition >= 82 ? "Estrutura saudável" : activeFacilitySummary.averageCondition >= 58 ? "Desgaste administrável" : "Risco operacional elevado"}</span></div>
+            <div><small>MANUTENÇÃO SEMANAL</small><b>{money.format(activeFacilitySummary.weeklyMaintenance)}</b><span>{facilityModeLabels[activeFacilitySummary.mode].label}</span></div>
+            <div><small>NÍVEIS CONSTRUÍDOS</small><b>{facilityKeys.reduce((sum, key) => sum + activeFacilitySummary.facilities[key].level, 0)}/35</b><span>Quanto maior a estrutura, maior o custo fixo</span></div>
+          </section>
+          <section className="maintenance-policy">
+            <header><small>POLÍTICA DE MANUTENÇÃO</small><h3>Quanto você quer preservar?</h3></header>
+            <div>{(Object.keys(facilityModeLabels) as FacilityMaintenanceMode[]).map((mode) => <button className={activeFacilitySummary.mode === mode ? "active" : ""} disabled={!isCEO} key={mode} onClick={() => changeFacilityMaintenance(mode)}><b>{facilityModeLabels[mode].label}</b><span>{Math.round(facilityModeLabels[mode].multiplier * 100)}% do custo-base</span><p>{facilityModeLabels[mode].detail}</p></button>)}</div>
+          </section>
+          <div className="facility-grid">
+            {facilityKeys.map((key) => {
+              const definition = facilityDefinitions[key];
+              const facility = activeFacilitySummary.facilities[key];
+              const nextLevel = Math.min(5, facility.level + 1) as FacilityLevel;
+              const nextCost = definition.upgradeCosts[nextLevel];
+              const maintenanceNow = Math.round(definition.weeklyMaintenance[facility.level] * facilityModeLabels[activeFacilitySummary.mode].multiplier);
+              const maintenanceNext = Math.round(definition.weeklyMaintenance[nextLevel] * facilityModeLabels[activeFacilitySummary.mode].multiplier);
+              const effects: Record<FacilityKey, string[]> = {
+                escritorio: ["moral", "reputação", "capacidade"], equipamentos: ["projetos", "eficiência", "qualidade"], lazer: ["menos estresse", "clima"], beneficios: ["retenção", "lealdade", "recuperação"], treinamento: ["competência", "qualidade", "projetos"], seguranca: ["menos incidentes", "qualidade", "confiança"], infraestrutura: ["capacidade", "eficiência", "escala"],
+              };
+              return <article className={`facility-card condition-${facility.condition < 45 ? "bad" : facility.condition < 70 ? "warning" : "good"}`} key={key}>
+                <header><small>{definition.short.toUpperCase()}</small><b>NÍVEL {facility.level}</b></header>
+                <h3>{definition.label}</h3>
+                <p>{definition.description}</p>
+                <div className="facility-effects">{effects[key].map((effect) => <span key={effect}>{effect}</span>)}</div>
+                <div className="facility-condition"><span><i style={{ width: `${facility.condition}%` }} /></span><b>{Math.round(facility.condition)}% condição</b></div>
+                <dl><div><dt>Manutenção atual</dt><dd>{money.format(maintenanceNow)}/sem.</dd></div><div><dt>Incidentes</dt><dd>{facility.incidents}</dd></div>{facility.level < 5 && <div><dt>Após melhoria</dt><dd>{money.format(maintenanceNext)}/sem.</dd></div>}</dl>
+                <div className="facility-actions">
+                  {facility.level > 0 && facility.condition < 98 && <button className="facility-repair" disabled={!isCEO || active.cash < 8000 + facility.level * 6000} onClick={() => repairFacility(key)}><span>Reparar +35%</span><b>{money.format(8000 + facility.level * 6000)}</b></button>}
+                  {facility.level < 5 ? <button disabled={!isCEO || active.cash < nextCost} onClick={() => upgradeFacility(key)}><span>Elevar ao nível {nextLevel}</span><b>{money.format(nextCost)}</b></button> : <strong className="facility-max">ESTRUTURA NO NÍVEL MÁXIMO</strong>}
+                </div>
+              </article>;
+            })}
+          </div>
+          </div>
+        </GameModal>
+      )}
       {dialog === "directors" && active && (
         <GameModal onClose={() => setDialog(null)}>
           <ModalTitle
@@ -11938,7 +12278,7 @@ export default function Home() {
               .filter((employee) => !(active.directors ?? []).some((director) => director.employeeId === employee.id))
               .sort((a, b) => b.skill + b.loyalty * .25 - (a.skill + a.loyalty * .25))
               .slice(0, 5);
-            const externalCandidates = createLaborMarket(active.sector, active.id + 37, game.week, active.employees.map((employee) => employee.name), 7)
+            const externalCandidates = createLaborMarket(active.sector, active.id + 37, game.week, active.employees.map((employee) => employee.name), 7, active)
               .sort((a, b) => b.skill - a.skill)
               .slice(0, 4);
             return currentDirector ? <section className="current-director-detail">
@@ -11955,8 +12295,8 @@ export default function Home() {
                 </button>)}</div>
               </section>
               <section>
-                <header><small>BUSCA EXTERNA · CUSTO R$ 25 MIL</small><h3>Experiência nova, confiança por construir</h3></header>
-                <div className="director-candidates">{externalCandidates.map((candidate) => <button disabled={!isCEO || active.cash < 25000} key={candidate.id} onClick={() => { appointDirector(candidate, directorArea, true); setDialog(null); }}>
+                <header><small>BUSCA EXTERNA · R$ 25 MIL + BÔNUS</small><h3>Experiência nova, confiança por construir</h3></header>
+                <div className="director-candidates">{externalCandidates.map((candidate) => <button disabled={!isCEO || active.cash < 25000 + (candidate.signingBonus ?? 0)} key={candidate.id} onClick={() => { appointDirector(candidate, directorArea, true); setDialog(null); }}>
                   <Avatar initials={candidate.initials} color={candidate.color} /><span><b>{candidate.name}</b><small>{candidate.role} · estilo {directorStyle(candidate)}</small><em>Competência {candidate.skill} · adaptação inicial</em></span><strong>{money.format(Math.round(Math.max(candidate.salary * 1.48, candidate.market * 1.08) / 100) * 100)}</strong>
                 </button>)}</div>
               </section>
@@ -11969,23 +12309,25 @@ export default function Home() {
           <ModalTitle
             label="MERCADO DE TALENTOS"
             title="Uma contratação muda o grupo."
-            text={`A lista é própria do setor e da região da ${active?.name ?? "empresa"}, com novos perfis a cada duas semanas. Além de competência, considere ambição, lealdade e cultura.`}
+            text={`A lista é própria do setor e da região da ${active?.name ?? "empresa"}, com novos perfis a cada duas semanas. Talentos melhores observam reputação, estrutura, benefícios, clima e porte antes de aceitar uma conversa.`}
           />
+          {active && (() => { const attraction = employerAttraction(active); return <section className="talent-market-summary"><div><small>MARCA EMPREGADORA</small><b>{attraction.score}/100</b><span>{attraction.label}</span></div><div><small>CLIMA PERCEBIDO</small><b>{attraction.morale}%</b><span>Estresse médio {attraction.stress}%</span></div><div><small>FAIXA MAIS PROVÁVEL</small><b>{attraction.score >= 82 ? "Sênior e elite" : attraction.score >= 62 ? "Pleno e sênior" : attraction.score >= 42 ? "Júnior e pleno" : "Iniciante e júnior"}</b><span>Melhore benefícios, treinamento e reputação para avançar</span></div></section>; })()}
           <div className="hire-list">
-            {(active ? createLaborMarket(active.sector, active.id, game.week, active.employees.map((employee) => employee.name), 10) : [])
-              .map((c) => (
-                <button key={c.name} onClick={() => hire(c)}>
+            {(active ? createLaborMarket(active.sector, active.id, game.week, active.employees.map((employee) => employee.name), 10, active) : [])
+              .map((c) => { const acceptance = active ? candidateAcceptance(active, c) : 0; const onboarding = 2500 + (c.signingBonus ?? 0); return (
+                <button disabled={!active || active.cash < onboarding} key={c.name} onClick={() => hire(c)}>
                   <Avatar initials={c.initials} color={c.color} />
                   <span>
                     <b>{c.name}</b>
                     <small>
-                      {c.role} · {c.trait}
+                      {c.role} · {c.trait} · {talentTierLabels[c.talentTier ?? talentTierFor(c.skill)]}
                     </small>
                     <em>“{c.ambition}.”</em>
+                    <i className={`candidate-chance ${acceptance < 50 ? "low" : acceptance >= 80 ? "high" : ""}`}>{acceptance}% de chance de aceitar · competência {c.skill}</i>
                   </span>
-                  <strong>{money.format(c.salary)}</strong>
+                  <strong>{money.format(c.salary)}<small>/mês<br />+ {money.format(onboarding)} integração</small></strong>
                 </button>
-              ))}
+              ); })}
           </div>
         </GameModal>
       )}
@@ -12300,7 +12642,7 @@ export default function Home() {
           <ModalTitle
             label="M&A · VENDA DA EMPRESA"
             title={`Quanto vale encerrar este capítulo?`}
-            text={`A estimativa atual da ${active.name} é ${money.format(metrics.valuation)}. Uma venda converte o negócio em patrimônio pessoal e permite começar de novo em outro setor.`}
+            text={`A estimativa atual da ${active.name} é ${money.format(metrics.valuation)}. O valor anunciado é bruto: impostos progressivos e assessoria serão descontados antes de chegar ao patrimônio pessoal.`}
           />
           <div className="sale-sheet">
             <div>
@@ -13356,13 +13698,19 @@ export default function Home() {
             <ModalTitle
               label="CAIXA E MOVIMENTAÇÕES"
               title="Para onde foi o dinheiro"
-              text="O patrimônio mede o valor estimado do império. O caixa é o dinheiro disponível agora. Este extrato mostra o que entrou e saiu em cada empresa."
+              text="O patrimônio mede o valor estimado do império. Caixa sustenta impostos, capital de giro e a complexidade de crescer. Este extrato mostra o que entrou e saiu em cada empresa."
             />
             <div className="finance-summary">
               <div><small>CAIXA DA EMPRESA ATIVA</small><b>{money.format(active?.cash ?? 0)}</b><span>{active?.name ?? "Nenhuma empresa ativa"}</span></div>
               <div><small>CAIXA SOMADO DO GRUPO</small><b>{money.format(groupCash)}</b><span>Empresas em operação</span></div>
               <div><small>PATRIMÔNIO PESSOAL</small><b>{money.format(game.personalCash)}</b><span>Recursos fora das empresas</span></div>
             </div>
+            {metrics && <div className="finance-scale-summary">
+              <div><small>ESCALA ATUAL</small><b>{metrics.scaleProfile.label}</b><span>Alíquota de resultado: {Math.round(metrics.scaleProfile.taxRate * 100)}%</span></div>
+              <div><small>CAPITAL DE GIRO</small><b>{money.format(metrics.requiredReserve)}</b><span className={metrics.cashCoverage < .7 ? "bad" : ""}>{Math.max(0, Math.round(metrics.cashCoverage * 100))}% coberto pelo caixa</span></div>
+              <div><small>IMPOSTOS DA SEMANA</small><b>{money.format(metrics.taxes)}</b><span>Somente quando há resultado positivo</span></div>
+              <div><small>BUROCRACIA E ESCALA</small><b>{money.format(metrics.complexityCost)}</b><span>Administração, licenças e conformidade</span></div>
+            </div>}
             <div className="finance-ledger-list">
               {(game.financialLedger ?? []).length === 0 ? (
                 <p className="empty-state">O primeiro extrato será criado quando a próxima semana terminar.</p>
