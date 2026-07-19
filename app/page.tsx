@@ -289,6 +289,9 @@ type Company = {
   marketingPulse?: MarketingPulse;
   marketingCampaigns?: MarketingCampaign[];
   directors?: CompanyDirector[];
+  directorVacancies?: Partial<Record<DirectorArea, number>>;
+  directorOfferWeeks?: Partial<Record<DirectorArea, number>>;
+  lastTeamChaosWeek?: number;
   facilities?: Partial<Record<FacilityKey, FacilityState>>;
   facilityMaintenanceMode?: FacilityMaintenanceMode;
   employerBrand?: number;
@@ -1899,6 +1902,40 @@ function directorStrength(directors: CompanyDirector[], area: DirectorArea) {
   if (!director) return 0;
   return clamp(director.competence * .5 + director.trust * .28 + director.authority * .22);
 }
+
+function repairCompanyHierarchy(company: Company, week: number): Company {
+  const employeeIds = new Set(company.employees.map((employee) => employee.id));
+  const occupiedAreas = new Set<DirectorArea>();
+  const directors: CompanyDirector[] = [];
+  const removedAreas: DirectorArea[] = [];
+  (company.directors ?? []).forEach((director) => {
+    if (!employeeIds.has(director.employeeId) || occupiedAreas.has(director.area)) {
+      removedAreas.push(director.area);
+      return;
+    }
+    occupiedAreas.add(director.area);
+    directors.push(director);
+  });
+  company.employees.forEach((employee) => {
+    if (!employee.role.startsWith("Diretor") || directors.some((director) => director.employeeId === employee.id)) return;
+    const area = employee.department ?? inferDepartment(employee.role);
+    if (occupiedAreas.has(area)) return;
+    occupiedAreas.add(area);
+    directors.push({ id: `director-migrated-${company.id}-${area}-${employee.id}`, employeeId: employee.id, name: employee.name, area, style: directorStyle(employee), competence: employee.skill, trust: clamp(employee.relation * .55 + employee.loyalty * .45), authority: 45, weeks: employee.weeks ?? 0, lastAction: "Cargo antigo incorporado à estrutura formal de diretoria.", origin: "promovido" });
+  });
+  const directorIds = new Set(directors.map((director) => director.employeeId));
+  const employees = company.employees.map((employee) => {
+    if (!employee.role.startsWith("Diretor") || directorIds.has(employee.id)) return employee;
+    const area = employee.department ?? inferDepartment(employee.role);
+    return { ...employee, role: `Líder de ${directorAreaLabels[area]}`, department: area };
+  });
+  const directorVacancies = { ...(company.directorVacancies ?? {}) };
+  removedAreas.forEach((area) => {
+    if (!occupiedAreas.has(area)) directorVacancies[area] = directorVacancies[area] ?? week;
+  });
+  directors.forEach((director) => { directorVacancies[director.area] = undefined; });
+  return { ...company, employees, directors, directorVacancies, directorOfferWeeks: company.directorOfferWeeks ?? {}, lastTeamChaosWeek: company.lastTeamChaosWeek ?? 0 };
+}
 const facilityKeys: FacilityKey[] = ["escritorio", "equipamentos", "lazer", "beneficios", "treinamento", "seguranca", "infraestrutura"];
 const facilityDefinitions: Record<FacilityKey, {
   label: string;
@@ -2568,6 +2605,9 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
     workforceTarget: foundingTeam.length,
     partners: createBusinessPartners(sector, id),
     directors: [],
+    directorVacancies: {},
+    directorOfferWeeks: {},
+    lastTeamChaosWeek: 0,
     facilities: {},
     facilityMaintenanceMode: "adequado",
     employerBrand: 32,
@@ -3168,10 +3208,19 @@ function rollEconomy(current: Economy, difficulty: GameDifficulty = "executivo")
 
 function employeeCrisisMessage(
   employee: Employee,
-  companyId: number,
+  company: Company,
 ): StoryMessage {
   const burnout = (employee.stress ?? 0) > 86;
   const remembered = employee.memories?.[0];
+  const area = employee.department ?? inferDepartment(employee.role);
+  const currentDirector = (company.directors ?? []).find((director) => director.area === area);
+  const employeeIsDirector = (company.directors ?? []).some((director) => director.employeeId === employee.id);
+  const directorSeatAvailable = !currentDirector && !employeeIsDirector;
+  const promotionLabel = employeeIsDirector
+    ? "Plano de reconhecimento executivo"
+    : directorSeatAvailable
+      ? `Candidatura à diretoria de ${directorAreaLabels[area]}`
+      : `Promoção para líder de ${directorAreaLabels[area]}`;
   return {
     id: `employee-${employee.id}-${Date.now()}`,
     from: employee.name,
@@ -3188,17 +3237,40 @@ function employeeCrisisMessage(
       {
         label: burnout
           ? "Duas semanas de descanso"
-          : "Plano de carreira e promoção",
+          : promotionLabel,
         result: burnout
           ? `${employee.name} ficará duas semanas afastado e não produzirá nesse período.`
           : `${employee.name} decidiu ficar, mas espera mudanças reais.`,
         effect: (s) => ({
           ...s,
           companies: s.companies.map((c) =>
-            c.id !== companyId
+            c.id !== company.id
               ? c
-              : {
+              : (() => {
+                  const occupiedNow = (c.directors ?? []).some((director) => director.area === area);
+                  const alreadyDirector = (c.directors ?? []).some((director) => director.employeeId === employee.id);
+                  const promoteToDirector = !burnout && !alreadyDirector && !occupiedNow;
+                  const promotedSalary = Math.round(Math.max(
+                    employee.salary * (promoteToDirector ? 1.25 : 1.14),
+                    employee.market * (promoteToDirector ? 1.08 : .98),
+                  ) / 100) * 100;
+                  const newDirector: CompanyDirector | null = promoteToDirector ? {
+                    id: `director-${c.id}-${area}-${s.week}-${employee.id}`,
+                    employeeId: employee.id,
+                    name: employee.name,
+                    area,
+                    style: directorStyle(employee),
+                    competence: employee.skill,
+                    trust: clamp(employee.relation * .55 + employee.loyalty * .45),
+                    authority: 46,
+                    weeks: 0,
+                    lastAction: "Assumiu a cadeira após apresentar um plano de carreira à presidência.",
+                    origin: "promovido",
+                  } : null;
+                  return {
                   ...c,
+                  directors: newDirector ? [...(c.directors ?? []), newDirector] : c.directors,
+                  directorVacancies: newDirector ? { ...(c.directorVacancies ?? {}), [area]: undefined } : c.directorVacancies,
                   employees: c.employees.map((e) =>
                     e.id !== employee.id
                       ? e
@@ -3211,16 +3283,28 @@ function employeeCrisisMessage(
                           ),
                           morale: clamp(e.morale + 14),
                           loyalty: clamp(e.loyalty + 12),
-                          role: burnout ? e.role : `Líder de ${e.role}`,
+                          salary: burnout ? e.salary : promotedSalary,
+                          market: burnout ? e.market : Math.max(e.market, promotedSalary),
+                          role: burnout
+                            ? e.role
+                            : promoteToDirector
+                              ? `Diretor de ${directorAreaLabels[area]}`
+                              : alreadyDirector
+                                ? e.role
+                                : `Líder de ${directorAreaLabels[area]}`,
                           relation: clamp(e.relation + 10),
                           memories: addCharacterMemory(
                             e.memories,
                             characterMemory(
                               s.week,
-                              "cuidado",
+                              burnout ? "cuidado" : "promocao",
                               burnout
                                 ? "Você respeitou meu limite quando eu estava perto de quebrar."
-                                : "Você me ofereceu um caminho de crescimento quando pensei em sair.",
+                                : promoteToDirector
+                                  ? `Você aceitou minha candidatura porque a diretoria de ${directorAreaLabels[area]} estava vaga.`
+                                  : occupiedNow
+                                    ? `Você reconheceu meu crescimento sem criar uma segunda diretoria de ${directorAreaLabels[area]}.`
+                                    : "Você reconheceu meu trabalho e minha posição executiva.",
                               "grato",
                               13,
                               92,
@@ -3228,7 +3312,8 @@ function employeeCrisisMessage(
                           ),
                         },
                   ),
-                },
+                };
+              })(),
           ),
         }),
       },
@@ -3238,7 +3323,7 @@ function employeeCrisisMessage(
         effect: (s) => ({
           ...s,
           companies: s.companies.map((c) =>
-            c.id !== companyId
+            c.id !== company.id
               ? c
               : {
                   ...c,
@@ -3276,14 +3361,18 @@ function employeeCrisisMessage(
         effect: (s) => ({
           ...s,
           reputation: Math.max(0, s.reputation - 3),
-          staffAlerts: [{ id: `staff-${companyId}-${employee.id}-${s.week}`, companyId, companyName: s.companies.find((company) => company.id === companyId)?.name ?? "Empresa", employeeName: employee.name, role: employee.role, reason: "demissao", week: s.week, responsible: s.companies.find((company) => company.id === companyId)?.ceo ?? s.playerExecutive ?? s.founder, headcountAfter: Math.max(0, (s.companies.find((company) => company.id === companyId)?.employees.length ?? 1) - 1) }, ...(s.staffAlerts ?? [])].slice(0, 20),
+          staffAlerts: [{ id: `staff-${company.id}-${employee.id}-${s.week}`, companyId: company.id, companyName: s.companies.find((item) => item.id === company.id)?.name ?? "Empresa", employeeName: employee.name, role: employee.role, reason: "demissao", week: s.week, responsible: s.companies.find((item) => item.id === company.id)?.ceo ?? s.playerExecutive ?? s.founder, headcountAfter: Math.max(0, (s.companies.find((item) => item.id === company.id)?.employees.length ?? 1) - 1) }, ...(s.staffAlerts ?? [])].slice(0, 20),
           companies: s.companies.map((c) =>
-            c.id !== companyId
+            c.id !== company.id
               ? c
               : {
                   ...c,
                   reputation: Math.max(0, c.reputation - 3),
                   employees: c.employees.filter((e) => e.id !== employee.id),
+                  directors: (c.directors ?? []).filter((director) => director.employeeId !== employee.id),
+                  directorVacancies: employeeIsDirector
+                    ? { ...(c.directorVacancies ?? {}), [area]: s.week }
+                    : c.directorVacancies,
                   projects: c.projects.map((p) =>
                     p.status === "ativo"
                       ? {
@@ -3308,6 +3397,119 @@ function employeeCrisisMessage(
           ].slice(0, 40),
         }),
       },
+    ],
+  };
+}
+
+function internalDirectorCandidateMessage(
+  company: Company,
+  candidate: Employee,
+  area: DirectorArea,
+  vacancyWeek: number,
+): StoryMessage {
+  const promote = (state: GameState, trial = false): GameState => ({
+    ...state,
+    companies: state.companies.map((item) => {
+      if (item.id !== company.id) return item;
+      const occupied = (item.directors ?? []).some((director) => director.area === area);
+      const promotedSalary = Math.round(Math.max(candidate.salary * (trial ? 1.14 : 1.25), candidate.market * (trial ? 1 : 1.08)) / 100) * 100;
+      if (occupied) return {
+        ...item,
+        employees: item.employees.map((employee) => employee.id !== candidate.id ? employee : ({ ...employee, role: `Líder de ${directorAreaLabels[area]}`, salary: promotedSalary, morale: clamp(employee.morale + 4), loyalty: clamp(employee.loyalty + 2), memories: addCharacterMemory(employee.memories, characterMemory(state.week, "promocao", "A cadeira foi preenchida antes da decisão, mas recebi uma posição de liderança.", "cauteloso", 2, 65)) })),
+      };
+      const director: CompanyDirector = {
+        id: `director-${item.id}-${area}-${state.week}-${candidate.id}`,
+        employeeId: candidate.id,
+        name: candidate.name,
+        area,
+        style: directorStyle(candidate),
+        competence: candidate.skill,
+        trust: clamp(candidate.relation * .55 + candidate.loyalty * .45),
+        authority: trial ? 36 : 48,
+        weeks: 0,
+        lastAction: trial ? "Assumiu em período de avaliação após se candidatar internamente." : "Assumiu a cadeira vaga por iniciativa própria.",
+        origin: "promovido",
+      };
+      return {
+        ...item,
+        cash: item.cash - (trial ? 5000 : 12000),
+        directors: [...(item.directors ?? []), director],
+        directorVacancies: { ...(item.directorVacancies ?? {}), [area]: undefined },
+        directorOfferWeeks: { ...(item.directorOfferWeeks ?? {}), [area]: state.week },
+        employees: item.employees.map((employee) => employee.id !== candidate.id ? employee : ({
+          ...employee,
+          role: `Diretor de ${directorAreaLabels[area]}`,
+          department: area,
+          salary: promotedSalary,
+          market: Math.max(employee.market, promotedSalary),
+          morale: clamp(employee.morale + (trial ? 5 : 10)),
+          loyalty: clamp(employee.loyalty + (trial ? 3 : 7)),
+          relation: clamp(employee.relation + (trial ? 3 : 7)),
+          memories: addCharacterMemory(employee.memories, characterMemory(state.week, "promocao", trial ? "Você permitiu que eu provasse minha capacidade na diretoria." : "Você aceitou minha candidatura para uma diretoria que estava sem liderança.", trial ? "determinado" : "orgulhoso", trial ? 5 : 11, 88)),
+        })),
+      };
+    }),
+    news: [{ id: Date.now(), week: state.week, category: "pessoas" as const, headline: `${candidate.name} assume ${directorAreaLabels[area]} na ${company.name}`, body: `A cadeira estava vaga desde a semana ${vacancyWeek}. ${trial ? "A promoção começou sob avaliação do conselho." : "A empresa escolheu aproveitar um talento que já conhecia a operação."}`, impact: "positivo" as const }, ...state.news].slice(0, 60),
+  });
+  return {
+    id: `director-candidate-${company.id}-${area}-${vacancyWeek}`,
+    from: candidate.name,
+    role: candidate.role,
+    initials: candidate.initials,
+    color: candidate.color,
+    subject: `Quero assumir a diretoria de ${directorAreaLabels[area]}`,
+    body: `A cadeira está vaga desde a semana ${vacancyWeek}. ${candidate.name} conhece a equipe, tem competência ${Math.round(candidate.skill)} e lealdade ${Math.round(candidate.loyalty)}. A candidatura surgiu porque ninguém foi nomeado nas primeiras semanas — mas ambição não garante capacidade para liderar antigos colegas.`,
+    choices: [
+      { label: `Promover para diretor · R$ 12 mil`, tone: "good", hint: "Preenche a cadeira · salário e autoridade aumentam", result: `${candidate.name} recebeu a promoção para a diretoria.`, effect: (state) => promote(state) },
+      { label: "Dar uma oportunidade sob avaliação · R$ 5 mil", hint: "Autoridade inicial menor · relação melhora moderadamente", result: `${candidate.name} assumirá a cadeira sob avaliação.`, effect: (state) => promote(state, true) },
+      { label: "Recusar e manter a busca aberta", tone: "risk", hint: "A vaga continua · candidato perde moral e lealdade", result: `${candidate.name} teve a candidatura recusada.`, effect: (state) => ({ ...state, companies: state.companies.map((item) => item.id !== company.id ? item : ({ ...item, directorVacancies: { ...(item.directorVacancies ?? {}), [area]: state.week }, directorOfferWeeks: { ...(item.directorOfferWeeks ?? {}), [area]: state.week }, employees: item.employees.map((employee) => employee.id !== candidate.id ? employee : ({ ...employee, morale: clamp(employee.morale - 9), loyalty: clamp(employee.loyalty - 7), relation: clamp(employee.relation - 8), memories: addCharacterMemory(employee.memories, characterMemory(state.week, "promocao", "Você recusou minha candidatura à diretoria mesmo com a cadeira vaga.", "magoado", -10, 86)) })) })) }) },
+    ],
+  };
+}
+
+function teamChaosMessage(company: Company, week: number): StoryMessage {
+  const team = company.employees.filter((employee) => (employee.leaveWeeks ?? 0) === 0);
+  const first = team[(week + company.id) % team.length];
+  const second = team.find((employee) => employee.id !== first.id) ?? first;
+  const variant = (week + company.id) % 4;
+  const scenarios = [
+    { subject: "Uma planilha de salários vazou no grupo", body: `${first.name} encontrou diferenças salariais e compartilhou a planilha. ${second.name} acusa a empresa de favorecer quem reclama mais. A comparação já dividiu a equipe.`, mediate: "Abrir faixas salariais e explicar critérios", side: `Investigar e advertir ${first.name}`, ignore: "Mandar apagar e encerrar o assunto" },
+    { subject: "Dois funcionários reivindicam o mesmo resultado", body: `${first.name} e ${second.name} dizem ter liderado a entrega mais importante da semana. Colegas começaram a escolher lados e informações estão sendo retidas.`, mediate: "Dividir o reconhecimento e mediar", side: `Reconhecer apenas ${first.name}`, ignore: "Exigir que resolvam entre eles" },
+    { subject: "O grupo privado da equipe vazou", body: `Mensagens com piadas sobre metas, clientes e liderança chegaram à diretoria. ${first.name} pede desculpas; ${second.name} diz que a empresa está invadindo conversas privadas.`, mediate: "Conversar sem punição coletiva", side: `Aplicar advertência aos envolvidos`, ignore: "Fingir que não viu as mensagens" },
+    { subject: "A equipe iniciou uma operação tartaruga", body: `Parte do time reduziu deliberadamente o ritmo após uma mudança de prioridade. ${first.name} chama isso de protesto; ${second.name} teme que clientes descubram.`, mediate: "Reunir a equipe e renegociar metas", side: `Apoiar a liderança e advertir o grupo`, ignore: "Cobrar entregas sem discutir o conflito" },
+  ][variant];
+  const apply = (state: GameState, choice: "mediar" | "lado" | "ignorar"): GameState => ({
+    ...state,
+    companies: state.companies.map((item) => item.id !== company.id ? item : ({
+      ...item,
+      cash: item.cash - (choice === "mediar" ? 8000 : 0),
+      lastTeamChaosWeek: state.week,
+      employerBrand: clamp((item.employerBrand ?? 35) + (choice === "mediar" ? 2 : choice === "ignorar" ? -3 : -1)),
+      employees: item.employees.map((employee) => {
+        const involved = employee.id === first.id || employee.id === second.id;
+        return {
+          ...employee,
+          morale: clamp(employee.morale + (choice === "mediar" ? involved ? 6 : 3 : choice === "lado" ? employee.id === first.id ? 7 : involved ? -10 : -2 : -7)),
+          loyalty: clamp(employee.loyalty + (choice === "mediar" ? 3 : choice === "lado" ? employee.id === first.id ? 4 : involved ? -7 : -1 : -5)),
+          relation: clamp(employee.relation + (choice === "mediar" ? involved ? 7 : 2 : choice === "lado" ? employee.id === first.id ? 5 : involved ? -9 : -1 : -5)),
+          stress: clamp((employee.stress ?? 25) + (choice === "mediar" ? -5 : choice === "lado" ? involved ? 7 : 2 : 6)),
+          memories: involved ? addCharacterMemory(employee.memories, characterMemory(state.week, "conflito", choice === "mediar" ? "Você enfrentou o conflito e ouviu os dois lados." : choice === "lado" ? `Você escolheu um lado no conflito entre mim e ${employee.id === first.id ? second.name : first.name}.` : "Você ignorou um conflito que já estava afetando nosso trabalho.", choice === "mediar" ? "respeitado" : choice === "lado" && employee.id === first.id ? "vitorioso" : "magoado", choice === "mediar" ? 7 : choice === "lado" && employee.id === first.id ? 4 : -9, 82)) : employee.memories,
+        };
+      }),
+    })),
+  });
+  return {
+    id: `team-chaos-${company.id}-${week}`,
+    from: "Comitê de clima interno",
+    role: `Conflito na ${company.name}`,
+    initials: "CI",
+    color: "#a8553a",
+    subject: scenarios.subject,
+    body: scenarios.body,
+    choices: [
+      { label: `${scenarios.mediate} · R$ 8 mil`, tone: "good", hint: "Custa dinheiro · melhora relações e reduz estresse", result: "A empresa tratou o conflito abertamente e definiu novos acordos.", effect: (state) => apply(state, "mediar") },
+      { label: scenarios.side, tone: "risk", hint: "Decisão rápida · cria vencedores e ressentidos", result: "A liderança escolheu um lado e encerrou a discussão formal.", effect: (state) => apply(state, "lado") },
+      { label: scenarios.ignore, tone: "risk", hint: "Sem custo imediato · piora clima, estresse e retenção", result: "O conflito saiu da reunião, mas continuou dentro da equipe.", effect: (state) => apply(state, "ignorar") },
     ],
   };
 }
@@ -5515,6 +5717,9 @@ export default function Home() {
             marketingPulse: c.marketingPulse,
             marketingCampaigns: c.marketingCampaigns ?? [],
             directors: c.directors ?? [],
+            directorVacancies: c.directorVacancies ?? {},
+            directorOfferWeeks: c.directorOfferWeeks ?? {},
+            lastTeamChaosWeek: c.lastTeamChaosWeek ?? 0,
             facilities: c.facilities ?? {},
             facilityMaintenanceMode: c.facilityMaintenanceMode ?? "adequado",
             employerBrand: c.employerBrand ?? clamp(c.reputation * .62),
@@ -5630,6 +5835,13 @@ export default function Home() {
         localStorage.removeItem("ceo-historia-v2");
       }
   }, []);
+  useEffect(() => {
+    if (!game.started) return;
+    setGame((state) => ({
+      ...state,
+      companies: state.companies.map((company) => repairCompanyHierarchy(company, state.week)),
+    }));
+  }, [game.started]);
   useEffect(() => {
     if (game.started && game.founderJourneyComplete && !game.founderLegacyOutcome) {
       const outcome = createFounderLegacyOutcome(game);
@@ -6350,20 +6562,18 @@ export default function Home() {
             result: "Lívia ficou e assumiu a liderança do produto.",
             effect: (s) => ({
               ...s,
-              companies: s.companies.map((c) => ({
-                ...c,
-                employees: c.employees.map((e) =>
-                  e.id === 1
-                    ? {
-                        ...e,
-                        salary: 7400,
-                        morale: 94,
-                        loyalty: 90,
-                        role: "Diretora de Produto",
-                      }
-                    : e,
-                ),
-              })),
+              companies: s.companies.map((c) => {
+                const livia = c.employees.find((employee) => employee.id === 1);
+                if (!livia) return c;
+                const productOccupied = (c.directors ?? []).some((director) => director.area === "produto");
+                const director: CompanyDirector | null = productOccupied ? null : { id: `director-${c.id}-produto-${s.week}-1`, employeeId: 1, name: livia.name, area: "produto", style: directorStyle(livia), competence: livia.skill, trust: 82, authority: 46, weeks: 0, lastAction: "Assumiu a liderança de produto após negociar sua permanência.", origin: "promovido" };
+                return {
+                  ...c,
+                  directors: director ? [...(c.directors ?? []), director] : c.directors,
+                  directorVacancies: director ? { ...(c.directorVacancies ?? {}), produto: undefined } : c.directorVacancies,
+                  employees: c.employees.map((e) => e.id === 1 ? { ...e, salary: 7400, morale: 94, loyalty: 90, department: "produto", role: director ? "Diretora de Produto e Inovação" : "Líder de Produto e Inovação" } : e),
+                };
+              }),
             }),
           },
           {
@@ -6678,6 +6888,8 @@ export default function Home() {
         let ceoMemories = company.ceoMemories ?? [];
         let marketingCampaigns = company.marketingCampaigns ?? [];
         let directors = company.directors ?? [];
+        const directorVacancies: Partial<Record<DirectorArea, number>> = { ...(company.directorVacancies ?? {}) };
+        const directorOfferWeeks: Partial<Record<DirectorArea, number>> = { ...(company.directorOfferWeeks ?? {}) };
         let ceoHiddenIssue = company.ceoHiddenIssue;
         let ceoHiddenWeeks = Math.max(0, (company.ceoHiddenWeeks ?? 0) - 1);
         let ceoExtraCost = ceoSpend;
@@ -7365,7 +7577,16 @@ export default function Home() {
             impact: "negativo",
           });
         }
+        const departedDirectors = directors.filter((director) => !employees.some((employee) => employee.id === director.employeeId));
+        departedDirectors.forEach((director) => {
+          if (!directors.some((other) => other.id !== director.id && other.area === director.area)) {
+            directorVacancies[director.area] = nextWeek;
+            directorOfferWeeks[director.area] = undefined;
+            weeklyNews.push({ id: Date.now() + director.employeeId + 2460, week: nextWeek, category: "pessoas", headline: `${company.name} perde diretor de ${directorAreaLabels[director.area].toLowerCase()}`, body: `${director.name} deixou a empresa e abriu uma cadeira executiva. Se a presidência não agir, talentos internos poderão apresentar candidatura nas próximas duas semanas.`, impact: "negativo" });
+          }
+        });
         directors = directors.filter((director) => employees.some((employee) => employee.id === director.employeeId));
+        directors.forEach((director) => { directorVacancies[director.area] = undefined; });
         const evolvedMorale = employees.length ? employees.reduce((sum, employee) => sum + employee.morale, 0) / employees.length : 40;
         const evolvedStress = employees.length ? employees.reduce((sum, employee) => sum + (employee.stress ?? 25), 0) / employees.length : 80;
         employerBrand = clamp(employerBrand + (evolvedMorale - 62) / 90 - Math.max(0, evolvedStress - 65) / 120 + structure.facilities.beneficios.level * .06 + structure.facilities.treinamento.level * .04 + (company.reputation - employerBrand) / 500);
@@ -7649,6 +7870,8 @@ export default function Home() {
           marketingPulse,
           marketingCampaigns: marketingCampaigns.map((campaign) => campaign.weeksLeft > 0 ? { ...campaign, weeksLeft: campaign.weeksLeft - 1, revealed: true } : campaign).filter((campaign) => campaign.weeksLeft > 0 || nextWeek - campaign.startedWeek <= 12),
           directors,
+          directorVacancies,
+          directorOfferWeeks,
           facilities,
           facilityMaintenanceMode: maintenanceMode,
           employerBrand,
@@ -8126,8 +8349,42 @@ export default function Home() {
       const tutorialMessage = !current.tutorialCompleted && current.week <= 12 && pendingTutorialWeek && current.unread.length === 0
         ? tutorialNarrativeMessage({ ...current, week: nextWeek, companies, competitors }, pendingTutorialWeek)
         : null;
+      const vacancyEntry = (Object.keys(directorAreaLabels) as DirectorArea[])
+        .map((area) => ({ area, openedWeek: activeCompany.directorVacancies?.[area] }))
+        .find(({ area, openedWeek }) => {
+          if (!openedWeek || (activeCompany.directors ?? []).some((director) => director.area === area)) return false;
+          const delay = 1 + ((activeCompany.id + area.length + openedWeek) % 2);
+          const lastOffer = activeCompany.directorOfferWeeks?.[area] ?? -99;
+          return nextWeek - openedWeek >= delay && nextWeek - lastOffer >= 4;
+        });
+      const directorIds = new Set((activeCompany.directors ?? []).map((director) => director.employeeId));
+      const vacancyCandidate = vacancyEntry
+        ? activeCompany.employees
+            .filter((employee) => !directorIds.has(employee.id) && !employee.role.startsWith("Diretor") && !employee.role.startsWith("Especialista sênior"))
+            .sort((a, b) => {
+              const aFit = (a.department ?? inferDepartment(a.role)) === vacancyEntry.area ? 18 : 0;
+              const bFit = (b.department ?? inferDepartment(b.role)) === vacancyEntry.area ? 18 : 0;
+              return b.skill + b.loyalty * .25 + bFit - (a.skill + a.loyalty * .25 + aFit);
+            })[0]
+        : undefined;
+      const directorVacancyMessage =
+        !tutorialMessage &&
+        current.unread.length === 0 &&
+        activeCompany.ceo === controlledExecutive &&
+        vacancyEntry?.openedWeek &&
+        vacancyCandidate &&
+        vacancyCandidate.skill >= 42
+          ? internalDirectorCandidateMessage(activeCompany, vacancyCandidate, vacancyEntry.area, vacancyEntry.openedWeek)
+          : null;
+      if (directorVacancyMessage && vacancyEntry) {
+        companies = companies.map((company) => company.id !== activeCompany.id ? company : ({
+          ...company,
+          directorOfferWeeks: { ...(company.directorOfferWeeks ?? {}), [vacancyEntry.area]: nextWeek },
+        }));
+      }
       const directorMessage =
         !tutorialMessage &&
+        !directorVacancyMessage &&
         nextWeek > 12 &&
         current.unread.length === 0 &&
         nextWeek - narrativeDirector.lastInterventionWeek >= 6 &&
@@ -8218,6 +8475,7 @@ export default function Home() {
       );
       const employeeMessage =
         !tutorialMessage &&
+        !directorVacancyMessage &&
         !personalMessage &&
         !nemesisMessage &&
         !ceoProposalMessage &&
@@ -8226,7 +8484,25 @@ export default function Home() {
           m.id.startsWith(`employee-${crisisEmployee.id}-`),
         ) &&
         Math.random() < (0.2 + Math.max(0, -characterMemoryScore(crisisEmployee.memories, nextWeek)) / 120) * eventPressure
-          ? employeeCrisisMessage(crisisEmployee, activeCompany.id)
+          ? employeeCrisisMessage(crisisEmployee, activeCompany)
+          : null;
+      const averageTeamStress = activeCompany.employees.length
+        ? activeCompany.employees.reduce((sum, employee) => sum + (employee.stress ?? 25), 0) / activeCompany.employees.length
+        : 0;
+      const averageTeamMorale = activeCompany.employees.length
+        ? activeCompany.employees.reduce((sum, employee) => sum + employee.morale, 0) / activeCompany.employees.length
+        : 100;
+      const teamChaos =
+        !tutorialMessage &&
+        !directorVacancyMessage &&
+        !employeeMessage &&
+        !ceoProposalMessage &&
+        current.unread.length === 0 &&
+        activeCompany.employees.length >= 3 &&
+        nextWeek >= 10 &&
+        nextWeek - (activeCompany.lastTeamChaosWeek ?? 0) >= 10 &&
+        Math.random() < (.08 + Math.max(0, averageTeamStress - 55) / 230 + Math.max(0, 58 - averageTeamMorale) / 260) * eventPressure
+          ? teamChaosMessage(activeCompany, nextWeek)
           : null;
       const ideaEmployee = activeCompany.employees
         .filter((employee) =>
@@ -8244,7 +8520,9 @@ export default function Home() {
         !nemesisMessage &&
         !politicalMessage &&
         !ceoProposalMessage &&
+        !directorVacancyMessage &&
         !employeeMessage &&
+        !teamChaos &&
         activeCompany.ceo === controlledExecutive &&
         activeCompany.cash >= 65000 &&
         activeCompany.projects.filter((project) => project.kind === "produto" && project.status === "ativo").length === 0 &&
@@ -8264,7 +8542,9 @@ export default function Home() {
         !nemesisMessage &&
         !politicalMessage &&
         !ceoProposalMessage &&
+        !directorVacancyMessage &&
         !employeeMessage &&
+        !teamChaos &&
         !employeeIdeaMessage &&
         nextWeek >= 5 &&
         nextWeek - (current.lastNarrativeWeek ?? 0) >= 6 &&
@@ -8711,8 +8991,12 @@ export default function Home() {
           ? [...current.unread, politicalMessage]
           : ceoProposalMessage
           ? [...current.unread, ceoProposalMessage]
+          : directorVacancyMessage
+          ? [...current.unread, directorVacancyMessage]
           : employeeMessage
           ? [...current.unread, employeeMessage]
+          : teamChaos
+          ? [...current.unread, teamChaos]
           : employeeIdeaMessage
           ? [...current.unread, employeeIdeaMessage]
           : directorMessage
@@ -8807,9 +9091,21 @@ export default function Home() {
           setDialog("inbox");
           setSpeed(0);
         }, 100);
+      else if (directorVacancyMessage)
+        setTimeout(() => {
+          setSelectedMessage(directorVacancyMessage);
+          setDialog("inbox");
+          setSpeed(0);
+        }, 100);
       else if (employeeMessage)
         setTimeout(() => {
           setSelectedMessage(employeeMessage);
+          setDialog("inbox");
+          setSpeed(0);
+        }, 100);
+      else if (teamChaos)
+        setTimeout(() => {
+          setSelectedMessage(teamChaos);
           setDialog("inbox");
           setSpeed(0);
         }, 100);
@@ -8978,6 +9274,8 @@ export default function Home() {
         ...company,
         cash: company.cash - hiringCost,
         directors: [...(company.directors ?? []), director],
+        directorVacancies: { ...(company.directorVacancies ?? {}), [area]: undefined },
+        directorOfferWeeks: { ...(company.directorOfferWeeks ?? {}), [area]: state.week },
         employees: external
           ? [...company.employees, { ...employee, id: director.employeeId, salary: promotedSalary, market: promotedSalary, role: `Diretor de ${directorAreaLabels[area]}`, department: area, morale: 72, loyalty: 58, relation: 55, stress: 24, weeks: 0, memories: [characterMemory(state.week, "contratacao", `Fui contratado para liderar ${directorAreaLabels[area]} na ${company.name}.`, "confiante", 6, 75)] }]
           : company.employees.map((person) => person.id === employee.id ? { ...person, salary: promotedSalary, market: Math.max(person.market, promotedSalary), role: `Diretor de ${directorAreaLabels[area]}`, department: area, morale: clamp(person.morale + 8), loyalty: clamp(person.loyalty + 6), relation: clamp(person.relation + 7), memories: addCharacterMemory(person.memories, characterMemory(state.week, "promocao", `Você confiou em mim para dirigir ${directorAreaLabels[area]}.`, "orgulhoso", 10, 88)) } : { ...person, morale: clamp(person.morale + (person.department === area || inferDepartment(person.role) === area ? 2 : 0)) }),
@@ -8990,16 +9288,17 @@ export default function Home() {
 
   const removeDirector = (director: CompanyDirector) => {
     if (!active || !isCEO) return;
-    setGame((state) => ({ ...state, companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, directors: (company.directors ?? []).filter((item) => item.id !== director.id), employees: company.employees.map((employee) => employee.id === director.employeeId ? { ...employee, role: `Especialista sênior · ${directorAreaLabels[director.area]}`, morale: clamp(employee.morale - 12), loyalty: clamp(employee.loyalty - 10), relation: clamp(employee.relation - 14), memories: addCharacterMemory(employee.memories, characterMemory(state.week, "promocao", `Você me retirou da diretoria de ${directorAreaLabels[director.area]}.`, "magoado", -12, 90)) } : employee) })), news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${director.name} deixa a diretoria da ${active.name}`, body: `A destituição abriu um vazio em ${directorAreaLabels[director.area].toLowerCase()} e abalou a confiança do antigo diretor.`, impact: "negativo" }, ...state.news].slice(0, 60) }));
+    setGame((state) => ({ ...state, companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, directors: (company.directors ?? []).filter((item) => item.id !== director.id), directorVacancies: { ...(company.directorVacancies ?? {}), [director.area]: state.week }, directorOfferWeeks: { ...(company.directorOfferWeeks ?? {}), [director.area]: undefined }, employees: company.employees.map((employee) => employee.id === director.employeeId ? { ...employee, role: `Especialista sênior · ${directorAreaLabels[director.area]}`, morale: clamp(employee.morale - 12), loyalty: clamp(employee.loyalty - 10), relation: clamp(employee.relation - 14), memories: addCharacterMemory(employee.memories, characterMemory(state.week, "promocao", `Você me retirou da diretoria de ${directorAreaLabels[director.area]}.`, "magoado", -12, 90)) } : employee) })), news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${director.name} deixa a diretoria da ${active.name}`, body: `A destituição abriu um vazio em ${directorAreaLabels[director.area].toLowerCase()} e abalou a confiança do antigo diretor. Talentos internos poderão se candidatar se a cadeira continuar vaga.`, impact: "negativo" }, ...state.news].slice(0, 60) }));
     notify(`${director.name} foi retirado da diretoria.`);
   };
 
   const dismissEmployee = (employee: Employee) => {
     if (!active || !isCEO || active.employees.length <= 1) return;
+    const dismissedDirector = (active.directors ?? []).find((director) => director.employeeId === employee.id);
     setGame((state) => ({
       ...state,
       reputation: clamp(state.reputation - 2),
-      companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, employees: company.employees.filter((person) => person.id !== employee.id), directors: (company.directors ?? []).filter((director) => director.employeeId !== employee.id), workforceTarget: Math.max(2, (company.workforceTarget ?? company.employees.length) - 1), reputation: clamp(company.reputation - 2), employerBrand: clamp((company.employerBrand ?? 35) - (employee.skill >= 77 ? 3 : 1.5)) })),
+      companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, employees: company.employees.filter((person) => person.id !== employee.id), directors: (company.directors ?? []).filter((director) => director.employeeId !== employee.id), directorVacancies: dismissedDirector ? { ...(company.directorVacancies ?? {}), [dismissedDirector.area]: state.week } : company.directorVacancies, directorOfferWeeks: dismissedDirector ? { ...(company.directorOfferWeeks ?? {}), [dismissedDirector.area]: undefined } : company.directorOfferWeeks, workforceTarget: Math.max(2, (company.workforceTarget ?? company.employees.length) - 1), reputation: clamp(company.reputation - 2), employerBrand: clamp((company.employerBrand ?? 35) - (employee.skill >= 77 ? 3 : 1.5)) })),
       staffAlerts: [{ id: `staff-${active.id}-${employee.id}-${state.week}`, companyId: active.id, companyName: active.name, employeeName: employee.name, role: employee.role, reason: "desligamento", week: state.week, responsible: currentLeader, headcountAfter: active.employees.length - 1 }, ...(state.staffAlerts ?? [])].slice(0, 20),
       news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${employee.name} é desligado da ${active.name}`, body: `${currentLeader} decidiu encerrar o vínculo de ${employee.role.toLowerCase()}. A empresa precisará decidir se elimina a posição ou busca reposição.`, impact: "negativo" }, ...state.news].slice(0, 60),
     }));
@@ -11545,7 +11844,7 @@ export default function Home() {
                     <em>{director.lastAction}</em>
                   </> : <>
                     <h3>Cadeira vaga</h3>
-                    <p>A área funciona sem liderança especializada e não oferece bônus à empresa.</p>
+                    <p>{active.directorVacancies?.[area] ? `Sem liderança há ${Math.max(0, game.week - (active.directorVacancies?.[area] ?? game.week))} semana(s). Talentos internos podem se candidatar após 1–2 semanas.` : "A área funciona sem liderança especializada e não oferece bônus à empresa."}</p>
                     <button disabled={!isCEO} onClick={() => { setDirectorArea(area); setDialog("directors"); }}>Preencher vaga</button>
                   </>}
                 </article>;
@@ -12641,7 +12940,7 @@ export default function Home() {
           {(() => {
             const currentDirector = (active.directors ?? []).find((item) => item.area === directorArea);
             const internalCandidates = active.employees
-              .filter((employee) => !(active.directors ?? []).some((director) => director.employeeId === employee.id))
+              .filter((employee) => !(active.directors ?? []).some((director) => director.employeeId === employee.id) && !employee.role.startsWith("Diretor"))
               .sort((a, b) => b.skill + b.loyalty * .25 - (a.skill + a.loyalty * .25))
               .slice(0, 5);
             const externalCandidates = createLaborMarket(active.sector, active.id + 37, game.week, active.employees.map((employee) => employee.name), 7, active)
