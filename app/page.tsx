@@ -657,6 +657,7 @@ type GameState = {
   balanceVersion?: number;
   difficulty?: GameDifficulty;
   difficultyApplied?: GameDifficulty;
+  difficultySafetyNetUsed?: boolean;
   holdingName?: string;
   lastNarrativeWeek?: number;
   narrativeHistory?: string[];
@@ -754,10 +755,21 @@ const compact = new Intl.NumberFormat("pt-BR", {
 const clamp = (n: number, min = 0, max = 100) =>
   Math.min(max, Math.max(min, n));
 
-const difficultyProfiles: Record<GameDifficulty, { title: string; description: string; stress: number; economyDemand: number; economyCosts: number; departure: number; rival: number; reward: number }> = {
-  relaxado: { title: "Relaxado", description: "Mais tempo para aprender, equipes resistentes e economia menos punitiva.", stress: .72, economyDemand: 1.035, economyCosts: .975, departure: .55, rival: -.7, reward: .85 },
-  executivo: { title: "Executivo", description: "A experiência equilibrada: decisões difíceis sem punições artificiais.", stress: 1, economyDemand: 1, economyCosts: 1, departure: 1, rival: 0, reward: 1 },
-  implacavel: { title: "Implacável", description: "Crises pressionam margens, concorrentes reagem e pessoas toleram menos erros.", stress: 1.28, economyDemand: .965, economyCosts: 1.035, departure: 1.55, rival: .9, reward: 1.3 },
+type DifficultyProfile = {
+  title: string; description: string; stress: number; economyDemand: number; economyCosts: number;
+  departure: number; rival: number; reward: number; crisisFrequency: number; crisisDuration: number;
+  ceoIntelligence: number; rivalIntelligence: number; partnerTolerance: number; creditAccess: number;
+  investorPressure: number; productFailure: number; warningWeeks: number; startingCash: number;
+};
+const difficultyProfiles: Record<GameDifficulty, DifficultyProfile> = {
+  relaxado: { title: "Relaxado", description: "Mais capital e avisos, parceiros pacientes e crises curtas para aprender sem perder as consequências.", stress: .72, economyDemand: 1.035, economyCosts: .975, departure: .55, rival: -.7, reward: .85, crisisFrequency: .68, crisisDuration: .78, ceoIntelligence: 1.15, rivalIntelligence: .78, partnerTolerance: 1.28, creditAccess: 1.22, investorPressure: .72, productFailure: .76, warningWeeks: 5, startingCash: 180000 },
+  executivo: { title: "Executivo", description: "A experiência equilibrada: decisões difíceis, avisos razoáveis e consequências proporcionais.", stress: 1, economyDemand: 1, economyCosts: 1, departure: 1, rival: 0, reward: 1, crisisFrequency: 1, crisisDuration: 1, ceoIntelligence: 1, rivalIntelligence: 1, partnerTolerance: 1, creditAccess: 1, investorPressure: 1, productFailure: 1, warningWeeks: 3, startingCash: 120000 },
+  implacavel: { title: "Implacável", description: "Menos caixa e avisos, crises longas, contratos duros, capital exigente e rivais que exploram fraquezas.", stress: 1.28, economyDemand: .965, economyCosts: 1.035, departure: 1.55, rival: .9, reward: 1.3, crisisFrequency: 1.42, crisisDuration: 1.3, ceoIntelligence: 1.08, rivalIntelligence: 1.28, partnerTolerance: .72, creditAccess: .76, investorPressure: 1.35, productFailure: 1.32, warningWeeks: 1, startingCash: 85000 },
+};
+const difficultySystemSummary: Record<GameDifficulty, string[]> = {
+  relaxado: ["R$ 180 mil iniciais + reserva única de R$ 45 mil", "crises 32% menos frequentes e 22% mais curtas", "alertas econômicos com até 5 semanas", "falhas de produto 24% menores"],
+  executivo: ["R$ 120 mil iniciais", "crises e contratos no padrão", "alertas econômicos com 3 semanas", "crédito e riscos equilibrados"],
+  implacavel: ["R$ 85 mil iniciais", "crises 42% mais frequentes e 30% mais longas", "somente 1 semana de alerta", "falhas de produto 32% mais graves"],
 };
 const narrativeModeLabels: Record<NarrativeDirectorMode, string> = { calma: "Execução tranquila", equilibrio: "Tensão equilibrada", escalada: "Algo está se formando", recuperacao: "Tempo de recuperação", foco: "Conflito em foco" };
 const pageGuides: Record<View, PageGuideDefinition> = {
@@ -1937,21 +1949,22 @@ function productRoleCoverage(product: Project, company: Company) {
   return { requirements, covered: covered.length, missing: requirements.filter((requirement) => !covered.includes(requirement)), ratio: requirements.length ? covered.length / requirements.length : 1 };
 }
 
-function productRiskProfile(product: Project, company: Company) {
+function productRiskProfile(product: Project, company: Company, difficulty: GameDifficulty = "executivo") {
   const complexity = product.complexity ?? 3;
   const preparation = product.preparation ?? {};
   const coverage = productRoleCoverage(product, company);
   const teamShortage = Math.max(0, (product.requiredTeam ?? complexity) - company.employees.filter((employee) => (employee.leaveWeeks ?? 0) <= 0).length);
   const prep = (key: ProductPreparation) => preparation[key] ?? 0;
-  const delayChance = clamp(12 + complexity * 7 + teamShortage * 9 + (1 - coverage.ratio) * 28 + product.risk * .18 - prep("pesquisa") * 5 - prep("prototipo") * 4, 4, 78);
-  const failureChance = clamp(10 + complexity * 8 + (1 - coverage.ratio) * 32 + product.risk * .22 + Math.max(0, 60 - product.quality) * .25 - prep("testes") * 6 - prep("seguranca") * 4 - prep("qualidade") * 5 - prep("piloto") * 7, 3, 82);
+  const difficultyFailure = difficultyProfiles[difficulty].productFailure;
+  const delayChance = clamp((12 + complexity * 7 + teamShortage * 9 + (1 - coverage.ratio) * 28 + product.risk * .18 - prep("pesquisa") * 5 - prep("prototipo") * 4) * (.82 + difficultyFailure * .18), 3, 88);
+  const failureChance = clamp((10 + complexity * 8 + (1 - coverage.ratio) * 32 + product.risk * .22 + Math.max(0, 60 - product.quality) * .25 - prep("testes") * 6 - prep("seguranca") * 4 - prep("qualidade") * 5 - prep("piloto") * 7) * difficultyFailure, 2, 92);
   return { complexity, coverage, teamShortage, delayChance: Math.round(delayChance), failureChance: Math.round(failureChance) };
 }
 
-function productVersionRisk(product: Project, strategy: "economica" | "equilibrada" | "robusta") {
+function productVersionRisk(product: Project, strategy: "economica" | "equilibrada" | "robusta", difficulty: GameDifficulty = "executivo") {
   const prep = product.preparation ?? {};
   const protection = (prep.testes ?? 0) * 5 + (prep.seguranca ?? 0) * 3 + (prep.qualidade ?? 0) * 4 + (product.supportLevel ?? 0) * 3 + (strategy === "robusta" ? 22 : strategy === "equilibrada" ? 10 : 0);
-  return clamp(48 + (product.complexity ?? 3) * 5 + (product.bugLevel ?? 0) * .25 + (product.updateNeed ?? 0) * .18 - product.quality * .28 - protection, 12, 72);
+  return clamp((48 + (product.complexity ?? 3) * 5 + (product.bugLevel ?? 0) * .25 + (product.updateNeed ?? 0) * .18 - product.quality * .28 - protection) * difficultyProfiles[difficulty].productFailure, 8, 88);
 }
 const laborTraits = ["Analítico", "Carismático", "Criativo", "Competitivo", "Diplomático", "Disciplinado", "Empático", "Inventivo", "Pragmático", "Questionador", "Resiliente", "Visionário"];
 const laborAmbitions = ["Quer liderar uma equipe", "Busca estabilidade", "Quer virar diretor", "Sonha em criar um produto", "Quer participação na empresa", "Busca autonomia", "Quer aprender rápido", "Pretende abrir o próprio negócio", "Quer reconhecimento público", "Valoriza equilíbrio pessoal"];
@@ -2263,7 +2276,8 @@ function ceoHireProposalMessage(company: Company, candidate: Employee, reason: s
 
 type PartnerStrategy = "aceitar" | "equilibrio" | "pressionar" | "relacionamento" | "encerrar";
 
-function resolvePartnerStrategy(partner: BusinessPartner, strategy: PartnerStrategy, power: number, actor: string, week = 0): BusinessPartner {
+function resolvePartnerStrategy(partner: BusinessPartner, strategy: PartnerStrategy, power: number, actor: string, week = 0, difficulty: GameDifficulty = "executivo"): BusinessPartner {
+  const tolerance = difficultyProfiles[difficulty].partnerTolerance;
   const early = partner.status === "ativo" && partner.weeksLeft > 2;
   const cooldown = week > 0 && week - (partner.lastNegotiationWeek ?? -99) < 4;
   const relationshipBlocked = (partner.relationshipCooldownUntil ?? 0) > week;
@@ -2273,15 +2287,15 @@ function resolvePartnerStrategy(partner: BusinessPartner, strategy: PartnerStrat
   const age = Math.max(0, week - (partner.signedWeek ?? 0));
   const earlyPenalty = early ? clamp(18 + partner.weeksLeft * 1.35 + Math.max(0, 5 - age) * 5, 18, 58) : 0;
   const repeatPenalty = (partner.failedRenegotiations ?? 0) * 8;
-  const effectivePower = clamp(power - earlyPenalty - repeatPenalty);
-  const earlySuccessChance = clamp(.16 + effectivePower / 135, .08, .78);
+  const effectivePower = clamp(power - earlyPenalty / tolerance - repeatPenalty / tolerance);
+  const earlySuccessChance = clamp(.16 + effectivePower / 135 + (tolerance - 1) * .18, .05, .88);
   if (early && Math.random() > earlySuccessChance) {
-    const termination = effectivePower < 28 && Math.random() < .42 || (partner.failedRenegotiations ?? 0) >= 2 && Math.random() < .35;
+    const termination = effectivePower < 28 && Math.random() < .42 / tolerance || (partner.failedRenegotiations ?? 0) >= 2 && Math.random() < .35 / tolerance;
     return {
       ...partner,
       status: termination ? "encerrado" : "ativo",
       weeksLeft: termination ? 0 : partner.weeksLeft,
-      trust: clamp(partner.trust - (termination ? 28 : 17)),
+      trust: clamp(partner.trust - Math.round((termination ? 28 : 17) / tolerance)),
       lastNegotiationWeek: week,
       failedRenegotiations: (partner.failedRenegotiations ?? 0) + 1,
       disputeLevel: clamp((partner.disputeLevel ?? 0) + 18),
@@ -2296,21 +2310,21 @@ function resolvePartnerStrategy(partner: BusinessPartner, strategy: PartnerStrat
   }
   if (strategy === "aceitar") return { ...partner, status: "ativo", weeksLeft: partner.proposedWeeks ?? 16, weeklyValue: partner.proposedValue ?? partner.weeklyValue, trust: clamp(partner.trust + 4), disputeLevel: 0, signedWeek: week, lastNegotiationWeek: week, failedRenegotiations: 0, lastNegotiatedBy: actor, lastEvent: `${actor} aceitou a proposta comercial apresentada.` };
   if (strategy === "equilibrio") return { ...partner, status: "ativo", weeksLeft: early ? Math.max(12, partner.weeksLeft) : 18, weeklyValue: Math.round((partner.proposedValue ?? partner.weeklyValue) * (partner.kind === "cliente" ? 1.025 : 1.018)), trust: clamp(partner.trust + (early ? 0 : 3)), disputeLevel: 0, signedWeek: week, lastNegotiationWeek: week, failedRenegotiations: 0, lastNegotiatedBy: actor, lastEvent: `${actor} fechou uma renovação equilibrada para os dois lados.` };
-  const threshold = partner.personality === "exigente" ? 65 : partner.personality === "oportunista" ? 60 : 53;
-  const success = Math.random() * 100 < clamp(46 + (effectivePower - threshold) * 1.35, 7, 86);
+  const threshold = (partner.personality === "exigente" ? 65 : partner.personality === "oportunista" ? 60 : 53) / tolerance;
+  const success = Math.random() * 100 < clamp(46 + (effectivePower - threshold) * 1.35 + (tolerance - 1) * 12, 4, 92);
   return success
     ? { ...partner, status: "ativo", weeksLeft: early ? Math.max(10, partner.weeksLeft) : Math.max(14, partner.proposedWeeks ?? partner.weeksLeft), weeklyValue: Math.round((partner.proposedValue ?? partner.weeklyValue) * (partner.kind === "cliente" ? 1.1 : .91)), trust: clamp(partner.trust - (early ? 13 : 9)), disputeLevel: 0, signedWeek: week, lastNegotiationWeek: week, failedRenegotiations: 0, lastNegotiatedBy: actor, lastEvent: `${actor} impôs condições melhores, mas deixou desgaste na mesa.` }
     : { ...partner, status: early ? "ativo" : "disputa", weeksLeft: early ? partner.weeksLeft : 0, trust: clamp(partner.trust - 16), disputeLevel: clamp((partner.disputeLevel ?? 20) + 25), failedRenegotiations: (partner.failedRenegotiations ?? 0) + 1, lastNegotiationWeek: week, disputeReason: partner.kind === "cliente" ? "O cliente acusa a empresa de tentar alterar preço e escopo unilateralmente." : "O fornecedor rejeitou cortes e ameaça suspender entregas.", lastNegotiatedBy: actor, lastEvent: `A pressão de ${actor} fracassou e abriu uma disputa contratual.` };
 }
 
-function ceoContractProposalMessage(company: Company, partner: BusinessPartner, strategy: PartnerStrategy, power: number): StoryMessage {
+function ceoContractProposalMessage(company: Company, partner: BusinessPartner, strategy: PartnerStrategy, power: number, difficulty: GameDifficulty = "executivo"): StoryMessage {
   const actor = company.ceo ?? "CEO";
   const apply = (state: GameState, chosen: PartnerStrategy): GameState => ({
     ...state,
     companies: state.companies.map((item) => item.id !== company.id ? item : ({
       ...item,
       cash: item.cash - (chosen === "relacionamento" ? 15000 : 0),
-      partners: (item.partners ?? []).map((candidate) => candidate.id === partner.id ? resolvePartnerStrategy(candidate, chosen, power, actor, state.week) : candidate),
+      partners: (item.partners ?? []).map((candidate) => candidate.id === partner.id ? resolvePartnerStrategy(candidate, chosen, power, actor, state.week, difficulty) : candidate),
       ceoTrust: clamp((item.ceoTrust ?? 65) + (chosen === strategy ? 4 : chosen === "encerrar" ? -3 : 1)),
       ceoLastDecision: `${chosen === "pressionar" ? "Pressionou" : chosen === "encerrar" ? "Rompeu" : "Negociou"} contrato com ${partner.name}`,
       ceoHistory: [`Semana ${state.week}: ${actor} conduziu negociação com ${partner.name}.`, ...(item.ceoHistory ?? [])].slice(0, 8),
@@ -3022,7 +3036,7 @@ function generateNewCompetitor(
   };
 }
 
-function rollEconomy(current: Economy): {
+function rollEconomy(current: Economy, difficulty: GameDifficulty = "executivo"): {
   economy: Economy;
   news?: Omit<NewsItem, "id" | "week">;
 } {
@@ -3073,18 +3087,23 @@ function rollEconomy(current: Economy): {
     credito: ["estavel", "recessao"],
     recessao: ["estavel", "expansao"],
   };
-  if (current.weeksLeft === 3 && !current.nextCycle) {
+  const difficultyProfile = difficultyProfiles[difficulty];
+  if (current.weeksLeft <= difficultyProfile.warningWeeks && current.weeksLeft > 0 && !current.nextCycle) {
     const options = transitions[current.cycle];
-    const nextCycle = options[Math.floor(Math.random() * options.length)];
+    const negativeOptions = options.filter((cycle) => ["inflacao", "recessao", "credito"].includes(cycle));
+    const stableOptions = options.filter((cycle) => !["inflacao", "recessao", "credito"].includes(cycle));
+    let nextCycle = options[Math.floor(Math.random() * options.length)];
+    if (difficultyProfile.crisisFrequency < 1 && negativeOptions.includes(nextCycle) && stableOptions.length && Math.random() > difficultyProfile.crisisFrequency) nextCycle = stableOptions[Math.floor(Math.random() * stableOptions.length)];
+    if (difficultyProfile.crisisFrequency > 1 && !negativeOptions.includes(nextCycle) && negativeOptions.length && Math.random() < Math.min(.72, (difficultyProfile.crisisFrequency - 1) * .9)) nextCycle = negativeOptions[Math.floor(Math.random() * negativeOptions.length)];
     const negative = ["inflacao", "recessao", "credito"].includes(nextCycle);
     return {
-      economy: { ...current, nextCycle, weeksLeft: 2 },
+      economy: { ...current, nextCycle, weeksLeft: Math.max(0, current.weeksLeft - 1) },
       news: {
         category: "economia",
         headline: negative
           ? "Indicadores antecipam semanas mais difíceis para as empresas"
           : "Indicadores apontam melhora gradual da atividade",
-        body: `Analistas projetam transição para ${nextCycle}. A mudança ainda não aconteceu; empresas têm duas semanas para ajustar caixa, preços e investimentos.`,
+        body: `Analistas projetam transição para ${nextCycle}. A mudança ainda não aconteceu; empresas têm ${current.weeksLeft} semana${current.weeksLeft === 1 ? "" : "s"} para ajustar caixa, preços e investimentos.`,
         impact: negative ? "negativo" : "positivo",
       },
     };
@@ -3097,7 +3116,7 @@ function rollEconomy(current: Economy): {
     economy: {
       cycle,
       ...profile,
-      weeksLeft: profile.weeksLeft + Math.round(Math.random() * 6),
+      weeksLeft: Math.max(6, Math.round((profile.weeksLeft + Math.random() * 6) * (["inflacao", "recessao", "credito"].includes(cycle) ? difficultyProfile.crisisDuration : 1))),
     },
     news: {
       category: "economia",
@@ -5577,7 +5596,7 @@ export default function Home() {
   const managedProduct =
     active?.projects.find((p) => p.id === selectedProduct?.id) ??
     selectedProduct;
-  const managedProductRisk = active && managedProduct?.kind === "produto" ? productRiskProfile(managedProduct, active) : null;
+  const managedProductRisk = active && managedProduct?.kind === "produto" ? productRiskProfile(managedProduct, active, game.difficulty ?? "executivo") : null;
   const currentLeader = game.playerExecutive ?? game.founder;
   const selectedWeeklyReport = (game.weeklyReports ?? []).find((report) => report.week === selectedReportWeek) ?? game.weeklyReports?.[0] ?? null;
   const selectedCompanyReport = selectedWeeklyReport?.companies.find((report) => report.companyId === reportCompanyId)
@@ -5826,7 +5845,7 @@ export default function Home() {
     const identity = game.leadershipIdentity ?? initialLeadershipIdentity;
     const negotiationPower = identity.negociacao * 0.45 + identity.integridade * 0.2 + selectedPartner.trust * 0.35;
     const strategy: PartnerStrategy = action === "aceitar" ? "aceitar" : action === "renovar" ? "equilibrio" : action;
-    const resolvedPartner = resolvePartnerStrategy(selectedPartner, strategy, negotiationPower, currentLeader, game.week);
+    const resolvedPartner = resolvePartnerStrategy(selectedPartner, strategy, negotiationPower, currentLeader, game.week, game.difficulty ?? "executivo");
     const negotiationFailed = /fracass|recus|rescis/i.test(resolvedPartner.lastEvent ?? "") || resolvedPartner.status === "disputa" || resolvedPartner.status === "encerrado" && action !== "encerrar";
     const changes: Partial<Record<IdentityDimension, number>> = action === "renovar" || action === "aceitar"
       ? { prudencia: 2, negociacao: 1 }
@@ -6033,7 +6052,8 @@ export default function Home() {
   }, [active?.sold, active?.bankrupt, active?.closed, view, dialog]);
 
   const start = (sector: Sector, holdingName: string, founderName: string, difficulty: GameDifficulty) => {
-    const company = { ...newCompany(sector), ceo: founderName.trim() };
+    const startingCash = difficultyProfiles[difficulty].startingCash;
+    const company = { ...newCompany(sector), cash: startingCash, history: [startingCash], ceo: founderName.trim() };
     const competitors = generateCompetitors(sector);
     setGame({
       ...initialState,
@@ -6318,7 +6338,7 @@ export default function Home() {
       const eventPressure = directorBefore.mode === "recuperacao" ? .52 : directorBefore.mode === "calma" ? .72 : directorBefore.mode === "escalada" ? 1.38 : directorBefore.mode === "foco" ? .68 : 1;
       const difficulty = difficultyProfiles[current.difficulty ?? "executivo"];
       const previousDifficulty = difficultyProfiles[current.difficultyApplied ?? "executivo"];
-      const rolledEconomy = rollEconomy({ ...current.economy, demand: current.economy.demand / previousDifficulty.economyDemand, costs: current.economy.costs / previousDifficulty.economyCosts });
+      const rolledEconomy = rollEconomy({ ...current.economy, demand: current.economy.demand / previousDifficulty.economyDemand, costs: current.economy.costs / previousDifficulty.economyCosts }, current.difficulty ?? "executivo");
       const economyRoll = {
         ...rolledEconomy,
         economy: {
@@ -6357,6 +6377,7 @@ export default function Home() {
       let completedName = "";
       let holdingDividends = 0;
       let ceoProposalMessage: StoryMessage | null = null;
+      let relaxedSafetyNetTriggered = false;
       const newAuditCases: AuditCase[] = [];
       const newStaffAlerts: StaffAlert[] = [];
 
@@ -6531,11 +6552,15 @@ export default function Home() {
             ceoReputationBoost = 0.6;
             ceoLastDecision = "Investiu em liderança, cultura e retenção";
           }
+          ceoProgressBoost *= difficulty.ceoIntelligence;
+          ceoQualityBoost *= difficulty.ceoIntelligence;
+          ceoEfficiencyGain *= difficulty.ceoIntelligence;
+          ceoCustomerBoost = Math.round(ceoCustomerBoost * difficulty.ceoIntelligence);
           const errorChance =
-            0.11 +
+            (0.11 +
             (company.autonomy === "independente" ? 0.045 : 0) +
             (ceoTrust < 40 ? 0.05 : 0) +
-            (ceoLoyalty < 35 ? 0.04 : 0);
+            (ceoLoyalty < 35 ? 0.04 : 0)) / difficulty.ceoIntelligence;
           if (Math.random() < errorChance) {
             if (!ceoHiddenIssue && Math.random() < 0.72) {
               const auditCase = createAuditCase(company, nextWeek);
@@ -6665,8 +6690,8 @@ export default function Home() {
               feedback = [{ id: `feedback-${p.id}-${nextWeek}`, week: nextWeek, rating, text: texts[(nextWeek + p.id) % texts.length], tone: negative ? "negativo" as const : "positivo" as const }, ...feedback].slice(0, 8);
               customerSatisfaction = clamp(customerSatisfaction + (negative ? -2 : 1));
             }
-            if (Math.random() < bugLevel / 900) {
-              const severity = 6 + Math.round(Math.random() * 14);
+            if (Math.random() < bugLevel / 900 * difficulty.productFailure) {
+              const severity = Math.round((6 + Math.random() * 14) * difficulty.productFailure);
               bugLevel = clamp(bugLevel + severity);
               updateNeed = clamp(updateNeed + severity * .7);
               customerSatisfaction = clamp(customerSatisfaction - severity * .35);
@@ -6692,7 +6717,11 @@ export default function Home() {
               lawsuitWeeks: Math.max(0, (p.lawsuitWeeks ?? 0) - 1),
             };
           }
-          const riskProfile = p.kind === "produto" ? productRiskProfile(p, company) : null;
+          const riskProfile = p.kind === "produto" ? productRiskProfile(p, company, current.difficulty ?? "executivo") : null;
+          const warningCadence = difficulty.warningWeeks >= 5 ? 4 : difficulty.warningWeeks >= 3 ? 8 : 12;
+          const warningThreshold = difficulty.warningWeeks >= 5 ? 24 : difficulty.warningWeeks >= 3 ? 38 : 55;
+          const warningProgress = difficulty.warningWeeks >= 5 ? 15 : difficulty.warningWeeks >= 3 ? 40 : 75;
+          if (riskProfile && riskProfile.failureChance >= warningThreshold && p.progress >= warningProgress && (nextWeek + p.id) % warningCadence === 0) weeklyNews.push({ id: Date.now() + p.id + 2180, week: nextWeek, category: "negocios", headline: `Equipe alerta para risco em ${p.name}`, body: `A análise interna estima ${riskProfile.failureChance}% de falha e ${riskProfile.delayChance}% de atraso. No ritmo ${difficulty.title}, este é um dos ${difficulty.warningWeeks === 1 ? "poucos alertas disponíveis antes do lançamento" : `${difficulty.warningWeeks} níveis de antecedência usados pela assessoria`}.`, impact: "neutro" });
           if (p.kind === "produto" && (p.delayWeeks ?? 0) > 0) return { ...p, delayWeeks: Math.max(0, (p.delayWeeks ?? 0) - 1), risk: clamp(p.risk + 1) };
           const delayTriggered = Boolean(riskProfile && Math.random() < riskProfile.delayChance / 260);
           const setback = delayTriggered || Math.random() < p.risk / 650 ? 8 + Math.round(Math.random() * 13) : 0;
@@ -6718,7 +6747,8 @@ export default function Home() {
                 const launchRoll = Math.random() * 100;
                 const failureChance = riskProfile?.failureChance ?? 35;
                 const launchOutcome: Project["launchOutcome"] = launchRoll < failureChance * .22 ? "desastre" : launchRoll < failureChance ? "falha" : launchRoll < failureChance + 22 ? "morno" : "sucesso";
-                const launchData = launchOutcome === "sucesso" ? { quality: 4, recurring: 1.08, bugs: 4, satisfaction: 82, reputation: 4, customers: 3, emergency: 0 } : launchOutcome === "morno" ? { quality: 0, recurring: .84, bugs: 12, satisfaction: 66, reputation: 0, customers: 0, emergency: 0 } : launchOutcome === "falha" ? { quality: -8, recurring: .58, bugs: 38, satisfaction: 43, reputation: -6, customers: -3, emergency: 3 } : { quality: -15, recurring: .3, bugs: 68, satisfaction: 24, reputation: -12, customers: -7, emergency: 5 };
+                const baseLaunchData = launchOutcome === "sucesso" ? { quality: 4, recurring: 1.08, bugs: 4, satisfaction: 82, reputation: 4, customers: 3, emergency: 0 } : launchOutcome === "morno" ? { quality: 0, recurring: .84, bugs: 12, satisfaction: 66, reputation: 0, customers: 0, emergency: 0 } : launchOutcome === "falha" ? { quality: -8, recurring: .58, bugs: 38, satisfaction: 43, reputation: -6, customers: -3, emergency: 3 } : { quality: -15, recurring: .3, bugs: 68, satisfaction: 24, reputation: -12, customers: -7, emergency: 5 };
+                const launchData = ["falha", "desastre"].includes(launchOutcome) ? { ...baseLaunchData, quality: Math.round(baseLaunchData.quality * difficulty.productFailure), bugs: clamp(Math.round(baseLaunchData.bugs * difficulty.productFailure)), satisfaction: clamp(Math.round(100 - (100 - baseLaunchData.satisfaction) * difficulty.productFailure)), reputation: Math.round(baseLaunchData.reputation * difficulty.productFailure), customers: Math.round(baseLaunchData.customers * difficulty.productFailure), emergency: Math.max(1, Math.round(baseLaunchData.emergency * difficulty.productFailure)) } : baseLaunchData;
                 productReputationImpact += launchData.reputation;
                 productCustomerImpact += launchData.customers;
                 productEmergencyCost += launchData.emergency * 9000;
@@ -7174,7 +7204,12 @@ export default function Home() {
               )
             : 0;
         holdingDividends += dividend;
-        const nextCash = grossCash - dividend;
+        let nextCash = grossCash - dividend;
+        if ((current.difficulty ?? "executivo") === "relaxado" && !current.difficultySafetyNetUsed && !relaxedSafetyNetTriggered && nextCash < -20000) {
+          nextCash += 45000;
+          relaxedSafetyNetTriggered = true;
+          weeklyNews.push({ id: Date.now() + company.id + 2390, week: nextWeek, category: "economia", headline: `Reserva de emergência evita colapso imediato da ${company.name}`, body: "A rede de proteção do modo Relaxado liberou R$ 45 mil uma única vez. O caixa ganhou fôlego, mas a causa do prejuízo continua exigindo uma decisão.", impact: "positivo" });
+        }
         const valuationNow = companyMetrics(
           { ...company, cash: nextCash, projects: nextProjects, employees },
           economyRoll.economy,
@@ -7189,7 +7224,7 @@ export default function Home() {
                 : cm.profit >= investor.targetValue;
           const support = clamp(
             investor.support +
-              (achieved ? 13 : -18) +
+              (achieved ? Math.round(13 / difficulty.investorPressure) : -Math.round(18 * difficulty.investorPressure)) +
               (company.reputation > 65 ? 3 : 0),
           );
           weeklyNews.push({
@@ -7208,8 +7243,8 @@ export default function Home() {
             ...investor,
             support,
             lastReview: nextWeek,
-            deadline: nextWeek + 10,
-            targetValue: Math.round(investor.targetValue * 1.18),
+            deadline: nextWeek + Math.max(5, Math.round(10 / difficulty.investorPressure)),
+            targetValue: Math.round(investor.targetValue * (1 + .18 * difficulty.investorPressure)),
           };
         });
         const investorWeight = investors.reduce(
@@ -7338,21 +7373,21 @@ export default function Home() {
                   : partner.status === "proposta" && (partner.proposalType === "exclusividade" || partner.personality === "inovador")
                     ? "aceitar"
                     : "equilibrio";
-            const power = clamp((company.ceoReputation ?? 60) * .3 + (company.ceoTrust ?? 60) * .2 + partner.trust * .25 + company.reputation * .15 + (strategy === "pressionar" ? company.ceoAmbition ?? 50 : company.ceoLoyalty ?? 60) * .1);
+              const power = clamp(((company.ceoReputation ?? 60) * .3 + (company.ceoTrust ?? 60) * .2 + partner.trust * .25 + company.reputation * .15 + (strategy === "pressionar" ? company.ceoAmbition ?? 50 : company.ceoLoyalty ?? 60) * .1) * difficulty.ceoIntelligence);
             if (company.autonomy === "independente" && (nextWeek + partner.id.length) % 3 === 0) {
-              const negotiated = resolvePartnerStrategy(partner, strategy, power, company.ceo ?? "CEO", nextWeek);
+              const negotiated = resolvePartnerStrategy(partner, strategy, power, company.ceo ?? "CEO", nextWeek, current.difficulty ?? "executivo");
               weeklyNews.push({ id: Date.now() + partner.id.length * 47, week: nextWeek, category: "negocios", headline: `${company.ceo} negocia ${partner.kind === "cliente" ? "conta" : "fornecimento"} com ${partner.name}`, body: `${company.ceo} escolheu ${strategy} com poder de barganha estimado em ${Math.round(power)}%. ${negotiated.lastEvent}`, impact: negotiated.status === "disputa" ? "negativo" : "positivo" });
               ceoLastDecision = `${strategy} com ${partner.name}`;
               return negotiated;
             }
-            if (!ceoProposalMessage && current.unread.length === 0 && (nextWeek + partner.id.length) % 3 === 0) ceoProposalMessage = ceoContractProposalMessage({ ...company, ceoStyle }, partner, strategy, power);
+            if (!ceoProposalMessage && current.unread.length === 0 && (nextWeek + partner.id.length) % 3 === 0) ceoProposalMessage = ceoContractProposalMessage({ ...company, ceoStyle }, partner, strategy, power, current.difficulty ?? "executivo");
             return partner;
           }
           const weeksLeft = Math.max(0, partner.weeksLeft - 1);
           const identityTrust = partner.kind === "cliente"
             ? (publicIdentity.integridade - 50) / 180 + (publicIdentity.visao - 50) / 260
             : (publicIdentity.negociacao - 50) / 240 + (publicIdentity.prudencia - 50) / 220;
-          if (partner.trust < 30 && Math.random() < 0.1 * eventPressure) {
+          if (partner.trust < 30 && Math.random() < 0.1 * eventPressure / difficulty.partnerTolerance) {
             const disputeLevel = clamp(30 + partner.dependency * .45);
             weeklyNews.push({ id: Date.now() + partner.id.length * 73, week: nextWeek, category: "negocios", headline: `${partner.name} abre disputa contratual com ${company.name}`, body: `A confiança caiu para ${Math.round(partner.trust)}%. A contraparte contesta preço, prazo ou escopo e ameaça suspender o acordo.`, impact: "negativo" });
             return { ...partner, status: "disputa" as const, weeksLeft: 0, disputeLevel, disputeReason: partner.kind === "cliente" ? "O cliente contesta entregas e exige desconto antes de renovar." : "O fornecedor exige reajuste e ameaça interromper o fornecimento.", lastEvent: "A baixa confiança transformou a renovação em disputa contratual." };
@@ -7378,16 +7413,16 @@ export default function Home() {
         if (openPartnerCount < 7 && (nextWeek + company.id) % 13 === 0) {
           const kind: BusinessPartner["kind"] = (nextWeek + company.id) % 2 === 0 ? "cliente" : "fornecedor";
           const proposal = createPartnerProposal({ ...company, partners }, nextWeek, kind);
-          const proposalPower = clamp((company.ceoReputation ?? company.reputation) * .35 + proposal.trust * .3 + (company.ceoTrust ?? 60) * .2 + company.reputation * .15);
+          const proposalPower = clamp(((company.ceoReputation ?? company.reputation) * .35 + proposal.trust * .3 + (company.ceoTrust ?? 60) * .2 + company.reputation * .15) * difficulty.ceoIntelligence);
           const suggested: PartnerStrategy = ceoStyle === "crescimento" && kind === "cliente" ? "aceitar" : ceoStyle === "eficiencia" && kind === "fornecedor" ? "pressionar" : ceoStyle === "pessoas" ? "relacionamento" : "equilibrio";
           if (delegated && company.autonomy === "independente") {
-            const negotiated = resolvePartnerStrategy(proposal, suggested, proposalPower, company.ceo ?? "CEO", nextWeek);
+            const negotiated = resolvePartnerStrategy(proposal, suggested, proposalPower, company.ceo ?? "CEO", nextWeek, current.difficulty ?? "executivo");
             partners = [...partners, negotiated];
             weeklyNews.push({ id: Date.now() + company.id + 2040, week: nextWeek, category: "negocios", headline: `${proposal.name} procura a ${company.name} com nova proposta`, body: `${company.ceo} negociou diretamente e escolheu ${suggested}. ${negotiated.lastEvent}`, impact: negotiated.status === "disputa" ? "negativo" : "positivo" });
           } else {
             partners = [...partners, proposal];
             weeklyNews.push({ id: Date.now() + company.id + 2050, week: nextWeek, category: "negocios", headline: `${proposal.name} apresenta proposta à ${company.name}`, body: `${proposal.representative} oferece ${kind === "cliente" ? "receita" : "fornecimento"} de ${money.format(proposal.proposedValue ?? proposal.weeklyValue)} por semana. A oferta expira em quatro semanas.`, impact: "neutro" });
-            if (!ceoProposalMessage && current.unread.length === 0) ceoProposalMessage = ceoContractProposalMessage({ ...company, partners, ceoStyle, ceo: company.ceo ?? controlledExecutive }, proposal, suggested, proposalPower);
+            if (!ceoProposalMessage && current.unread.length === 0) ceoProposalMessage = ceoContractProposalMessage({ ...company, partners, ceoStyle, ceo: company.ceo ?? controlledExecutive }, proposal, suggested, proposalPower, current.difficulty ?? "executivo");
           }
         }
         return {
@@ -7583,12 +7618,12 @@ export default function Home() {
               ? -0.4
               : 0;
         let change = Math.round(
-          personalityEffect + cycleEffect + partnershipEffect + difficulty.rival,
+          personalityEffect * difficulty.rivalIntelligence + cycleEffect + partnershipEffect + difficulty.rival,
         );
         let cash =
           (rival.cash ?? 180000) +
           Math.round(
-            rival.score * 2100 * economyRoll.economy.demand +
+            rival.score * 2100 * economyRoll.economy.demand * (.86 + difficulty.rivalIntelligence * .14) +
               (rival.products ?? []).reduce(
                 (sum, p) => sum + p.quality * 180,
                 0,
@@ -8393,6 +8428,7 @@ export default function Home() {
         week: nextWeek,
         chapter: Math.max(current.chapter, founderAct(nextWeek).id),
         difficultyApplied: current.difficulty ?? "executivo",
+        difficultySafetyNetUsed: current.difficultySafetyNetUsed || relaxedSafetyNetTriggered,
         personalCash: Math.max(0, current.personalCash + Math.round(holdingDividends * .88) + generationRewardCash - wealthManagementCost),
         survivedRecessions:
           (current.survivedRecessions ?? 0) +
@@ -8930,7 +8966,7 @@ export default function Home() {
     const costs = { economica: 20000, equilibrada: 40000, robusta: 70000 };
     const cost = costs[strategy];
     if (active.cash < cost) return;
-    const danger = productVersionRisk(managedProduct, strategy);
+    const danger = productVersionRisk(managedProduct, strategy, game.difficulty ?? "executivo");
     const roll = Math.random() * 100;
     const outcome: NonNullable<Project["lastVersionOutcome"]> = roll >= danger + 18 ? "melhoria" : roll >= danger ? "ignorada" : roll < danger * .22 ? "rejeitada" : roll < danger * .52 ? "bugs" : "canibalizacao";
     const changes: Partial<Project> = outcome === "melhoria" ? { version: (managedProduct.version ?? 1) + 1, quality: clamp(managedProduct.quality + 9), marketWeeks: 6, marketStage: "crescimento", bugLevel: clamp((managedProduct.bugLevel ?? 0) - 10), updateNeed: clamp((managedProduct.updateNeed ?? 0) - 25), customerSatisfaction: clamp((managedProduct.customerSatisfaction ?? 70) + 7), recurring: Math.round((managedProduct.recurring ?? 9000) * 1.12), lastVersionOutcome: outcome } : outcome === "ignorada" ? { version: (managedProduct.version ?? 1) + 1, recurring: Math.round((managedProduct.recurring ?? 9000) * .98), lastVersionOutcome: outcome } : outcome === "bugs" ? { version: (managedProduct.version ?? 1) + 1, bugLevel: clamp((managedProduct.bugLevel ?? 0) + 26), updateNeed: clamp((managedProduct.updateNeed ?? 0) + 22), customerSatisfaction: clamp((managedProduct.customerSatisfaction ?? 70) - 9), recurring: Math.round((managedProduct.recurring ?? 9000) * .9), emergencyWeeks: 3, lastVersionOutcome: outcome } : outcome === "rejeitada" ? { version: (managedProduct.version ?? 1) + 1, customerSatisfaction: clamp((managedProduct.customerSatisfaction ?? 70) - 18), recurring: Math.round((managedProduct.recurring ?? 9000) * .8), updateNeed: clamp((managedProduct.updateNeed ?? 0) + 18), lastVersionOutcome: outcome } : { version: (managedProduct.version ?? 1) + 1, quality: clamp(managedProduct.quality + 4), recurring: Math.round((managedProduct.recurring ?? 9000) * .74), customerSatisfaction: clamp((managedProduct.customerSatisfaction ?? 70) - 5), lastVersionOutcome: outcome };
@@ -9530,21 +9566,23 @@ export default function Home() {
     plan: "conservador" | "agressivo",
   ) => {
     if (!active || !isCEO || active.sold || active.bankrupt) return;
+    const capitalDifficulty = difficultyProfiles[game.difficulty ?? "executivo"];
     const valuation = companyMetrics(active, game.economy).valuation;
     const bank = provider.kind === "banco";
-    const investment = bank
+    const baseInvestment = bank
       ? Math.max(160000, Math.round(valuation * 0.18))
       : Math.max(
           220000,
           Math.round(valuation * (plan === "agressivo" ? 0.34 : 0.22)),
         );
+    const investment = Math.round(baseInvestment * capitalDifficulty.creditAccess / 1000) * 1000;
     const equity = bank
       ? 0
       : Math.min(
           38,
           Math.max(
             8,
-            Math.round((investment / (valuation + investment)) * 100),
+            Math.round((investment / (valuation + investment)) * 100 * capitalDifficulty.investorPressure / capitalDifficulty.creditAccess),
           ),
         );
     const target =
@@ -9560,7 +9598,7 @@ export default function Home() {
           ? (metrics?.revenue ?? 0)
           : Math.max(10000, metrics?.profit ?? 0);
     const targetValue = Math.round(
-      currentMetric * (plan === "agressivo" ? 1.65 : 1.3),
+      currentMetric * (1 + (plan === "agressivo" ? .65 : .3) * capitalDifficulty.investorPressure),
     );
     setGame((s) => ({
       ...s,
@@ -9570,7 +9608,7 @@ export default function Home() {
           : {
               ...c,
               cash: c.cash + investment,
-              debt: bank ? c.debt + Math.round(investment * 1.28) : c.debt,
+              debt: bank ? c.debt + Math.round(investment * (1 + .28 * capitalDifficulty.investorPressure)) : c.debt,
               founderEquity: Math.max(5, (c.founderEquity ?? 100) - equity),
               boardSupport: clamp(
                 (c.boardSupport ?? 82) + (provider.patience - 50) / 5,
@@ -9585,10 +9623,10 @@ export default function Home() {
                       representative: provider.representative,
                       equity,
                       boardSeats:
-                        plan === "agressivo" || provider.control > 65 ? 1 : 0,
+                        plan === "agressivo" || provider.control * capitalDifficulty.investorPressure > 65 ? 1 : 0,
                       support: provider.patience,
                       invested: investment,
-                      deadline: s.week + (plan === "agressivo" ? 7 : 11),
+                      deadline: s.week + Math.max(4, Math.round((plan === "agressivo" ? 7 : 11) / capitalDifficulty.investorPressure)),
                       target,
                       targetValue,
                       lastReview: s.week,
@@ -12138,7 +12176,7 @@ export default function Home() {
       )}
       {dialog === "difficulty" && (
         <GameModal onClose={() => setDialog(null)} wide>
-          <div className="difficulty-room"><header><small>DIFICULDADE DA HISTÓRIA</small><h2>Escolha quanto o mundo perdoa seus erros</h2><p>Você pode alterar o ritmo durante o save. A dificuldade muda estresse, demissões, margens econômicas, agressividade dos concorrentes e recompensas das próximas gerações.</p></header><div>{(Object.keys(difficultyProfiles) as GameDifficulty[]).map((level) => <button className={(game.difficulty ?? "executivo") === level ? "active" : ""} onClick={() => setGame((state) => ({ ...state, difficulty: level }))} key={level}><small>{level === "relaxado" ? "MAIS TEMPO" : level === "executivo" ? "EQUILIBRADO" : "SEM PIEDADE"}</small><h3>{difficultyProfiles[level].title}</h3><p>{difficultyProfiles[level].description}</p><span>{level === "relaxado" ? "−28% estresse · rivais menos agressivos" : level === "executivo" ? "Regras e recompensas padrão" : "+28% estresse · crises e rivais mais fortes"}</span></button>)}</div><footer><button onClick={() => setDialog(null)}>Continuar a história</button></footer></div>
+          <div className="difficulty-room"><header><small>DIFICULDADE DA HISTÓRIA</small><h2>Escolha quanto o mundo perdoa seus erros</h2><p>Você pode alterar o ritmo durante o save. Crises, CEOs, concorrentes, contratos, capital, produtos e alertas passam a obedecer regras próprias de cada modo. O capital inicial vale somente para novas histórias.</p></header><div>{(Object.keys(difficultyProfiles) as GameDifficulty[]).map((level) => <button className={(game.difficulty ?? "executivo") === level ? "active" : ""} onClick={() => setGame((state) => ({ ...state, difficulty: level }))} key={level}><small>{level === "relaxado" ? "MAIS TEMPO" : level === "executivo" ? "EQUILIBRADO" : "SEM PIEDADE"}</small><h3>{difficultyProfiles[level].title}</h3><p>{difficultyProfiles[level].description}</p><span>{level === "relaxado" ? "−28% estresse · parceiros mais pacientes" : level === "executivo" ? "Regras e recompensas padrão" : "+28% estresse · capital e contratos mais duros"}</span><ul>{difficultySystemSummary[level].map((item) => <li key={item}>{item}</li>)}</ul></button>)}</div><footer><button onClick={() => setDialog(null)}>Continuar a história</button></footer></div>
         </GameModal>
       )}
       {dialog === "inbox" && (
@@ -12585,9 +12623,9 @@ export default function Home() {
                   </div>
                   <p>Nova versão é uma aposta: pode melhorar, ser ignorada, criar bugs, desagradar clientes ou canibalizar a versão anterior.</p>
                   <div className="version-strategies">
-                    <button disabled={active.cash < 20000} onClick={() => launchProductVersion("economica")}><b>Econômica · R$ 20 mil</b><span>{Math.round(productVersionRisk(managedProduct, "economica"))}% de risco · rápida, sujeita a bugs e rejeição.</span></button>
-                    <button disabled={active.cash < 40000} onClick={() => launchProductVersion("equilibrada")}><b>Equilibrada · R$ 40 mil</b><span>{Math.round(productVersionRisk(managedProduct, "equilibrada"))}% de risco · mais testes, sem garantia de retorno.</span></button>
-                    <button disabled={active.cash < 70000} onClick={() => launchProductVersion("robusta")}><b>Robusta · R$ 70 mil</b><span>{Math.round(productVersionRisk(managedProduct, "robusta"))}% de risco · ainda pode ser ignorada.</span></button>
+                    <button disabled={active.cash < 20000} onClick={() => launchProductVersion("economica")}><b>Econômica · R$ 20 mil</b><span>{Math.round(productVersionRisk(managedProduct, "economica", game.difficulty ?? "executivo"))}% de risco · rápida, sujeita a bugs e rejeição.</span></button>
+                    <button disabled={active.cash < 40000} onClick={() => launchProductVersion("equilibrada")}><b>Equilibrada · R$ 40 mil</b><span>{Math.round(productVersionRisk(managedProduct, "equilibrada", game.difficulty ?? "executivo"))}% de risco · mais testes, sem garantia de retorno.</span></button>
+                    <button disabled={active.cash < 70000} onClick={() => launchProductVersion("robusta")}><b>Robusta · R$ 70 mil</b><span>{Math.round(productVersionRisk(managedProduct, "robusta", game.difficulty ?? "executivo"))}% de risco · ainda pode ser ignorada.</span></button>
                   </div>
                   <button
                     disabled={managedProduct.patented || active.cash < 45000}
@@ -13007,6 +13045,7 @@ export default function Home() {
                 diferente.
               </p>
             </header>
+            <div className={`capital-difficulty-note ${game.difficulty ?? "executivo"}`}><b>Condições no ritmo {difficultyProfiles[game.difficulty ?? "executivo"].title}</b><span>Volume disponível: {Math.round(difficultyProfiles[game.difficulty ?? "executivo"].creditAccess * 100)}% do padrão · pressão por metas: {Math.round(difficultyProfiles[game.difficulty ?? "executivo"].investorPressure * 100)}% · prazos {difficultyProfiles[game.difficulty ?? "executivo"].investorPressure > 1 ? "mais curtos" : difficultyProfiles[game.difficulty ?? "executivo"].investorPressure < 1 ? "mais longos" : "equilibrados"}.</span></div>
             <div className="provider-grid">
               {game.providers.map((provider) => (
                 <article
@@ -13902,7 +13941,7 @@ function StartScreen({
         </div>
         <div className="difficulty-choice">
           <small>RITMO DA HISTÓRIA</small>
-          <div>{(Object.keys(difficultyProfiles) as GameDifficulty[]).map((level) => <button className={difficulty === level ? "active" : ""} onClick={() => setDifficulty(level)} key={level}><b>{difficultyProfiles[level].title}</b><span>{difficultyProfiles[level].description}</span></button>)}</div>
+          <div>{(Object.keys(difficultyProfiles) as GameDifficulty[]).map((level) => <button className={difficulty === level ? "active" : ""} onClick={() => setDifficulty(level)} key={level}><b>{difficultyProfiles[level].title}</b><span>{difficultyProfiles[level].description}</span><em>{difficultySystemSummary[level][0]} · alerta de {difficultyProfiles[level].warningWeeks} semana{difficultyProfiles[level].warningWeeks === 1 ? "" : "s"}</em></button>)}</div>
         </div>
         <article className="sector-preview">
           <div>

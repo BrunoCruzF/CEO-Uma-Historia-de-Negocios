@@ -3510,3 +3510,39 @@ button {
   .employee-profile-room h2 { font-size: 27px; }
   .employee-profile-metrics { grid-template-columns: 1fr 1fr; }
 }
+
+.difficulty-room button ul {
+  display: grid;
+  gap: 6px;
+  margin: 13px 0 0;
+  padding: 12px 12px 12px 28px;
+  background: rgba(23, 38, 47, 0.07);
+  color: #514a44;
+  text-align: left;
+}
+.difficulty-room button.active ul { background: rgba(255, 255, 255, 0.58); }
+.difficulty-room button li { font: 700 11px/1.4 var(--font-geist-mono); }
+.difficulty-choice button em {
+  display: block;
+  margin-top: 8px;
+  color: #e2b978;
+  font: 700 10px/1.4 var(--font-geist-mono);
+  font-style: normal;
+}
+.capital-difficulty-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 16px 0;
+  padding: 14px 16px;
+  border-left: 5px solid #806f57;
+  background: #fff7ea;
+}
+.capital-difficulty-note.relaxado { border-color: #56806b; background: #e5eee7; }
+.capital-difficulty-note.implacavel { border-color: #a44e55; background: #f2dfdc; }
+.capital-difficulty-note b { font: 700 15px Georgia, serif; }
+.capital-difficulty-note span { max-width: 620px; font: 700 11px/1.45 var(--font-geist-mono); color: #625a53; }
+@media (max-width: 720px) {
+  .capital-difficulty-note { align-items: flex-start; flex-direction: column; }
+}
