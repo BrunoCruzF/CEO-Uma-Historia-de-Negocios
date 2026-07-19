@@ -83,6 +83,7 @@ button {
 .hud-stats > div b {
   font: 700 13px var(--font-geist-mono);
 }
+.hud-calendar small { color: var(--gold); }
 .hud-cash-button {
   border: 0;
   border-left: 1px solid rgba(255, 255, 255, 0.14);

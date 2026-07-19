@@ -11241,12 +11241,12 @@ export default function Home() {
           <span>UMA HISTÓRIA DE NEGÓCIOS</span>
         </button>
         <div className="chapter">
-          <small>CAPÍTULO {game.chapter}</small>
+          <small>CAPÍTULO {game.chapter} · SEMANA {game.week}</small>
           <strong>{chapterTitle}</strong>
         </div>
         <div className="hud-stats">
-          <div>
-            <small>DATA</small>
+          <div className="hud-calendar">
+            <small>SEMANA {game.week}</small>
             <b>{gameDate}</b>
           </div>
           <div>
