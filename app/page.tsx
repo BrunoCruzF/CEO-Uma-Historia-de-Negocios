@@ -83,7 +83,7 @@ type FinancialEntry = {
   week: number;
   companyId: number;
   companyName: string;
-  category: "receita" | "equipe" | "marketing" | "estrutura" | "contratos" | "juros" | "eventos" | "transferencia";
+  category: "receita" | "equipe" | "marketing" | "estrutura" | "contratos" | "juros" | "tributos" | "eventos" | "transferencia";
   label: string;
   amount: number;
   detail: string;
@@ -2500,7 +2500,7 @@ const initialState: GameState = {
     weeksLeft: 16,
   },
   providers: [],
-  balanceVersion: 2,
+  balanceVersion: 3,
   difficulty: "executivo",
   difficultyApplied: "executivo",
   holdingName: "Grupo Alex",
@@ -4255,6 +4255,32 @@ function narrativeEvent(company: Company, state: GameState): StoryMessage {
   };
 }
 
+type BusinessScale = "nascente" | "pequena" | "media" | "grande" | "corporacao" | "global";
+const businessScaleProfiles: Record<BusinessScale, { label: string; minRevenue: number; taxRate: number; administration: number; complianceRate: number; reserveWeeks: number; valuationMultiple: number }> = {
+  nascente: { label: "Empresa nascente", minRevenue: 0, taxRate: .05, administration: 1200, complianceRate: .002, reserveWeeks: 2, valuationMultiple: 2.65 },
+  pequena: { label: "Pequena empresa", minRevenue: 50000, taxRate: .1, administration: 4200, complianceRate: .004, reserveWeeks: 3, valuationMultiple: 2.35 },
+  media: { label: "Empresa média", minRevenue: 180000, taxRate: .16, administration: 13500, complianceRate: .0065, reserveWeeks: 4, valuationMultiple: 2.05 },
+  grande: { label: "Grande empresa", minRevenue: 650000, taxRate: .22, administration: 42000, complianceRate: .009, reserveWeeks: 6, valuationMultiple: 1.78 },
+  corporacao: { label: "Corporação", minRevenue: 2200000, taxRate: .28, administration: 135000, complianceRate: .012, reserveWeeks: 8, valuationMultiple: 1.52 },
+  global: { label: "Grupo global", minRevenue: 7000000, taxRate: .32, administration: 420000, complianceRate: .016, reserveWeeks: 10, valuationMultiple: 1.32 },
+};
+
+function businessScaleFor(revenue: number): BusinessScale {
+  return (["global", "corporacao", "grande", "media", "pequena", "nascente"] as BusinessScale[]).find((scale) => revenue >= businessScaleProfiles[scale].minRevenue) ?? "nascente";
+}
+
+function saleSettlement(gross: number) {
+  const rate = gross >= 500000000 ? .24 : gross >= 50000000 ? .2 : gross >= 5000000 ? .15 : gross >= 500000 ? .1 : .06;
+  const taxes = Math.round(gross * rate);
+  const advisory = Math.round(Math.max(12000, gross * .018));
+  return { gross, rate, taxes, advisory, net: Math.max(0, gross - taxes - advisory) };
+}
+
+function personalWealthCost(wealth: number) {
+  if (wealth <= 1000000) return 0;
+  return Math.round((wealth - 1000000) * .00022 + Math.max(0, wealth - 10000000) * .0001 + Math.max(0, wealth - 100000000) * .00008);
+}
+
 function companyCommercialCapacity(company: Company) {
   const structure = facilitySummary(company);
   const available = company.employees.filter((employee) => (employee.leaveWeeks ?? 0) <= 0);
@@ -4377,7 +4403,7 @@ function companyMetrics(
     (multiplier, effect) => multiplier * (effect.costMultiplier ?? 1),
     1,
   );
-  const revenue = Math.round(
+  const preliminaryRevenue = Math.round(
     (baseRevenue + recurringRevenue + contractRevenue) *
       (0.75 + company.reputation / 250) *
       economy.demand *
@@ -4394,15 +4420,27 @@ function companyMetrics(
   );
   const productMaintenance = company.projects.filter((product) => product.kind === "produto" && product.lifecycle === "mercado").reduce((sum, product) => sum + (product.maintenanceCost ?? productBlueprint(company.sector, product.complexity ?? 3).maintenanceCost) * (1 + (product.bugLevel ?? 0) / 80), 0);
   const facilityMaintenance = facilitySummary(company).weeklyMaintenance;
-  const costs =
+  const baseCosts =
     ((weeklyPayroll + company.marketing + productMarketing + productMaintenance + facilityMaintenance + weeklyOverhead + supplierCosts) *
       economy.costs *
       (company.efficiency ?? 1) +
       company.debt * economy.interest) *
     effectCosts;
+  const scale = businessScaleFor(preliminaryRevenue);
+  const scaleProfile = businessScaleProfiles[scale];
+  const complexityCost = Math.round((scaleProfile.administration + preliminaryRevenue * scaleProfile.complianceRate + Math.pow(Math.max(0, company.employees.length - 4), 1.35) * 380) * economy.costs);
+  const requiredReserve = Math.round((baseCosts + complexityCost) * scaleProfile.reserveWeeks);
+  const cashCoverage = requiredReserve > 0 ? company.cash / requiredReserve : 1;
+  const liquidityFactor = cashCoverage >= 1 ? 1 : clamp(.78 + Math.max(0, cashCoverage) * .22, .72, 1);
+  const revenue = Math.round(preliminaryRevenue * liquidityFactor);
+  const preTaxProfit = revenue - baseCosts - complexityCost;
+  const taxes = Math.round(Math.max(0, preTaxProfit) * scaleProfile.taxRate);
+  const idleCashThreshold = Math.max(requiredReserve * 4, 1000000);
+  const idleCashCost = Math.round(Math.max(0, company.cash - idleCashThreshold) * .00035);
+  const costs = baseCosts + complexityCost + taxes + idleCashCost;
   const profit = Math.round(revenue - costs);
-  const valuation = Math.max(30000, Math.round(company.cash * .68 + Math.max(0, profit) * 52 * 3.2 + revenue * 3.5 + company.reputation * 2600 - company.debt * 1.05));
-  return { payroll, morale, skill, revenue, costs, profit, valuation, productMaintenance, facilityMaintenance, customerCapacity: commercial.customerCapacity, productRevenueCapacity: commercial.productRevenueCapacity };
+  const valuation = Math.max(30000, Math.round(company.cash * .58 + Math.max(0, profit) * 52 * scaleProfile.valuationMultiple + revenue * 2.4 + company.reputation * 2300 - company.debt * 1.08));
+  return { payroll, morale, skill, revenue, preliminaryRevenue, baseCosts, costs, profit, preTaxProfit, taxes, complexityCost, idleCashCost, requiredReserve, cashCoverage, liquidityFactor, scale, scaleProfile, valuation, productMaintenance, facilityMaintenance, customerCapacity: commercial.customerCapacity, productRevenueCapacity: commercial.productRevenueCapacity };
 }
 
 function buildFinancialEntries(previous: GameState, companies: Company[], economy: Economy, week: number): FinancialEntry[] {
@@ -4419,7 +4457,7 @@ function buildFinancialEntries(previous: GameState, companies: Company[], econom
     const interest = company.debt * economy.interest;
     const launchedCampaignSpend = (company.marketingCampaigns ?? []).filter((campaign) => campaign.startedWeek === week).reduce((sum, campaign) => sum + campaign.totalBudget, 0);
     const nominalCosts = weeklyPayroll + company.marketing + productMarketing + productMaintenance + facilityMaintenance + weeklyOverhead + supplierCosts + interest;
-    const costFactor = nominalCosts > 0 ? metrics.costs / nominalCosts : 1;
+    const costFactor = nominalCosts > 0 ? metrics.baseCosts / nominalCosts : 1;
     const add = (category: FinancialEntry["category"], label: string, amount: number, detail: string) => {
       if (Math.abs(amount) < 1) return;
       entries.push({ id: `${week}-${company.id}-${category}-${companyIndex}-${entries.length}`, week, companyId: company.id, companyName: company.name, category, label, amount: Math.round(amount), detail });
@@ -4433,6 +4471,9 @@ function buildFinancialEntries(previous: GameState, companies: Company[], econom
     add("estrutura", "Manutenção dos produtos", -productMaintenance * costFactor, "Suporte, infraestrutura, correções e operação dos produtos no mercado.");
     add("contratos", "Fornecedores", -supplierCosts * costFactor, "Contratos de fornecimento ativos nesta semana.");
     add("juros", "Juros da dívida", -interest * costFactor, `Dívida atual de ${money.format(company.debt)}.`);
+    add("estrutura", "Administração e conformidade", -metrics.complexityCost, `${metrics.scaleProfile.label}: processos, controles, licenças e gestão da complexidade.`);
+    add("tributos", "Impostos sobre o resultado", -metrics.taxes, `Alíquota efetiva da faixa: ${Math.round(metrics.scaleProfile.taxRate * 100)}%.`);
+    add("estrutura", "Gestão de caixa excedente", -metrics.idleCashCost, "Tesouraria, seguros, controles e custo de manter capital ocioso acima da reserva estratégica.");
     if (before) {
       const expectedCashChange = metrics.profit - launchedCampaignSpend;
       const actualCashChange = company.cash - before.cash;
@@ -4723,6 +4764,9 @@ function buildWeeklyReport(
       if (activeSupplierValue > 0) costReasons.push(reason("Fornecedores estratégicos", `${money.format(activeSupplierValue)} por semana sustentam insumos, tecnologia, mídia ou logística.`, "negativo"));
       if (economy.costs !== previous.economy.costs) costReasons.push(reason("Inflação de custos", `O multiplicador econômico passou de ${(previous.economy.costs * 100).toFixed(0)}% para ${(economy.costs * 100).toFixed(0)}%.`, economy.costs <= previous.economy.costs ? "positivo" : "negativo"));
       if (company.debt > 0) costReasons.push(reason("Juros da dívida", `${money.format(company.debt)} de dívida geram juros semanais de ${(economy.interest * 100).toFixed(1)}%.`, "negativo"));
+      if (after.complexityCost > 0) costReasons.push(reason(after.scaleProfile.label, `${money.format(after.complexityCost)} foram consumidos por administração, licenças e conformidade nesta escala.`, "negativo"));
+      if (after.taxes > 0) costReasons.push(reason("Impostos sobre resultado", `${money.format(after.taxes)} foram recolhidos com alíquota de ${Math.round(after.scaleProfile.taxRate * 100)}%.`, "negativo"));
+      if (after.cashCoverage < 1) revenueReasons.push(reason("Capital de giro insuficiente", `O caixa cobre ${Math.max(0, Math.round(after.cashCoverage * 100))}% da reserva recomendada de ${money.format(after.requiredReserve)}, reduzindo a capacidade de atender e vender.`, "negativo"));
       if ((company.effects ?? []).length) costReasons.push(reason("Consequências ativas", (company.effects ?? []).map((effect) => `${effect.name} (${effect.weeksLeft} sem.)`).join("; "), "neutro"));
 
       const cashReasons: IndicatorReason[] = [reason("Resultado operacional", `${after.profit >= 0 ? "Lucro" : "Prejuízo"} estimado de ${money.format(Math.abs(after.profit))} na operação.`, after.profit >= 0 ? "positivo" : "negativo")];
@@ -5164,11 +5208,11 @@ export default function Home() {
                 parsed.companies?.[0]?.sector ?? "Tecnologia",
               ),
           news: parsed.news ?? [],
-          balanceVersion: 2,
+          balanceVersion: 3,
           difficulty: parsed.difficulty ?? "executivo",
           difficultyApplied: parsed.difficultyApplied ?? "executivo",
           economy:
-            parsed.balanceVersion === 2
+            (parsed.balanceVersion ?? 1) >= 2
               ? (parsed.economy ?? initialState.economy)
               : initialState.economy,
           providers: parsed.providers?.length
@@ -5413,11 +5457,11 @@ export default function Home() {
             employees: c.employees.map((e) => ({
               ...e,
               salary:
-                parsed.balanceVersion === 2
+                (parsed.balanceVersion ?? 1) >= 2
                   ? e.salary
                   : Math.round((e.salary * 0.78) / 100) * 100,
               market:
-                parsed.balanceVersion === 2
+                (parsed.balanceVersion ?? 1) >= 2
                   ? e.market
                   : Math.round((e.market * 0.84) / 100) * 100,
               stress: Math.min(e.stress ?? 25, 48),
@@ -6147,13 +6191,13 @@ export default function Home() {
         body: `A Northstar quer comprar 100% da ${company.name}. A oferta é alta o bastante para mudar sua vida, mas a equipe provavelmente será reestruturada.`,
         choices: [
           {
-            label: `Aceitar ${compact.format(valuation * 1.35)}`,
+            label: `Aceitar ${compact.format(valuation * 1.35)} · líquido ${compact.format(saleSettlement(Math.round(valuation * 1.35)).net)}`,
             tone: "good",
             result:
               "Você vendeu sua primeira empresa. Agora joga com o próprio patrimônio.",
             effect: (s) => ({
               ...s,
-              personalCash: s.personalCash + Math.round(valuation * 1.35),
+              personalCash: s.personalCash + saleSettlement(Math.round(valuation * 1.35)).net,
               companies: s.companies.map((c) =>
                 c.id === company.id ? { ...c, sold: true } : c,
               ),
@@ -6259,6 +6303,8 @@ export default function Home() {
             0,
         );
         const cm = companyMetrics(company, economyRoll.economy);
+        const liquidityPressure = cm.cashCoverage >= 1 ? 0 : clamp((1 - cm.cashCoverage) * 3.5, 0, 3.5);
+        if (cm.cashCoverage < .55 && nextWeek % 6 === company.id % 6) weeklyNews.push({ id: Date.now() + company.id + 2320, week: nextWeek, category: "economia", headline: `${company.name} cresce sem capital de giro suficiente`, body: `A reserva cobre apenas ${Math.max(0, Math.round(cm.cashCoverage * 100))}% da necessidade de ${money.format(cm.requiredReserve)}. Fornecedores, equipe e clientes já percebem atrasos e cautela.`, impact: "negativo" });
         let facilities = normalizedFacilities(company);
         const maintenanceMode = company.facilityMaintenanceMode ?? "adequado";
         const maintenancePlan = facilityModeLabels[maintenanceMode];
@@ -6835,7 +6881,8 @@ export default function Home() {
                 ceoMoraleBoost +
                 directorMoraleBoost +
                 localMoraleBoost +
-                structure.moraleBoost +
+                structure.moraleBoost -
+                liquidityPressure * .7 +
                 (creditedProduct ? 9 : 0),
             ),
             loyalty: clamp(
@@ -6854,7 +6901,7 @@ export default function Home() {
                 (creditedProduct ? 6 : 0),
             ),
             stress: clamp(
-              stress + effectValue("stressDelta") - ceoStressRelief - directorStressRelief - structure.stressRelief,
+              stress + effectValue("stressDelta") + liquidityPressure - ceoStressRelief - directorStressRelief - structure.stressRelief,
             ),
             memories: creditedProduct
               ? addCharacterMemory(
@@ -7040,7 +7087,7 @@ export default function Home() {
         const dividend =
           cm.profit > 0 && (company.dividendRate ?? 0) > 0
             ? Math.min(
-                Math.max(0, grossCash - 50000),
+                Math.max(0, grossCash - cm.requiredReserve),
                 Math.round((cm.profit * (company.dividendRate ?? 0)) / 100),
               )
             : 0;
@@ -7277,7 +7324,8 @@ export default function Home() {
               effectValue("reputationDelta") +
               (marketingPulse.reputationDelta ?? 0) +
               productReputationImpact +
-              ceoReputationBoost +
+              ceoReputationBoost -
+              liquidityPressure * .18 +
               (nextWeek % 4 === company.id % 4 ? structure.reputationBoost : 0),
           ),
           productRevenue,
@@ -7322,6 +7370,18 @@ export default function Home() {
           history: [...company.history, nextCash].slice(-20),
         };
       });
+
+      const holdingOperations = companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+      const holdingOverhead = holdingOperations.length > 1 ? Math.round(5000 * Math.pow(holdingOperations.length - 1, 1.45)) : 0;
+      if (holdingOverhead > 0) {
+        const totalOperatingRevenue = Math.max(1, holdingOperations.reduce((sum, company) => sum + companyMetrics(company, economyRoll.economy).revenue, 0));
+        companies = companies.map((company) => {
+          if (company.sold || company.bankrupt || company.closed) return company;
+          const share = companyMetrics(company, economyRoll.economy).revenue / totalOperatingRevenue;
+          return { ...company, cash: company.cash - Math.round(holdingOverhead * share) };
+        });
+        if (nextWeek % 13 === 0) weeklyNews.push({ id: Date.now() + 2335, week: nextWeek, category: "economia", headline: `${current.holdingName} sente o custo de coordenar ${holdingOperations.length} empresas`, body: `Conselho, auditoria, sistemas compartilhados e governança consumiram ${money.format(holdingOverhead)} nesta semana. Abrir ou adquirir subsidiárias agora aumenta a complexidade da holding.`, impact: "neutro" });
+      }
 
       let auditCases = [...(current.auditCases ?? []), ...newAuditCases].map(
         (auditCase) => {
@@ -8235,6 +8295,8 @@ export default function Home() {
       const generationRewardCash = missionProgress.completed.reduce((sum, mission) => sum + mission.rewardCash, 0);
       const generationRewardLegacy = missionProgress.completed.reduce((sum, mission) => sum + mission.rewardLegacy, 0);
       missionProgress.completed.forEach((mission, index) => weeklyNews.push({ id: Date.now() + 2100 + index, week: nextWeek, category: "negocios", headline: `Meta da geração concluída: ${mission.title}`, body: `${mission.rewardTitle} conquistado. A holding recebe ${money.format(mission.rewardCash)} e ${mission.rewardLegacy} pontos de legado.`, impact: "positivo" }));
+      const wealthManagementCost = personalWealthCost(current.personalCash);
+      if (wealthManagementCost > 0 && nextWeek % 13 === 0) weeklyNews.push({ id: Date.now() + 2345, week: nextWeek, category: "economia", headline: `Fortuna de ${controlledExecutive} exige uma estrutura própria`, body: `Gestão patrimonial, impostos, seguros e assessoria consumiram ${money.format(wealthManagementCost)} nesta semana. Patrimônio muito alto continua valioso, mas deixou de ser gratuito.`, impact: "neutro" });
       const dynastyEndingReady = current.dynastyMode && ((current.generation ?? 2) >= 4 && nextWeek - (current.dynastyStartedWeek ?? nextWeek) >= 80 || operatingDynasty.length === 0 || 100 - outsideFamilyEquity < 15);
       const finalWeeklyNews = dedupeNewsItems(weeklyNews, current.news);
       const weeklyReport = buildWeeklyReport(current, companies, economyAfterNews, nextWeek);
@@ -8246,7 +8308,7 @@ export default function Home() {
         week: nextWeek,
         chapter: Math.max(current.chapter, founderAct(nextWeek).id),
         difficultyApplied: current.difficulty ?? "executivo",
-        personalCash: current.personalCash + holdingDividends + generationRewardCash,
+        personalCash: Math.max(0, current.personalCash + Math.round(holdingDividends * .88) + generationRewardCash - wealthManagementCost),
         survivedRecessions:
           (current.survivedRecessions ?? 0) +
           (current.economy.cycle === "recessao" &&
@@ -9011,6 +9073,8 @@ export default function Home() {
 
   const sellProductRights = () => {
     if (!active || !selectedProduct || !rightsOffer) return;
+    const transactionCosts = Math.round(rightsOffer.value * .08 + 4000);
+    const rightsNet = Math.max(0, rightsOffer.value - transactionCosts);
     setGame((s) => ({
       ...s,
       companies: s.companies.map((c) =>
@@ -9018,7 +9082,7 @@ export default function Home() {
           ? c
           : {
               ...c,
-              cash: c.cash + rightsOffer.value,
+              cash: c.cash + rightsNet,
               projects: c.projects.map((p) =>
                 p.id === selectedProduct.id
                   ? { ...p, lifecycle: "direitos_vendidos" }
@@ -9032,7 +9096,7 @@ export default function Home() {
           week: s.week,
           category: "negocios",
           headline: `${active.name} vende direitos de ${selectedProduct.name} para ${rightsOffer.buyer}`,
-          body: `A transação de ${money.format(rightsOffer.value)} encerra o produto dentro da empresa e transfere sua exploração comercial ao comprador.`,
+          body: `A transação bruta de ${money.format(rightsOffer.value)} deixou ${money.format(rightsNet)} após impostos e custos jurídicos, encerrando a exploração do produto pela empresa.`,
           impact: "positivo",
         },
         ...s.news,
@@ -9048,6 +9112,7 @@ export default function Home() {
   const sellCompany = () => {
     if (!active || !metrics || !isCEO) return;
     const offer = Math.round(metrics.valuation * (0.9 + Math.random() * 0.45));
+    const settlement = saleSettlement(offer);
     const buyer = [
       "Grupo Meridian",
       "Northstar Capital",
@@ -9057,7 +9122,7 @@ export default function Home() {
     ][Math.floor(Math.random() * 5)];
     setGame((s) => ({
       ...s,
-      personalCash: s.personalCash + offer,
+      personalCash: s.personalCash + settlement.net,
       companies: s.companies.map((c) =>
         c.id === active.id ? { ...c, sold: true, buyer } : c,
       ),
@@ -9070,7 +9135,7 @@ export default function Home() {
           week: s.week,
           category: "negocios",
           headline: `${buyer} compra ${active.name} por ${compact.format(offer)}`,
-          body: `A venda encerra um ciclo para o fundador e inicia especulações sobre seu próximo negócio. Funcionários aguardam detalhes sobre a transição.`,
+          body: `Após ${money.format(settlement.taxes)} em tributos e ${money.format(settlement.advisory)} em assessoria, ${money.format(settlement.net)} chegaram ao patrimônio pessoal. Funcionários aguardam detalhes sobre a transição.`,
           impact: "neutro",
         },
         ...s.news,
@@ -9079,7 +9144,7 @@ export default function Home() {
     setGame((state) => evolveIdentity(state, { negociacao: 4, prudencia: 3, visao: -1 }, `venda da ${active.name}`));
     setDialog(null);
     setView("portfolio");
-    notify(`Empresa vendida por ${money.format(offer)}.`);
+    notify(`Venda concluída: ${money.format(settlement.net)} líquidos.`);
   };
 
   const foundCompany = (sector: Sector) => {
@@ -10430,14 +10495,16 @@ export default function Home() {
       return;
     }
     if (kind === "dividendo") {
+      const holdingMetrics = companyMetrics(holdingCompany, game.economy);
       const amount = Math.min(
         Math.round(holdingCompany.cash * 0.08),
-        Math.max(0, holdingCompany.cash - 50000),
+        Math.max(0, holdingCompany.cash - holdingMetrics.requiredReserve),
       );
       if (amount <= 0) return;
+      const dividendTax = Math.round(amount * .12);
       setGame((s) => ({
         ...s,
-        personalCash: s.personalCash + amount,
+        personalCash: s.personalCash + amount - dividendTax,
         companies: s.companies.map((c) =>
           c.id === holdingCompany.id
             ? {
@@ -10448,7 +10515,7 @@ export default function Home() {
             : c,
         ),
       }));
-      notify(`${money.format(amount)} distribuídos ao patrimônio do fundador.`);
+      notify(`${money.format(amount - dividendTax)} líquidos distribuídos ao fundador.`);
       return;
     }
     const enabling = !holdingCompany.sharedServices;
@@ -10470,6 +10537,7 @@ export default function Home() {
       companyMetrics(holdingCompany, game.economy).valuation *
         (0.88 + Math.random() * 0.3),
     );
+    const settlement = saleSettlement(offer);
     const buyer = [
       "Grupo Meridian",
       "Aurora Partners",
@@ -10478,7 +10546,7 @@ export default function Home() {
     ][Math.floor(Math.random() * 4)];
     setGame((s) => ({
       ...s,
-      personalCash: s.personalCash + offer,
+      personalCash: s.personalCash + settlement.net,
       companies: s.companies.map((c) =>
         c.id === holdingCompany.id ? { ...c, sold: true, buyer } : c,
       ),
@@ -10488,7 +10556,7 @@ export default function Home() {
           week: s.week,
           category: "negocios",
           headline: `${s.holdingName} vende ${holdingCompany.name}`,
-          body: `${buyer} pagou ${money.format(offer)} pela empresa. O grupo perde a operação e ganha liquidez.`,
+          body: `${buyer} pagou ${money.format(offer)}. Tributos e assessoria consumiram ${money.format(settlement.taxes + settlement.advisory)}, deixando ${money.format(settlement.net)} líquidos.`,
           impact: "neutro",
         },
         ...s.news,
@@ -10496,7 +10564,7 @@ export default function Home() {
     }));
     setDialog(null);
     setHoldingCompanyId(null);
-    notify(`Empresa vendida por ${money.format(offer)}.`);
+    notify(`Empresa vendida por ${money.format(settlement.net)} líquidos.`);
   };
 
   const mergeHoldingCompany = () => {
@@ -11003,6 +11071,10 @@ export default function Home() {
               <b className={(active.boardSupport ?? 50) < 35 ? "bad" : "good"}>
                 {Math.round(active.boardSupport ?? 50)}%
               </b>
+            </div>
+            <div>
+              <small>{metrics?.scaleProfile.label ?? "Escala"} · capital de giro</small>
+              <b className={(metrics?.cashCoverage ?? 1) < .7 ? "bad" : (metrics?.cashCoverage ?? 1) >= 1 ? "good" : ""}>{Math.max(0, Math.round((metrics?.cashCoverage ?? 1) * 100))}% de {money.format(metrics?.requiredReserve ?? 0)}</b>
             </div>
             <div>
               <small>Estrutura física</small>
@@ -12503,7 +12575,7 @@ export default function Home() {
           <ModalTitle
             label="M&A · VENDA DA EMPRESA"
             title={`Quanto vale encerrar este capítulo?`}
-            text={`A estimativa atual da ${active.name} é ${money.format(metrics.valuation)}. Uma venda converte o negócio em patrimônio pessoal e permite começar de novo em outro setor.`}
+            text={`A estimativa atual da ${active.name} é ${money.format(metrics.valuation)}. O valor anunciado é bruto: impostos progressivos e assessoria serão descontados antes de chegar ao patrimônio pessoal.`}
           />
           <div className="sale-sheet">
             <div>
@@ -13559,13 +13631,19 @@ export default function Home() {
             <ModalTitle
               label="CAIXA E MOVIMENTAÇÕES"
               title="Para onde foi o dinheiro"
-              text="O patrimônio mede o valor estimado do império. O caixa é o dinheiro disponível agora. Este extrato mostra o que entrou e saiu em cada empresa."
+              text="O patrimônio mede o valor estimado do império. Caixa sustenta impostos, capital de giro e a complexidade de crescer. Este extrato mostra o que entrou e saiu em cada empresa."
             />
             <div className="finance-summary">
               <div><small>CAIXA DA EMPRESA ATIVA</small><b>{money.format(active?.cash ?? 0)}</b><span>{active?.name ?? "Nenhuma empresa ativa"}</span></div>
               <div><small>CAIXA SOMADO DO GRUPO</small><b>{money.format(groupCash)}</b><span>Empresas em operação</span></div>
               <div><small>PATRIMÔNIO PESSOAL</small><b>{money.format(game.personalCash)}</b><span>Recursos fora das empresas</span></div>
             </div>
+            {metrics && <div className="finance-scale-summary">
+              <div><small>ESCALA ATUAL</small><b>{metrics.scaleProfile.label}</b><span>Alíquota de resultado: {Math.round(metrics.scaleProfile.taxRate * 100)}%</span></div>
+              <div><small>CAPITAL DE GIRO</small><b>{money.format(metrics.requiredReserve)}</b><span className={metrics.cashCoverage < .7 ? "bad" : ""}>{Math.max(0, Math.round(metrics.cashCoverage * 100))}% coberto pelo caixa</span></div>
+              <div><small>IMPOSTOS DA SEMANA</small><b>{money.format(metrics.taxes)}</b><span>Somente quando há resultado positivo</span></div>
+              <div><small>BUROCRACIA E ESCALA</small><b>{money.format(metrics.complexityCost)}</b><span>Administração, licenças e conformidade</span></div>
+            </div>}
             <div className="finance-ledger-list">
               {(game.financialLedger ?? []).length === 0 ? (
                 <p className="empty-state">O primeiro extrato será criado quando a próxima semana terminar.</p>
