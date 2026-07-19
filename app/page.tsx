@@ -11,6 +11,7 @@ type View =
   | "noticias"
   | "jornada"
   | "portfolio";
+type UIScale = "compacto" | "confortavel" | "ampliado";
 type PageGuideDefinition = { eyebrow: string; title: string; summary: string; actions: string[]; watch: string; firstStep: string };
 type CharacterMemory = {
   id: string;
@@ -5157,6 +5158,7 @@ export default function Home() {
     | "inbox"
     | "hire"
     | "salary"
+    | "employee"
     | "project"
     | "product"
     | "sell"
@@ -5194,6 +5196,7 @@ export default function Home() {
   const [targetRival, setTargetRival] = useState<Competitor | null>(null);
   const [selectedRivalId, setSelectedRivalId] = useState<number | null>(null);
   const [salaryEmployee, setSalaryEmployee] = useState<Employee | null>(null);
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [salaryOffer, setSalaryOffer] = useState(0);
   const [negotiationNote, setNegotiationNote] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<Project | null>(null);
@@ -5218,6 +5221,22 @@ export default function Home() {
   const [annualPriorityChoice, setAnnualPriorityChoice] = useState<AnnualPriority>("crescimento");
   const [holdingTab, setHoldingTab] = useState<"ceo" | "integridade" | "capital" | "societario">("ceo");
   const [dynastyTab, setDynastyTab] = useState<"visao" | "conflito" | "familia" | "poder" | "sucessao" | "cronica">("visao");
+  const [uiScale, setUIScale] = useState<UIScale>("confortavel");
+  const [peopleTab, setPeopleTab] = useState<"equipe" | "diretoria">("equipe");
+  const [projectTab, setProjectTab] = useState<"desenvolvimento" | "mercado" | "arquivo">("desenvolvimento");
+  const [marketTab, setMarketTab] = useState<"visao" | "contratos" | "concorrentes">("visao");
+  const [portfolioTab, setPortfolioTab] = useState<"visao" | "empresas" | "governanca">("visao");
+
+  useEffect(() => {
+    const savedScale = localStorage.getItem("ceo-ui-scale") as UIScale | null;
+    if (savedScale && ["compacto", "confortavel", "ampliado"].includes(savedScale)) setUIScale(savedScale);
+  }, []);
+
+  const cycleUIScale = () => {
+    const next: UIScale = uiScale === "compacto" ? "confortavel" : uiScale === "confortavel" ? "ampliado" : "compacto";
+    setUIScale(next);
+    localStorage.setItem("ceo-ui-scale", next);
+  };
 
   useEffect(() => {
     const saved = localStorage.getItem("ceo-historia-v2");
@@ -10910,7 +10929,7 @@ export default function Home() {
   if (!game.started) return <StartScreen onStart={start} />;
 
   return (
-    <main className="story-game">
+    <main className={`story-game ui-${uiScale}`}>
       <header className="game-hud">
         <button
           className="wordmark"
@@ -10948,6 +10967,7 @@ export default function Home() {
             Mensagens {game.unread.length > 0 && <i>{game.unread.length}</i>}
           </button>
           <button className="difficulty-button" onClick={() => setDialog("difficulty")}>Ritmo: {difficultyProfiles[game.difficulty ?? "executivo"].title}</button>
+          <button className="ui-scale-button" onClick={cycleUIScale} title="Alternar tamanho dos textos e cartões">Tela: {uiScale === "compacto" ? "Compacta" : uiScale === "confortavel" ? "Confortável" : "Ampliada"}</button>
           <button className={`report-button ${latestActiveReport?.severity ?? ""}`} disabled={!game.weeklyReports?.length} onClick={() => {
             setSelectedReportWeek(game.weeklyReports?.[0]?.week ?? null);
             setReportCompanyId(game.activeCompanyId);
@@ -11193,7 +11213,12 @@ export default function Home() {
               </button>
             }
           />
-          <section className="company-directors">
+          <nav className="section-subnav" aria-label="Áreas de pessoas">
+            <button className={peopleTab === "equipe" ? "active" : ""} onClick={() => setPeopleTab("equipe")}>Equipe <b>{active.employees.length}</b></button>
+            <button className={peopleTab === "diretoria" ? "active" : ""} onClick={() => setPeopleTab("diretoria")}>Diretoria <b>{active.directors?.length ?? 0}/4</b></button>
+            <button onClick={() => setDialog("hire")}>Mercado de talentos <b>↗</b></button>
+          </nav>
+          {peopleTab === "diretoria" && <section className="company-directors">
             <header>
               <div>
                 <small>ESTRUTURA DE LIDERANÇA</small>
@@ -11220,8 +11245,8 @@ export default function Home() {
                 </article>;
               })}
             </div>
-          </section>
-          <div className="people-grid">
+          </section>}
+          {peopleTab === "equipe" && <div className="people-grid">
             {active.employees.map((e) => (
               <article className="person-card" key={e.id}>
                 <div
@@ -11250,6 +11275,7 @@ export default function Home() {
                         : `${e.weeks ?? 0} semanas na empresa`}
                     </span>
                   </div>
+                  <div className="person-summary-metrics"><span><small>Competência</small><b>{Math.round(e.skill)}</b></span><span><small>Lealdade</small><b>{Math.round(e.loyalty)}%</b></span><span className={(e.stress ?? 0) > 78 ? "danger" : ""}><small>Estresse</small><b>{Math.round(e.stress ?? 0)}%</b></span></div>
                   <div className={`character-opinion ${characterOpinion(e.memories, game.week).tone}`}>
                     <small>COMO ME VÊ</small>
                     <b>{characterOpinion(e.memories, game.week).label}</b>
@@ -11276,11 +11302,12 @@ export default function Home() {
                   >
                     Negociar
                   </button>
+                  <button onClick={() => { setSelectedEmployee(e); setDialog("employee"); }}>Ver perfil</button>
                   <button className="danger-action" disabled={!isCEO || active.employees.length <= 1} onClick={() => dismissEmployee(e)}>Demitir</button>
                 </div>
               </article>
             ))}
-          </div>
+          </div>}
         </section>
       )}
 
@@ -11296,8 +11323,13 @@ export default function Home() {
               </button>
             }
           />
+          <nav className="section-subnav" aria-label="Fases dos projetos">
+            <button className={projectTab === "desenvolvimento" ? "active" : ""} onClick={() => setProjectTab("desenvolvimento")}>Em desenvolvimento <b>{active.projects.filter((p) => p.status === "ativo").length}</b></button>
+            <button className={projectTab === "mercado" ? "active" : ""} onClick={() => setProjectTab("mercado")}>No mercado <b>{active.projects.filter((p) => p.kind === "produto" && p.status === "concluido" && !["fora_de_linha", "direitos_vendidos"].includes(p.lifecycle ?? "")).length}</b></button>
+            <button className={projectTab === "arquivo" ? "active" : ""} onClick={() => setProjectTab("arquivo")}>Arquivo <b>{active.projects.filter((p) => p.status === "concluido" && (p.kind !== "produto" || ["fora_de_linha", "direitos_vendidos"].includes(p.lifecycle ?? ""))).length}</b></button>
+          </nav>
           <div className="project-wall">
-            {active.projects.map((p) => (
+            {active.projects.filter((p) => projectTab === "desenvolvimento" ? p.status === "ativo" : projectTab === "mercado" ? p.kind === "produto" && p.status === "concluido" && !["fora_de_linha", "direitos_vendidos"].includes(p.lifecycle ?? "") : p.status === "concluido" && (p.kind !== "produto" || ["fora_de_linha", "direitos_vendidos"].includes(p.lifecycle ?? ""))).map((p) => (
               <article
                 className={`project-note ${p.status} lifecycle-${p.lifecycle ?? "desenvolvimento"}`}
                 key={p.id}
@@ -11365,12 +11397,17 @@ export default function Home() {
       )}
 
       {view === "cidade" && active && operationalAccess && (
-        <section className="market-scene game-page">
+        <section className={`market-scene game-page market-tab-${marketTab}`}>
           <PageIntro
             kicker="A CIDADE NÃO PARA"
             title="Enquanto você decide, o mercado se move."
             text="Concorrentes contratam, copiam, crescem e fracassam. Sua reputação abre portas — ou cria inimigos."
           />
+          <nav className="section-subnav" aria-label="Áreas do mercado">
+            <button className={marketTab === "visao" ? "active" : ""} onClick={() => setMarketTab("visao")}>Visão geral</button>
+            <button className={marketTab === "contratos" ? "active" : ""} onClick={() => setMarketTab("contratos")}>Clientes e fornecedores <b>{active.partners?.length ?? 0}</b></button>
+            <button className={marketTab === "concorrentes" ? "active" : ""} onClick={() => setMarketTab("concorrentes")}>Concorrentes <b>{game.competitors.filter((r) => r.sector === active.sector && !["vendida", "fechada"].includes(r.status)).length}</b></button>
+          </nav>
           <div className={`economy-banner ${game.economy.cycle}`}>
             <div>
               <small>CICLO ECONÔMICO ATUAL</small>
@@ -11743,7 +11780,7 @@ export default function Home() {
       )}
 
       {view === "portfolio" && (
-        <section className="game-page">
+        <section className={`game-page portfolio-tab-${portfolioTab}`}>
           <PageIntro
             kicker="SUA HOLDING"
             title={game.holdingName ?? `Grupo ${game.founder}`}
@@ -11755,6 +11792,11 @@ export default function Home() {
               <button onClick={() => setDialog("new-company")}>Abrir nova empresa</button>
             </div>}
           />
+          <nav className="section-subnav" aria-label="Áreas da holding">
+            <button className={portfolioTab === "visao" ? "active" : ""} onClick={() => setPortfolioTab("visao")}>Visão do grupo</button>
+            <button className={portfolioTab === "empresas" ? "active" : ""} onClick={() => setPortfolioTab("empresas")}>Empresas <b>{game.companies.length}</b></button>
+            <button className={portfolioTab === "governanca" ? "active" : ""} onClick={() => setPortfolioTab("governanca")}>Governança <b>{game.factions?.length ?? 0}</b></button>
+          </nav>
           <div className="holding-banner">
             <div>
               <small>ESTRUTURA SOCIETÁRIA</small>
@@ -12160,6 +12202,27 @@ export default function Home() {
                 </div>
               )}
             </section>
+          </div>
+        </GameModal>
+      )}
+
+      {dialog === "employee" && selectedEmployee && (
+        <GameModal onClose={() => { setDialog(null); setSelectedEmployee(null); }} wide>
+          <div className="employee-profile-room">
+            <header>
+              <div className="employee-profile-avatar" style={{ "--person": selectedEmployee.color } as React.CSSProperties}>{selectedEmployee.initials}</div>
+              <div><small>{selectedEmployee.role.toUpperCase()} · {directorAreaLabels[selectedEmployee.department ?? inferDepartment(selectedEmployee.role)].toUpperCase()}</small><h2>{selectedEmployee.name}</h2><p>“{selectedEmployee.ambition}.” · Perfil {selectedEmployee.trait.toLowerCase()}.</p></div>
+              <strong>{money.format(selectedEmployee.salary)}<span>por mês · mercado {money.format(selectedEmployee.market)}</span></strong>
+            </header>
+            <section className="employee-profile-metrics">
+              <div><small>COMPETÊNCIA</small><b>{Math.round(selectedEmployee.skill)}</b><span>{talentTierLabels[selectedEmployee.talentTier ?? talentTierFor(selectedEmployee.skill)]}</span></div>
+              <div><small>LEALDADE</small><b>{Math.round(selectedEmployee.loyalty)}%</b><span>Vínculo com a empresa</span></div>
+              <div><small>RELAÇÃO</small><b>{Math.round(selectedEmployee.relation)}%</b><span>Confiança em você</span></div>
+              <div className={(selectedEmployee.stress ?? 0) > 78 ? "danger" : ""}><small>ESTRESSE</small><b>{Math.round(selectedEmployee.stress ?? 0)}%</b><span>{selectedEmployee.leaveWeeks ? `Afastado por ${selectedEmployee.leaveWeeks} sem.` : "Em atividade"}</span></div>
+            </section>
+            <section className={`employee-profile-opinion ${characterOpinion(selectedEmployee.memories, game.week).tone}`}><small>COMO ESSA PESSOA VÊ SUA LIDERANÇA</small><h3>{characterOpinion(selectedEmployee.memories, game.week).label}</h3><p>Memória emocional {characterMemoryScore(selectedEmployee.memories, game.week) > 0 ? "+" : ""}{Math.round(characterMemoryScore(selectedEmployee.memories, game.week))}. Decisões repetidas pesam mais do que uma única conversa.</p></section>
+            <section className="employee-profile-memories"><header><small>MEMÓRIAS IMPORTANTES</small><h3>O que ficou desta relação</h3></header>{selectedEmployee.memories?.length ? selectedEmployee.memories.slice(0, 6).map((memory) => <article className={memory.value >= 0 ? "positive" : "negative"} key={memory.id}><b>{memory.feeling}</b><p>“{memory.text}”</p><span>Semana {memory.week}</span></article>) : <p className="empty-state">Ainda não há decisões marcantes registradas com esta pessoa.</p>}</section>
+            <footer className="employee-profile-actions"><button disabled={!isCEO} onClick={() => { setSalaryEmployee(selectedEmployee); setSalaryOffer(selectedEmployee.salary); setNegotiationNote(""); setDialog("salary"); }}>Negociar salário</button><button className="danger-action" disabled={!isCEO || active.employees.length <= 1} onClick={() => { dismissEmployee(selectedEmployee); setDialog(null); setSelectedEmployee(null); }}>Demitir funcionário</button></footer>
           </div>
         </GameModal>
       )}
