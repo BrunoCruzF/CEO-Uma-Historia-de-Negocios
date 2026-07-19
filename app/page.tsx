@@ -15,7 +15,7 @@ type PageGuideDefinition = { eyebrow: string; title: string; summary: string; ac
 type CharacterMemory = {
   id: string;
   week: number;
-  kind: "contratacao" | "salario" | "cuidado" | "conflito" | "reconhecimento" | "poder" | "familia" | "resultado" | "produto" | "sucessao";
+  kind: "contratacao" | "salario" | "cuidado" | "conflito" | "reconhecimento" | "promocao" | "poder" | "familia" | "resultado" | "produto" | "sucessao";
   text: string;
   feeling: "grato" | "confiante" | "cauteloso" | "magoado" | "ressentido" | "orgulhoso";
   value: number;
@@ -364,7 +364,7 @@ type NewsItem = {
   impact: "positivo" | "neutro" | "negativo";
   topic?: string;
   source?: string;
-  scope?: "local" | "setorial" | "nacional" | "internacional" | "interno";
+  scope?: "local" | "regional" | "setorial" | "nacional" | "internacional" | "interno";
   region?: string;
   sectors?: Sector[];
   tags?: string[];
@@ -2145,7 +2145,7 @@ function ceoProductProposalMessage(company: Company, product: Project): StoryMes
     choices: [
       { label: `Aprovar o projeto · ${money.format(product.budget)}`, tone: "good", result: `${company.ceo} recebeu autorização para desenvolver ${product.name}.`, effect: (state) => startProduct(state) },
       { label: "Autorizar somente um piloto", result: "O plano foi reduzido a um piloto mais barato e menos arriscado.", effect: (state) => startProduct(state, true) },
-      { label: "Recusar o produto", tone: "risk", result: `${company.ceo} recebeu a ordem de manter o foco na operação atual.`, effect: (state) => ({ ...state, companies: state.companies.map((item) => item.id !== company.id ? item : ({ ...item, ceoTrust: clamp((item.ceoTrust ?? 65) - 4), ceoLoyalty: clamp((item.ceoLoyalty ?? 65) - 3), ceoProductCooldown: 10, ceoLastDecision: `Teve a proposta ${product.name} recusada`, ceoHistory: [`Semana ${state.week}: proposta de ${product.name} recusada pela holding.`, ...(item.ceoHistory ?? [])].slice(0, 8), ceoMemories: addCharacterMemory(item.ceoMemories, characterMemory(state.week, "produto", "Você recusou o produto que eu considerava importante para minha estratégia.", "frustrado", -7, 72)) })) }) },
+      { label: "Recusar o produto", tone: "risk", result: `${company.ceo} recebeu a ordem de manter o foco na operação atual.`, effect: (state) => ({ ...state, companies: state.companies.map((item) => item.id !== company.id ? item : ({ ...item, ceoTrust: clamp((item.ceoTrust ?? 65) - 4), ceoLoyalty: clamp((item.ceoLoyalty ?? 65) - 3), ceoProductCooldown: 10, ceoLastDecision: `Teve a proposta ${product.name} recusada`, ceoHistory: [`Semana ${state.week}: proposta de ${product.name} recusada pela holding.`, ...(item.ceoHistory ?? [])].slice(0, 8), ceoMemories: addCharacterMemory(item.ceoMemories, characterMemory(state.week, "produto", "Você recusou o produto que eu considerava importante para minha estratégia.", "magoado", -7, 72)) })) }) },
     ],
   };
 }
@@ -3472,7 +3472,7 @@ function createGenerationArc(state: GameState): GenerationNarrativeArc {
   const relative = [...relatives].sort((a, b) => (b.ambition + (b.resentment ?? 0)) - (a.ambition + (a.resentment ?? 0)))[0];
   const rival = state.competitors.find((competitor) => competitor.id === state.nemesisId) ?? state.competitors[0];
   const ambitiousCEO = [...operating].filter((item) => item.ceo !== (state.playerExecutive ?? state.founder)).sort((a, b) => (b.ceoAmbition ?? 0) - (a.ceoAmbition ?? 0))[0];
-  const project = company?.projects.find((item) => item.kind === "produto" && (item.lifecycle === "declinio" || item.lifecycle === "maturidade")) ?? company?.projects.find((item) => item.kind === "produto");
+  const project = company?.projects.find((item) => item.kind === "produto" && (item.marketStage === "declinio" || item.marketStage === "maturidade")) ?? company?.projects.find((item) => item.kind === "produto");
   const kinds: GenerationArcKind[] = ["guerra-familiar", "aquisicao-hostil", "fraude-ceo", "produto-declinio", "pressao-venda", "escandalo-fundador"];
   const kind = kinds[Math.abs(generation - 2) % kinds.length];
   const details: Record<GenerationArcKind, { title: string; antagonist: string; summary: string; companyId?: number }> = {
@@ -4719,7 +4719,7 @@ function recordDecisionTrace(
       const oldEmployee = oldCompany.employees.find((item) => item.id === employee.id);
       if (!oldEmployee || employee.salary !== oldEmployee.salary || employee.morale !== oldEmployee.morale || employee.loyalty !== oldEmployee.loyalty || (employee.memories?.length ?? 0) > (oldEmployee.memories?.length ?? 0)) affectedCharacters.add(employee.name);
     });
-    if (company.ceo !== oldCompany.ceo || company.ceoLoyalty !== oldCompany.ceoLoyalty || (company.ceoMemories?.length ?? 0) > (oldCompany.ceoMemories?.length ?? 0)) affectedCharacters.add(company.ceo);
+    if (company.ceo && (company.ceo !== oldCompany.ceo || company.ceoLoyalty !== oldCompany.ceoLoyalty || (company.ceoMemories?.length ?? 0) > (oldCompany.ceoMemories?.length ?? 0))) affectedCharacters.add(company.ceo);
   }
   (after.heirs ?? []).forEach((heir) => {
     const oldHeir = (before.heirs ?? []).find((item) => item.id === heir.id);
@@ -5729,9 +5729,7 @@ export default function Home() {
         ? "Ajuste de preço"
         : afterCompany.marketing !== beforeCompany.marketing
           ? "Ajuste de marketing"
-          : afterCompany.strategy !== beforeCompany.strategy
-            ? "Mudança de estratégia"
-            : "Decisão operacional";
+        : "Decisão operacional";
       const changed = { ...s, companies: s.companies.map((company) => company.id === s.activeCompanyId ? afterCompany : company) };
       return recordDecisionTrace(s, changed, title, title, `A configuração da ${afterCompany.name} foi alterada e continuará sendo observada nas próximas semanas.`);
     });
@@ -6613,7 +6611,7 @@ export default function Home() {
         let productReputationImpact = 0;
         let productCustomerImpact = 0;
         let productEmergencyCost = 0;
-        let nextProjects = company.projects.map((p) => {
+        let nextProjects: Project[] = company.projects.map((p) => {
           if (p.status === "concluido") {
             if (p.kind !== "produto" || p.lifecycle !== "mercado")
               return {
@@ -6976,7 +6974,7 @@ export default function Home() {
               : e.memories,
           };
         });
-        let employees = evolvedEmployees.filter((e) => {
+        let employees: Employee[] = evolvedEmployees.filter((e) => {
           const retentionEffect = clamp(1 - Math.max(0, peopleDirectorStrength - 45) / 110, .45, 1);
           const leaves =
             e.loyalty < 18 && (e.weeks ?? 0) > 8 && Math.random() < 0.24 * difficulty.departure * retentionEffect;
@@ -8290,13 +8288,14 @@ export default function Home() {
       }
       let generationProfile = current.generationProfile;
       if (current.dynastyMode && generationProfile) {
+        const generationStyle = generationProfile.style;
         companies = companies.map((company) => {
           if (company.sold || company.bankrupt || company.closed || company.ceo !== controlledExecutive) return company;
-          return generationProfile.style === "crescimento"
+          return generationStyle === "crescimento"
             ? { ...company, customers: company.customers + (nextWeek % 2 === 0 ? 1 : 0), employees: company.employees.map((employee) => ({ ...employee, stress: clamp((employee.stress ?? 0) + .12) })) }
-            : generationProfile.style === "eficiencia"
+            : generationStyle === "eficiencia"
               ? { ...company, efficiency: Math.max(.68, (company.efficiency ?? 1) - .0018), reputation: clamp(company.reputation - (nextWeek % 12 === 0 ? 1 : 0)) }
-              : generationProfile.style === "inovacao"
+              : generationStyle === "inovacao"
                 ? { ...company, projects: company.projects.map((project) => project.status === "ativo" ? { ...project, progress: clamp(project.progress + .38), risk: clamp(project.risk + .08) } : project) }
                 : { ...company, employees: company.employees.map((employee) => ({ ...employee, morale: clamp(employee.morale + .2), loyalty: clamp(employee.loyalty + .1), stress: clamp((employee.stress ?? 0) - .12) })) };
         });
@@ -8471,7 +8470,7 @@ export default function Home() {
       if (achievementUnlocks.length) nextState = {
         ...nextState,
         achievements: [...(nextState.achievements ?? []), ...achievementUnlocks],
-        news: achievementUnlocks.map((achievement, index) => ({ id: Date.now() + 2300 + index, week: nextWeek, category: "negocios" as const, headline: `Conquista desbloqueada: ${achievement.title}`, body: "Uma nova marca permanente foi adicionada à história desta holding.", impact: "positivo" as const })).concat(nextState.news).slice(0, 60),
+        news: [...achievementUnlocks.map((achievement, index): NewsItem => ({ id: Date.now() + 2300 + index, week: nextWeek, category: "negocios", headline: `Conquista desbloqueada: ${achievement.title}`, body: "Uma nova marca permanente foi adicionada à história desta holding.", impact: "positivo" })), ...nextState.news].slice(0, 60),
         log: achievementUnlocks.map((achievement) => `Conquista: ${achievement.title}.`).concat(nextState.log).slice(0, 12),
       };
       if (nextWeek > 12) setTimeout(
@@ -8768,10 +8767,9 @@ export default function Home() {
               )),
             },
       ),
-      financialLedger: cashDelta !== 0 ? [{ id: `${s.week}-${active.id}-product-${Date.now()}`, week: s.week, companyId: active.id, companyName: active.name, category: "eventos", label: `Produto: ${managedProduct.name}`, amount: cashDelta, detail: cashDelta < 0 ? "Investimento em desenvolvimento, proteção, suporte ou correção." : "Receita extraordinária ligada aos direitos do produto." }, ...(s.financialLedger ?? [])].slice(0, 180) : s.financialLedger,
     }));
     setGame((state) => evolveIdentity(
-      { ...state, financialLedger: [{ id: `${state.week}-${active.id}-development-${Date.now()}`, week: state.week, companyId: active.id, companyName: active.name, category: "eventos", label: `Desenvolvimento de ${p.name}`, amount: -actualBudget, detail: p.kind === "produto" ? `Produto de complexidade ${complexity}/5.` : "Novo projeto iniciado." }, ...(state.financialLedger ?? [])].slice(0, 180) },
+      state,
       { negociacao: 2, pessoas: increase > 0.08 ? 3 : increase >= 0 ? 1 : -3, prudencia: increase < 0 ? 2 : 0 },
       `acordo salarial com ${employee.name}`,
     ));
@@ -8842,7 +8840,7 @@ export default function Home() {
       ],
     }));
     setGame((state) => evolveIdentity(
-      state,
+      { ...state, financialLedger: [{ id: `${state.week}-${active.id}-development-${Date.now()}`, week: state.week, companyId: active.id, companyName: active.name, category: "eventos", label: `Desenvolvimento de ${p.name}`, amount: -actualBudget, detail: p.kind === "produto" ? `Produto de complexidade ${complexity}/5.` : "Novo projeto iniciado." }, ...(state.financialLedger ?? [])].slice(0, 180) },
       kind === "ousado" ? { visao: 3, agressividade: 2, prudencia: -1 } : kind === "seguro" ? { prudencia: 3 } : { visao: 2, agressividade: 1 },
       `início do projeto ${p.name}`,
     ));
@@ -8873,6 +8871,7 @@ export default function Home() {
               ),
             },
       ),
+      financialLedger: cashDelta !== 0 ? [{ id: `${s.week}-${active.id}-product-${Date.now()}`, week: s.week, companyId: active.id, companyName: active.name, category: "eventos", label: `Produto: ${managedProduct.name}`, amount: cashDelta, detail: cashDelta < 0 ? "Investimento em desenvolvimento, proteção, suporte ou correção." : "Receita extraordinária ligada aos direitos do produto." }, ...(s.financialLedger ?? [])].slice(0, 180) : s.financialLedger,
     }));
     setSelectedProduct((p) => (p ? { ...p, ...changes } : p));
   };
