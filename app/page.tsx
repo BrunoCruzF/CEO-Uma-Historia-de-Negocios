@@ -763,6 +763,22 @@ type DifficultyProfile = {
   ceoIntelligence: number; rivalIntelligence: number; partnerTolerance: number; creditAccess: number;
   investorPressure: number; productFailure: number; warningWeeks: number; startingCash: number;
 };
+
+const FOUNDER_START_AGE = 47;
+const MIN_FOUNDER_PARENT_GAP = 24;
+
+function normalizedFounderStartAge(state: Partial<GameState>): number {
+  const founder = state.founder ?? "Alex Silva";
+  const oldestFirstGenerationChild = (state.heirs ?? [])
+    .filter((heir) => (heir.generation ?? 2) === 2 && (!heir.parent || heir.parent === founder))
+    .reduce((oldest, heir) => Math.max(oldest, heir.startAge ?? 0), 0);
+
+  return Math.max(
+    state.founderStartAge ?? FOUNDER_START_AGE,
+    FOUNDER_START_AGE,
+    oldestFirstGenerationChild + MIN_FOUNDER_PARENT_GAP,
+  );
+}
 const difficultyProfiles: Record<GameDifficulty, DifficultyProfile> = {
   relaxado: { title: "Relaxado", description: "Mais capital e avisos, parceiros pacientes e crises curtas para aprender sem perder as consequências.", stress: .72, economyDemand: 1.035, economyCosts: .975, departure: .55, rival: -.7, reward: .85, crisisFrequency: .68, crisisDuration: .78, ceoIntelligence: 1.15, rivalIntelligence: .78, partnerTolerance: 1.28, creditAccess: 1.22, investorPressure: .72, productFailure: .76, warningWeeks: 5, startingCash: 180000 },
   executivo: { title: "Executivo", description: "A experiência equilibrada: decisões difíceis, avisos razoáveis e consequências proporcionais.", stress: 1, economyDemand: 1, economyCosts: 1, departure: 1, rival: 0, reward: 1, crisisFrequency: 1, crisisDuration: 1, ceoIntelligence: 1, rivalIntelligence: 1, partnerTolerance: 1, creditAccess: 1, investorPressure: 1, productFailure: 1, warningWeeks: 3, startingCash: 120000 },
@@ -2577,7 +2593,7 @@ const initialState: GameState = {
   survivedRecessions: 0,
   ceoComebacks: 0,
   auditCases: [],
-  founderStartAge: 32,
+  founderStartAge: FOUNDER_START_AGE,
   lifeGoal: "dinastia",
   lifeGoalCompleted: false,
   heirs: createHeirs("Alex Silva"),
@@ -4599,7 +4615,7 @@ function formerPresidentProfile(state: GameState, name: string, generation: numb
   const heir = (state.heirs ?? []).find((candidate) => candidate.name === name);
   const relationship = heir ? clamp(heir.bond - (heir.resentment ?? 0) * .35 + (heir.support ?? 50) * .25) : clamp((state.familyUnity ?? 70) * .8);
   const influence = clamp(30 + state.reputation * .25 + (state.dynastyLegitimacy ?? 50) * .25 + (heir?.equity ?? state.founderHoldingEquity ?? 0) * .3);
-  const age = Math.round(name === state.founder ? (state.founderStartAge ?? 28) + endWeek / 52 : (heir?.startAge ?? 24) + Math.max(0, endWeek - startWeek) / 52);
+  const age = Math.round(name === state.founder ? normalizedFounderStartAge(state) + endWeek / 52 : (heir?.startAge ?? 24) + Math.max(0, endWeek - startWeek) / 52);
   return {
     name,
     generation,
@@ -5324,7 +5340,7 @@ export default function Home() {
             ? parsed.providers
             : capitalProviders,
           auditCases: parsed.auditCases ?? [],
-          founderStartAge: parsed.founderStartAge ?? 32,
+          founderStartAge: normalizedFounderStartAge(parsed),
           lifeGoal: parsed.lifeGoal ?? "dinastia",
           lifeGoalCompleted: parsed.lifeGoalCompleted ?? false,
           heirs: (parsed.heirs?.length
@@ -5407,7 +5423,12 @@ export default function Home() {
               })),
           ] : [])).map((president: FormerPresident) => ({
             ...president,
-            age: president.age ?? Math.round((president.name === parsed.founder ? parsed.founderStartAge ?? 28 : 32) + (parsed.week - president.startWeek) / 52),
+            age: president.name === parsed.founder
+              ? Math.max(
+                  president.age ?? 0,
+                  normalizedFounderStartAge(parsed) + Math.floor(((parsed.week ?? 1) - 1) / 52),
+                )
+              : president.age ?? Math.round(32 + ((parsed.week ?? 1) - president.startWeek) / 52),
             health: president.health ?? (president.name === parsed.founder ? parsed.founderHealth ?? 80 : 86),
             alive: president.alive ?? !(president.name === parsed.founder && parsed.founderDeceased),
             memoir: president.memoir ?? `Memórias do mandato de ${president.name}`,
@@ -5671,7 +5692,7 @@ export default function Home() {
     .filter((company) => !company.sold && !company.bankrupt && !company.closed)
     .reduce((sum, company) => sum + company.cash, 0);
   const founderAge =
-    (game.founderStartAge ?? 32) + Math.floor((game.week - 1) / 52);
+    normalizedFounderStartAge(game) + Math.floor((game.week - 1) / 52);
   const heirs = game.heirs ?? [];
   const eligibleHeirs = heirs.filter(
     (heir) =>
@@ -8273,7 +8294,7 @@ export default function Home() {
         }
         if (!founderDeceased) {
           const founderAgeNext =
-            (current.founderStartAge ?? 32) + Math.floor((nextWeek - 1) / 52);
+            normalizedFounderStartAge(current) + Math.floor((nextWeek - 1) / 52);
           founderHealth = clamp(
             founderHealth - 0.16 - Math.max(0, founderAgeNext - 65) * 0.018,
           );
