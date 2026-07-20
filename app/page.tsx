@@ -99,6 +99,7 @@ type StaffAlert = {
   week: number;
   responsible: string;
   headcountAfter: number;
+  roleCountAfter?: number;
   resolved?: boolean;
   ceoNotifiedWeek?: number;
   ceoReaction?: "positiva" | "negativa";
@@ -171,6 +172,8 @@ type Employee = {
   talentTier?: TalentTier;
   requiredEmployerScore?: number;
   signingBonus?: number;
+  specialties?: string[];
+  workStyle?: "colaborativo" | "autônomo" | "metódico" | "experimental" | "competitivo" | "conciliador";
 };
 type TalentTier = "iniciante" | "junior" | "pleno" | "senior" | "elite";
 type DirectorArea = "pessoas" | "operacoes" | "produto" | "comercial";
@@ -1855,6 +1858,20 @@ const sectorData: Record<
   },
 };
 
+const companyNameBank: Record<Sector, string[]> = {
+  Tecnologia: ["Aurora Stack", "Quasar Sistemas", "Vértice Cloud", "Ponte Digital", "Cobalto Tech", "Nebula Software", "Íris Dados", "Farol Automação", "Tesseract Labs", "Norte Binário", "Lógica Viva", "Senda Tecnologia", "Cubo Neural", "Orion Sistemas", "Pulso Digital", "Matriz Nuvem", "Vox Tecnologia", "Prisma Code"],
+  Alimentação: ["Casa Manjericão", "Brasa & Grão", "Raiz Urbana", "Mesa Clara", "Quintal do Norte", "Sabor de Origem", "Colheita Viva", "Fogo Manso", "Estação Tempero", "Ponto da Safra", "Serra Alimentos", "Cozinha Horizonte", "Grão Nobre", "Vila do Sabor", "Terra & Mesa", "Receita Brasileira", "Pomar Cozinha", "Cais Gourmet"],
+  Varejo: ["Cais Market", "Vitrine Sete", "Ponto Central", "Lume Store", "Casa Vértice", "Rua Nova", "Clube do Bairro", "Estação Compra", "Prateleira Viva", "Norte Shop", "Origem Varejo", "Mosaico Store", "Elo Comércio", "Via Prime", "Armazém Uno", "Rota Varejo", "Pátio Digital", "Mercado Prisma"],
+  Agência: ["Trama Criativa", "Estúdio Farol", "Pauta Viva", "Casa Mosaico", "Norte Comunicação", "Lume Estratégia", "Oficina de Marca", "Pulso & Ideia", "Voz Urbana", "Estúdio Cobalto", "Clareira Criativa", "Ponto de Vista", "Rastro Comunicação", "Prisma Conteúdo", "Atlas Criativo", "Cais Estratégia", "Nexo de Marca", "Vértice Studio"],
+};
+
+function generateCompanyName(sector: Sector, existingNames: string[] = [], seed = Date.now()) {
+  const available = companyNameBank[sector].filter((name) => !existingNames.includes(name));
+  if (available.length) return available[Math.abs(Math.floor(seed)) % available.length];
+  const base = companyNameBank[sector][Math.abs(Math.floor(seed)) % companyNameBank[sector].length];
+  return `${base} ${2 + Math.abs(Math.floor(seed)) % 97}`;
+}
+
 const basePeople: Employee[] = [
   {
     id: 1,
@@ -1920,20 +1937,40 @@ const laborFirstNames = [
   "Elisa", "Enzo", "Fernanda", "Gabriel", "Giovana", "Heitor", "Iara", "Ícaro",
   "Joana", "Júlio", "Karina", "Leandro", "Lívia", "Lucca", "Marina", "Mateus",
   "Nina", "Noah", "Olívia", "Pedro", "Rafaela", "Ravi", "Sofia", "Thiago",
-  "Valentina", "Vinícius", "Yasmin", "Yuri",
+  "Valentina", "Vinícius", "Yasmin", "Yuri", "Aline", "Augusto", "Bianca", "Cauã",
+  "Clara", "Daniel", "Débora", "Diego", "Eduarda", "Fábio", "Felipe", "Flávia",
+  "Guilherme", "Heloísa", "Isabela", "Jade", "Jonas", "Larissa", "Leonardo", "Lorena",
+  "Lucas", "Maitê", "Marcelo", "Natália", "Otávio", "Paula", "Raul", "Renata",
+  "Samuel", "Talita", "Tainá", "Vitor", "Wesley", "Zoe",
 ];
 const laborLastNames = [
   "Alencar", "Azevedo", "Barreto", "Campos", "Cardoso", "Cruz", "Dantas", "Duarte",
   "Farias", "Freitas", "Gomes", "Leal", "Lima", "Lopes", "Luz", "Macedo",
   "Medeiros", "Melo", "Moraes", "Neves", "Nogueira", "Paiva", "Pires", "Prado",
   "Ramos", "Reis", "Rocha", "Salles", "Serra", "Tavares", "Torres", "Valente",
+  "Abreu", "Amaral", "Andrade", "Assis", "Bastos", "Bittencourt", "Brandão", "Cabral",
+  "Coelho", "Costa", "Falcão", "Ferraz", "Fontes", "Franco", "Guimarães", "Jardim",
+  "Lacerda", "Machado", "Magalhães", "Marques", "Monteiro", "Muniz", "Nascimento", "Queiroz",
+  "Ribeiro", "Santana", "Silveira", "Teixeira", "Vasconcelos", "Vidal",
 ];
 const laborRoles: Record<Sector, string[]> = {
-  Tecnologia: ["Engenharia", "Produto", "Dados", "Cibersegurança", "UX", "Web design", "Vendas B2B", "Suporte técnico", "Qualidade"],
-  Alimentação: ["Cozinha", "Operações", "Qualidade", "Compras", "Logística", "Marketing local", "Expansão", "Atendimento"],
-  Varejo: ["Compras", "E-commerce", "Logística", "Vendas", "Visual merchandising", "Atendimento", "CRM", "Estoque"],
-  Agência: ["Criação", "Atendimento", "Mídia", "Estratégia", "Produção", "Comercial", "Redação", "Design"],
+  Tecnologia: ["Engenharia", "Produto", "Dados", "Cibersegurança", "UX", "Web design", "Vendas B2B", "Suporte técnico", "Qualidade", "DevOps", "Pesquisa", "Customer Success"],
+  Alimentação: ["Cozinha", "Operações", "Qualidade", "Compras", "Logística", "Marketing local", "Expansão", "Atendimento", "Nutrição", "Segurança alimentar", "Desenvolvimento de produto", "Manutenção"],
+  Varejo: ["Compras", "E-commerce", "Logística", "Vendas", "Visual merchandising", "Atendimento", "CRM", "Estoque", "Marketplace", "Prevenção de perdas", "Inteligência comercial", "Pós-venda"],
+  Agência: ["Criação", "Atendimento", "Mídia", "Estratégia", "Produção", "Comercial", "Redação", "Design", "Motion", "Social media", "Pesquisa de mercado", "Gestão de projetos"],
 };
+const roleSpecialties: Record<string, string[]> = {
+  Engenharia: ["arquitetura", "back-end", "integrações", "performance", "automação"], Produto: ["discovery", "roadmap", "métricas", "precificação", "lançamento"], Dados: ["modelagem", "analytics", "previsão", "experimentos", "governança"], Cibersegurança: ["proteção de dados", "auditoria", "resposta a incidentes", "segurança em nuvem"], UX: ["pesquisa com usuários", "prototipação", "acessibilidade", "design de interação"], "Web design": ["interfaces responsivas", "design systems", "front-end", "conversão"], DevOps: ["nuvem", "observabilidade", "CI/CD", "escalabilidade"], Pesquisa: ["prototipação", "validação", "tendências", "experimentação"], Qualidade: ["testes", "padronização", "controle de falhas", "melhoria contínua"],
+  Cozinha: ["produção", "padronização", "novas receitas", "controle de custos"], Nutrição: ["formulação", "rotulagem", "saúde", "avaliação sensorial"], "Segurança alimentar": ["boas práticas", "rastreabilidade", "auditoria sanitária", "controle de risco"], Compras: ["negociação", "fornecedores", "planejamento", "redução de custos"], Logística: ["roteirização", "distribuição", "planejamento", "nível de serviço"], Estoque: ["inventário", "giro", "reposição", "previsão de demanda"],
+  "E-commerce": ["conversão", "catálogo", "marketplaces", "operações digitais"], Marketplace: ["canais digitais", "sortimento", "performance", "parcerias"], CRM: ["segmentação", "fidelidade", "jornada do cliente", "automação"], "Visual merchandising": ["exposição", "experiência de loja", "campanhas", "identidade visual"], "Inteligência comercial": ["forecast", "margem", "concorrência", "dashboards"],
+  Criação: ["conceito", "direção criativa", "campanhas", "identidade"], Design: ["branding", "direção de arte", "interfaces", "apresentações"], Redação: ["storytelling", "conteúdo", "roteiros", "tom de voz"], Mídia: ["performance", "planejamento", "otimização", "atribuição"], Estratégia: ["posicionamento", "pesquisa", "planejamento", "marca"], Motion: ["animação", "vídeo", "pós-produção", "conteúdo social"], "Social media": ["comunidade", "conteúdo", "influenciadores", "monitoramento"],
+  Operações: ["processos", "indicadores", "capacidade", "eficiência"], Comercial: ["prospecção", "negociação", "carteira", "parcerias"], Vendas: ["negociação", "metas", "relacionamento", "conversão"], "Vendas B2B": ["contas estratégicas", "prospecção", "negociação complexa", "parcerias"], Atendimento: ["resolução de conflitos", "experiência do cliente", "retenção", "comunicação"], "Customer Success": ["onboarding", "retenção", "expansão de contas", "saúde do cliente"], "Suporte técnico": ["diagnóstico", "atendimento", "documentação", "incidentes"], Marketing: ["aquisição", "marca", "conteúdo", "análise de campanha"], "Marketing local": ["comunidade", "promoções", "eventos", "mídia regional"], Expansão: ["novas unidades", "viabilidade", "parcerias", "implantação"],
+};
+
+function specialtiesForRole(role: string, seed: number) {
+  const options = roleSpecialties[role] ?? (inferDepartment(role) === "produto" ? ["inovação", "qualidade", "prototipação", "análise"] : inferDepartment(role) === "comercial" ? ["negociação", "clientes", "crescimento", "comunicação"] : inferDepartment(role) === "pessoas" ? ["liderança", "cultura", "desenvolvimento", "mediação"] : ["processos", "eficiência", "planejamento", "controle"]);
+  return [options[seed % options.length], options[(seed * 3 + 1) % options.length]].filter((item, index, list) => list.indexOf(item) === index);
+}
 const directorAreaLabels: Record<DirectorArea, string> = { pessoas: "Pessoas e Cultura", operacoes: "Operações e Finanças", produto: "Produto e Inovação", comercial: "Comercial e Clientes" };
 
 function inferDepartment(role: string): DirectorArea {
@@ -2179,8 +2216,9 @@ function productVersionRisk(product: Project, strategy: "economica" | "equilibra
   const protection = (prep.testes ?? 0) * 5 + (prep.seguranca ?? 0) * 3 + (prep.qualidade ?? 0) * 4 + (product.supportLevel ?? 0) * 3 + (strategy === "robusta" ? 22 : strategy === "equilibrada" ? 10 : 0);
   return clamp((48 + (product.complexity ?? 3) * 5 + (product.bugLevel ?? 0) * .25 + (product.updateNeed ?? 0) * .18 - product.quality * .28 - protection) * difficultyProfiles[difficulty].productFailure, 8, 88);
 }
-const laborTraits = ["Analítico", "Carismático", "Criativo", "Competitivo", "Diplomático", "Disciplinado", "Empático", "Inventivo", "Pragmático", "Questionador", "Resiliente", "Visionário"];
-const laborAmbitions = ["Quer liderar uma equipe", "Busca estabilidade", "Quer virar diretor", "Sonha em criar um produto", "Quer participação na empresa", "Busca autonomia", "Quer aprender rápido", "Pretende abrir o próprio negócio", "Quer reconhecimento público", "Valoriza equilíbrio pessoal"];
+const laborTraits = ["Analítico", "Carismático", "Criativo", "Competitivo", "Diplomático", "Disciplinado", "Empático", "Inventivo", "Pragmático", "Questionador", "Resiliente", "Visionário", "Cauteloso", "Persuasivo", "Detalhista", "Audacioso", "Conciliador", "Reservado", "Adaptável", "Exigente", "Curioso", "Leal", "Impaciente", "Organizador"];
+const laborAmbitions = ["Quer liderar uma equipe", "Busca estabilidade", "Quer virar diretor", "Sonha em criar um produto", "Quer participação na empresa", "Busca autonomia", "Quer aprender rápido", "Pretende abrir o próprio negócio", "Quer reconhecimento público", "Valoriza equilíbrio pessoal", "Quer se tornar referência técnica", "Busca trabalhar em projetos de alto impacto", "Quer comandar uma expansão", "Deseja formar novos profissionais", "Busca bônus por desempenho", "Quer reconstruir uma área problemática", "Prefere carreira técnica à gestão", "Quer representar a empresa no mercado"];
+const laborWorkStyles: NonNullable<Employee["workStyle"]>[] = ["colaborativo", "autônomo", "metódico", "experimental", "competitivo", "conciliador"];
 const laborColors = ["#778ad9", "#d982a8", "#6da88c", "#df9d5d", "#7d72ad", "#57a7a0", "#bd735f", "#8d9a61"];
 const talentTierLabels: Record<TalentTier, string> = { iniciante: "Iniciante", junior: "Júnior", pleno: "Pleno", senior: "Sênior", elite: "Talento de elite" };
 
@@ -2209,20 +2247,21 @@ function candidateAcceptance(company: Company, candidate: Employee) {
   return Math.round(clamp(88 - Math.max(0, gap) * 1.45 + Math.max(0, -gap) * .18 + payPremium * 90, 28, 97));
 }
 
-function createLaborMarket(sector: Sector, companyId: number, week: number, existingNames: string[] = [], count = 10, company?: Company): Employee[] {
+function createLaborMarket(sector: Sector, companyId: number, week: number, existingNames: string[] = [], count = 10, company?: Company, targetRole?: string): Employee[] {
   const marketCycle = Math.floor(Math.max(1, week) / 2);
   const unavailable = company?.rejectedCandidates?.filter((candidate) => candidate.untilWeek > week).map((candidate) => candidate.name) ?? [];
   const used = new Set([...existingNames, ...unavailable]);
   const employerScore = company ? employerAttraction(company).score : 28;
   const result: Employee[] = [];
-  for (let index = 0; index < count * 5 && result.length < count; index += 1) {
-    const seed = companyId * 97 + marketCycle * 53 + index * 29 + sector.length * 17;
+  const roleSeed = targetRole ? [...targetRole].reduce((sum, character) => sum + character.charCodeAt(0), 0) : 0;
+  for (let index = 0; index < count * 8 && result.length < count; index += 1) {
+    const seed = companyId * 97 + marketCycle * 53 + index * 29 + sector.length * 17 + roleSeed * 11;
     const firstName = laborFirstNames[seed % laborFirstNames.length];
     const lastName = laborLastNames[(seed * 7 + companyId * 11) % laborLastNames.length];
     const name = `${firstName} ${lastName}`;
     if (used.has(name)) continue;
     used.add(name);
-    const role = laborRoles[sector][(seed * 5 + index) % laborRoles[sector].length];
+    const role = targetRole ?? laborRoles[sector][(seed * 5 + index) % laborRoles[sector].length];
     const skill = Math.round(clamp(36 + (seed % 35) + employerScore * .27 + (index % 5 === 0 ? -8 : 0), 36, 96));
     const talentTier = talentTierFor(skill);
     const requiredEmployerScore = talentTier === "elite" ? 82 : talentTier === "senior" ? 66 : talentTier === "pleno" ? 46 : talentTier === "junior" ? 28 : 12;
@@ -2247,6 +2286,8 @@ function createLaborMarket(sector: Sector, companyId: number, week: number, exis
       loyalty: 48 + ((seed * 7) % 40),
       trait: laborTraits[(seed + index * 3) % laborTraits.length],
       ambition: laborAmbitions[(seed * 3 + index) % laborAmbitions.length],
+      specialties: specialtiesForRole(role, seed),
+      workStyle: laborWorkStyles[(seed + index * 2) % laborWorkStyles.length],
       color: laborColors[(seed + index) % laborColors.length],
       relation: 45 + (seed % 19),
       stress: 8 + (seed % 18),
@@ -2377,7 +2418,7 @@ function ceoProductProposalMessage(company: Company, product: Project): StoryMes
   };
 }
 
-function createCEOHireCandidate(company: Company, week: number, style: CEOStyle): Employee {
+function createCEOHireCandidate(company: Company, week: number, style: CEOStyle, targetRole?: string): Employee {
   const roles: Record<CEOStyle, string[]> = {
     crescimento: ["Comercial", "Marketing", "Parcerias"],
     eficiencia: ["Financeiro", "Operações", "Controladoria"],
@@ -2397,11 +2438,11 @@ function createCEOHireCandidate(company: Company, week: number, style: CEOStyle)
     pessoas: ["Quer construir uma cultura admirada", "Busca formar novos líderes"],
   };
   const seed = week * 7 + company.id * 11 + company.employees.length * 3;
-  const market = createLaborMarket(company.sector, company.id, week, company.employees.map((employee) => employee.name), 12, company);
+  const role = targetRole ?? roles[style][seed % roles[style].length];
+  const market = createLaborMarket(company.sector, company.id, week, company.employees.map((employee) => employee.name), 12, company, role);
   const preferredRoles = roles[style];
-  const selected = market.find((candidate) => preferredRoles.some((role) => candidate.role.includes(role))) ?? market[seed % market.length];
+  const selected = market.find((candidate) => candidate.role === role) ?? market.find((candidate) => preferredRoles.some((preferredRole) => candidate.role.includes(preferredRole))) ?? market[seed % market.length];
   const name = selected.name;
-  const role = roles[style][seed % roles[style].length];
   const skill = Math.round(clamp(selected.skill + (style === "inovacao" ? 4 : 2), 42, 96));
   const marketSalary = Math.max(selected.market, Math.round((3900 + skill * 38 + (style === "inovacao" ? 700 : 0)) / 100) * 100);
   const salary = Math.round((marketSalary * (0.91 + (seed % 5) / 100)) / 100) * 100;
@@ -2467,7 +2508,7 @@ function ceoHireProposalMessage(company: Company, candidate: Employee, reason: s
         };
       }),
       news: accepts ? [{ id: Date.now() + candidate.id, week: state.week, category: "pessoas" as const, headline: `${candidate.name} reforça a ${company.name}`, body: `${company.ceo} convenceu a holding a contratar um profissional de ${candidate.role.toLowerCase()} por ${money.format(offeredSalary)} mensais.`, impact: "positivo" as const }, ...state.news].slice(0, 60) : state.news,
-      staffAlerts: accepts ? (state.staffAlerts ?? []).map((alert) => alert.companyId === company.id && !alert.resolved ? { ...alert, resolved: true } : alert) : state.staffAlerts,
+      staffAlerts: accepts ? (() => { let vacancyFilled = false; return (state.staffAlerts ?? []).map((alert) => { if (!vacancyFilled && alert.companyId === company.id && !alert.resolved && alert.role === candidate.role) { vacancyFilled = true; return { ...alert, resolved: true }; } return alert; }); })() : state.staffAlerts,
       log: [accepts ? `${candidate.name} aceitou entrar na ${company.name} por ${money.format(offeredSalary)} mensais.` : `${candidate.name} recusou a contraproposta de ${money.format(offeredSalary)} mensais.`, ...state.log].slice(0, 40),
     };
   };
@@ -2675,6 +2716,8 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
     employees: foundingTeam.map((employee) => ({
       ...employee,
       department: employee.department ?? inferDepartment(employee.role),
+      specialties: employee.specialties ?? specialtiesForRole(employee.role, employee.id),
+      workStyle: employee.workStyle ?? laborWorkStyles[employee.id % laborWorkStyles.length],
     })),
     projects: [
       {
@@ -3177,6 +3220,18 @@ const rivalNames = [
   ["Ponto Um", "Renan Vidal"],
   ["Vanguarda", "Alice Moura"],
   ["Nova Rua", "Pedro Salles"],
+  ["Meridiano Participações", "Aline Queiroz"],
+  ["Cobalto Ventures", "Augusto Ferraz"],
+  ["Grupo Clareira", "Bianca Monteiro"],
+  ["Ponte Sul", "Daniel Amaral"],
+  ["Horizonte Uno", "Heloísa Prado"],
+  ["Casa Íris", "Leonardo Abreu"],
+  ["Norte & Vale", "Natália Guimarães"],
+  ["Prisma Brasil", "Otávio Franco"],
+  ["Elo Estratégico", "Renata Cabral"],
+  ["Cais Participações", "Samuel Bittencourt"],
+  ["Matriz Capital", "Talita Andrade"],
+  ["Vox Group", "Vitor Lacerda"],
 ];
 const strategies = [
   "Preço baixo",
@@ -3222,11 +3277,12 @@ function rivalProductName(sector: Sector, seed = Math.random()): string {
 }
 
 function generateCompetitors(sector: Sector, seed = Date.now()): Competitor[] {
-  return rivalNames
-    .slice(0)
-    .sort(() => Math.sin(seed++))
-    .slice(0, 3)
-    .map(([name, founder], index) => ({
+  const names: string[] = [];
+  return Array.from({ length: 3 }, (_, index) => {
+    const name = generateCompanyName(sector, names, seed + index * 37);
+    names.push(name);
+    const founder = rivalNames[Math.abs(Math.floor(seed / 13 + index * 5)) % rivalNames.length][1];
+    return ({
       id: seed + index,
       name,
       founder,
@@ -3254,7 +3310,8 @@ function generateCompetitors(sector: Sector, seed = Date.now()): Competitor[] {
       researchFocus: researchDefinitions[sector][0].title,
       history: [`${name} entrou no mercado sob comando de ${founder}.`],
       lastDecision: "Consolidar a operação",
-    }));
+    });
+  });
 }
 
 function generateNewCompetitor(
@@ -3262,36 +3319,7 @@ function generateNewCompetitor(
   existing: Competitor[],
   seed = Date.now(),
 ): Competitor {
-  const used = new Set(existing.map((r) => r.name));
-  const prefixes = [
-    "Núcleo",
-    "Cais",
-    "Trama",
-    "Aflora",
-    "Ímpar",
-    "Rota",
-    "Prisma",
-    "Origem",
-    "Cubo",
-    "Elo",
-  ];
-  const suffixes = [
-    "Brasil",
-    "Works",
-    "Lab",
-    "Companhia",
-    "Hub",
-    "Negócios",
-    "Digital",
-    "Sul",
-    "Prime",
-  ];
-  let name = "";
-  let attempts = 0;
-  while ((!name || used.has(name)) && attempts < 30) {
-    name = `${prefixes[Math.floor(Math.random() * prefixes.length)]} ${suffixes[Math.floor(Math.random() * suffixes.length)]}`;
-    attempts++;
-  }
+  const name = generateCompanyName(sector, existing.map((r) => r.name), seed);
   const founders = [
     "Laura Campos",
     "André Bastos",
@@ -3299,7 +3327,8 @@ function generateNewCompetitor(
     "Gustavo Pires",
     "Tainá Nunes",
     "Leandro Reis",
-    "Isabela Vaz",
+    "Isabela Vaz", "Bruno Fontes", "Clara Muniz", "Diego Nascimento", "Eduarda Coelho",
+    "Felipe Machado", "Jade Vasconcelos", "Jonas Santana", "Lorena Marques", "Raul Silveira",
   ];
   return {
     id: seed,
@@ -3585,7 +3614,7 @@ function employeeCrisisMessage(
         effect: (s) => ({
           ...s,
           reputation: Math.max(0, s.reputation - 3),
-          staffAlerts: [{ id: `staff-${company.id}-${employee.id}-${s.week}`, companyId: company.id, companyName: s.companies.find((item) => item.id === company.id)?.name ?? "Empresa", employeeName: employee.name, role: employee.role, reason: "demissao", week: s.week, responsible: s.companies.find((item) => item.id === company.id)?.ceo ?? s.playerExecutive ?? s.founder, headcountAfter: Math.max(0, (s.companies.find((item) => item.id === company.id)?.employees.length ?? 1) - 1) }, ...(s.staffAlerts ?? [])].slice(0, 20),
+          staffAlerts: [{ id: `staff-${company.id}-${employee.id}-${s.week}`, companyId: company.id, companyName: s.companies.find((item) => item.id === company.id)?.name ?? "Empresa", employeeName: employee.name, role: employee.role, reason: "demissao", week: s.week, responsible: s.companies.find((item) => item.id === company.id)?.ceo ?? s.playerExecutive ?? s.founder, headcountAfter: Math.max(0, (s.companies.find((item) => item.id === company.id)?.employees.length ?? 1) - 1), roleCountAfter: Math.max(0, (s.companies.find((item) => item.id === company.id)?.employees.filter((person) => person.role === employee.role).length ?? 1) - 1) }, ...(s.staffAlerts ?? [])].slice(0, 20),
           companies: s.companies.map((c) =>
             c.id !== company.id
               ? c
@@ -5689,6 +5718,7 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [pageGuideView, setPageGuideView] = useState<View | null>(null);
   const [companyName, setCompanyName] = useState("");
+  const [hireRole, setHireRole] = useState("");
   const [speed, setSpeed] = useState<0 | 1 | 2>(0);
   const [timeAdvance, setTimeAdvance] = useState<{
     remaining: number;
@@ -6067,6 +6097,8 @@ export default function Home() {
               memories: e.memories ?? [],
               department: e.department ?? inferDepartment(e.role),
               talentTier: e.talentTier ?? talentTierFor(e.skill),
+              specialties: e.specialties ?? specialtiesForRole(e.role, e.id),
+              workStyle: e.workStyle ?? laborWorkStyles[Math.abs(e.id) % laborWorkStyles.length],
             })),
           })),
         });
@@ -6354,12 +6386,21 @@ export default function Home() {
     setTimeout(() => setToast(""), 2600);
   };
 
+  const openTalentMarket = (requestedRole?: string) => {
+    if (!active) return;
+    const roleCounts = laborRoles[active.sector].map((role) => ({ role, count: active.employees.filter((employee) => employee.role === role).length }));
+    const suggested = [...roleCounts].sort((a, b) => a.count - b.count || a.role.localeCompare(b.role))[0]?.role ?? laborRoles[active.sector][0];
+    setHireRole(requestedRole || suggested);
+    setDialog("hire");
+  };
+
   const openStaffReplacement = (alert: StaffAlert) => {
     const company = game.companies.find((item) => item.id === alert.companyId);
     if (!company) return;
     setGame((state) => ({ ...state, activeCompanyId: company.id }));
     if (company.ceo === currentLeader || alert.responsible === currentLeader) {
       setView("pessoas");
+      setHireRole(alert.role);
       setDialog("hire");
       return;
     }
@@ -6697,7 +6738,7 @@ export default function Home() {
 
   const start = (sector: Sector, holdingName: string, founderName: string, difficulty: GameDifficulty) => {
     const startingCash = difficultyProfiles[difficulty].startingCash;
-    const company = { ...newCompany(sector), cash: startingCash, history: [startingCash], ceo: founderName.trim() };
+    const company = { ...newCompany(sector), name: generateCompanyName(sector, [], Date.now()), cash: startingCash, history: [startingCash], ceo: founderName.trim() };
     const competitors = generateCompetitors(sector);
     setGame({
       ...initialState,
@@ -7810,11 +7851,13 @@ export default function Home() {
               : e.memories,
           };
         });
+        let departedRole: string | undefined;
         let employees: Employee[] = evolvedEmployees.filter((e) => {
           const retentionEffect = clamp(1 - Math.max(0, peopleDirectorStrength - 45) / 110, .45, 1);
           const leaves =
             e.loyalty < 18 && (e.weeks ?? 0) > 8 && Math.random() < 0.24 * difficulty.departure * retentionEffect;
           if (leaves) {
+            departedRole ??= e.role;
             employerBrand = clamp(employerBrand - 2.2);
             weeklyNews.push({
               id: Date.now() + e.id,
@@ -7824,7 +7867,7 @@ export default function Home() {
               body: `A saída de ${e.role.toLowerCase()} ocorre após semanas de desgaste e deve afetar projetos em andamento.`,
               impact: "negativo",
             });
-            newStaffAlerts.push({ id: `staff-${company.id}-${e.id}-${nextWeek}`, companyId: company.id, companyName: company.name, employeeName: e.name, role: e.role, reason: "demissao", week: nextWeek, responsible: company.ceo ?? controlledExecutive, headcountAfter: Math.max(0, evolvedEmployees.length - 1) });
+            newStaffAlerts.push({ id: `staff-${company.id}-${e.id}-${nextWeek}`, companyId: company.id, companyName: company.name, employeeName: e.name, role: e.role, reason: "demissao", week: nextWeek, responsible: company.ceo ?? controlledExecutive, headcountAfter: Math.max(0, evolvedEmployees.length - 1), roleCountAfter: Math.max(0, evolvedEmployees.filter((person) => person.role === e.role).length - 1) });
           }
           return !leaves;
         });
@@ -7834,7 +7877,7 @@ export default function Home() {
           if (dismissal && (dismissal.skill < 58 || dismissal.morale < 30)) {
             employerBrand = clamp(employerBrand - 1.2);
             employees = employees.filter((employee) => employee.id !== dismissal.id);
-            newStaffAlerts.push({ id: `staff-${company.id}-${dismissal.id}-${nextWeek}`, companyId: company.id, companyName: company.name, employeeName: dismissal.name, role: dismissal.role, reason: "desligamento", week: nextWeek, responsible: company.ceo ?? "CEO", headcountAfter: employees.length });
+            newStaffAlerts.push({ id: `staff-${company.id}-${dismissal.id}-${nextWeek}`, companyId: company.id, companyName: company.name, employeeName: dismissal.name, role: dismissal.role, reason: "desligamento", week: nextWeek, responsible: company.ceo ?? "CEO", headcountAfter: employees.length, roleCountAfter: employees.filter((person) => person.role === dismissal.role).length });
             ceoLastDecision = `Desligou ${dismissal.name} por baixo desempenho`;
             weeklyNews.push({ id: Date.now() + dismissal.id + 21, week: nextWeek, category: "pessoas", headline: `${company.ceo} desliga ${dismissal.name} da ${company.name}`, body: `O CEO usou sua autonomia para encerrar o vínculo por desempenho. A posição entrou em revisão para possível reposição.`, impact: "negativo" });
           }
@@ -7876,7 +7919,8 @@ export default function Home() {
             : activeProjectCount >= Math.max(1, Math.ceil(employees.length / 2))
               ? `Temos ${activeProjectCount} projetos ativos para uma equipe de ${employees.length} pessoas.`
               : "A demanda cresceu além da capacidade segura da equipe.";
-        const plannedHire = createCEOHireCandidate({ ...company, employees }, nextWeek, ceoStyle);
+        const unresolvedVacancyRole = current.staffAlerts?.find((alert) => alert.companyId === company.id && !alert.resolved)?.role;
+        const plannedHire = createCEOHireCandidate({ ...company, employees }, nextWeek, ceoStyle, replacementVacancy ? departedRole ?? unresolvedVacancyRole : undefined);
         const ceoOnboardingCost = 2500 + (plannedHire.signingBonus ?? 0);
         const hiringReserve = replacementVacancy
           ? 15000 + plannedHire.salary * 2 + ceoOnboardingCost
@@ -9364,7 +9408,10 @@ export default function Home() {
         dynastyEndingReady,
         staffAlerts: [...newStaffAlerts, ...(current.staffAlerts ?? [])].map((alert) => {
           const alertCompany = companies.find((company) => company.id === alert.companyId);
-          return !alert.resolved && alertCompany && alertCompany.employees.length > (alert.headcountAfter ?? alertCompany.employees.length) ? { ...alert, resolved: true } : alert;
+          if (alert.resolved || !alertCompany) return alert;
+          const roleReplaced = alert.roleCountAfter !== undefined && alertCompany.employees.filter((employee) => employee.role === alert.role).length > alert.roleCountAfter;
+          const legacyHeadcountReplaced = alert.roleCountAfter === undefined && alertCompany.employees.length > (alert.headcountAfter ?? alertCompany.employees.length);
+          return roleReplaced || legacyHeadcountReplaced ? { ...alert, resolved: true } : alert;
         }).slice(0, 20),
         factions,
         factionHistory: hostileFaction ? [`Semana ${nextWeek}: ${hostileFaction.name} iniciou oposição.`, ...(current.factionHistory ?? [])].slice(0, 16) : current.factionHistory,
@@ -9620,7 +9667,7 @@ export default function Home() {
     setGame((state) => evolveIdentity({
       ...state,
       companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, cash: company.cash - onboardingCost, employerBrand: clamp((company.employerBrand ?? 35) + .6), employees: [...company.employees, { ...candidate, id: Date.now(), department: candidate.department ?? inferDepartment(candidate.role), memories: addCharacterMemory(candidate.memories, characterMemory(state.week, "contratacao", "Você apostou em mim e abriu as portas desta empresa.", "confiante", 7, 72)) }], workforceTarget: Math.max(company.workforceTarget ?? company.employees.length, company.employees.length + 1) })),
-      staffAlerts: (state.staffAlerts ?? []).map((alert) => alert.companyId === active.id && !alert.resolved ? { ...alert, resolved: true } : alert),
+      staffAlerts: (() => { let vacancyFilled = false; return (state.staffAlerts ?? []).map((alert) => { if (!vacancyFilled && alert.companyId === active.id && !alert.resolved && alert.role === candidate.role) { vacancyFilled = true; return { ...alert, resolved: true }; } return alert; }); })(),
       financialLedger: [{ id: `${state.week}-${active.id}-hire-${Date.now()}`, week: state.week, companyId: active.id, companyName: active.name, category: "equipe", label: `Contratação de ${candidate.name}`, amount: -onboardingCost, detail: `Recrutamento, integração e bônus de entrada de ${money.format(candidate.signingBonus ?? 0)}.` }, ...(state.financialLedger ?? [])].slice(0, 180),
     }, { pessoas: 1 }, `contratação de ${candidate.name}`));
     setDialog(null);
@@ -9706,7 +9753,7 @@ export default function Home() {
       ...state,
       reputation: clamp(state.reputation - 2),
       companies: state.companies.map((company) => company.id !== active.id ? company : ({ ...company, employees: company.employees.filter((person) => person.id !== employee.id), directors: (company.directors ?? []).filter((director) => director.employeeId !== employee.id), directorVacancies: dismissedDirector ? { ...(company.directorVacancies ?? {}), [dismissedDirector.area]: state.week } : company.directorVacancies, directorOfferWeeks: dismissedDirector ? { ...(company.directorOfferWeeks ?? {}), [dismissedDirector.area]: undefined } : company.directorOfferWeeks, workforceTarget: Math.max(2, (company.workforceTarget ?? company.employees.length) - 1), reputation: clamp(company.reputation - 2), employerBrand: clamp((company.employerBrand ?? 35) - (employee.skill >= 77 ? 3 : 1.5)) })),
-      staffAlerts: [{ id: `staff-${active.id}-${employee.id}-${state.week}`, companyId: active.id, companyName: active.name, employeeName: employee.name, role: employee.role, reason: "desligamento", week: state.week, responsible: currentLeader, headcountAfter: active.employees.length - 1 }, ...(state.staffAlerts ?? [])].slice(0, 20),
+      staffAlerts: [{ id: `staff-${active.id}-${employee.id}-${state.week}`, companyId: active.id, companyName: active.name, employeeName: employee.name, role: employee.role, reason: "desligamento", week: state.week, responsible: currentLeader, headcountAfter: active.employees.length - 1, roleCountAfter: Math.max(0, active.employees.filter((person) => person.role === employee.role).length - 1) }, ...(state.staffAlerts ?? [])].slice(0, 20),
       news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${employee.name} é desligado da ${active.name}`, body: `${currentLeader} decidiu encerrar o vínculo de ${employee.role.toLowerCase()}. A empresa precisará decidir se elimina a posição ou busca reposição.`, impact: "negativo" }, ...state.news].slice(0, 60),
     }));
     notify(`${employee.name} foi desligado. Um alerta de equipe foi criado.`);
@@ -10297,7 +10344,7 @@ export default function Home() {
     const company = {
       ...newCompany(sector, id, game.week),
       cash: Math.round(cost * 0.65),
-      name: companyName.trim() || sectorData[sector].company,
+      name: companyName.trim() || generateCompanyName(sector, game.companies.map((item) => item.name), id),
       ceo: currentLeader,
     };
     setGame((s) => ({
@@ -12272,7 +12319,7 @@ export default function Home() {
             title="O que eles não dizem na reunião."
             text={isCEO ? "Cada pessoa tem ambições, limites e uma relação diferente com você. Dinheiro resolve algumas coisas — nunca todas." : `${currentLeader} preside a holding, mas ${active.ceo} é o CEO desta empresa. O controle direto fica com ele; use Meu Grupo para supervisionar ou reassuma o cargo.`}
             action={
-              <button disabled={!isCEO} onClick={() => setDialog("hire")}>
+              <button disabled={!isCEO} onClick={() => openTalentMarket()}>
                 Conhecer candidatos
               </button>
             }
@@ -12280,7 +12327,7 @@ export default function Home() {
           <nav className="section-subnav" aria-label="Áreas de pessoas">
             <button className={peopleTab === "equipe" ? "active" : ""} onClick={() => setPeopleTab("equipe")}>Equipe <b>{active.employees.length}</b></button>
             <button className={peopleTab === "diretoria" ? "active" : ""} onClick={() => setPeopleTab("diretoria")}>Diretoria <b>{active.directors?.length ?? 0}/4</b></button>
-            <button onClick={() => setDialog("hire")}>Mercado de talentos <b>↗</b></button>
+            <button onClick={() => openTalentMarket()}>Mercado de talentos <b>↗</b></button>
           </nav>
           {peopleTab === "diretoria" && <section className="company-directors">
             <header>
@@ -13316,7 +13363,7 @@ export default function Home() {
           <div className="employee-profile-room">
             <header>
               <div className="employee-profile-avatar" style={{ "--person": selectedEmployee.color } as React.CSSProperties}>{selectedEmployee.initials}</div>
-              <div><small>{selectedEmployee.role.toUpperCase()} · {directorAreaLabels[selectedEmployee.department ?? inferDepartment(selectedEmployee.role)].toUpperCase()}</small><h2>{selectedEmployee.name}</h2><p>“{selectedEmployee.ambition}.” · Perfil {selectedEmployee.trait.toLowerCase()}.</p></div>
+              <div><small>{selectedEmployee.role.toUpperCase()} · {directorAreaLabels[selectedEmployee.department ?? inferDepartment(selectedEmployee.role)].toUpperCase()}</small><h2>{selectedEmployee.name}</h2><p>“{selectedEmployee.ambition}.” · Perfil {selectedEmployee.trait.toLowerCase()}{selectedEmployee.workStyle ? `, estilo ${selectedEmployee.workStyle}` : ""}.</p>{!!selectedEmployee.specialties?.length && <div className="employee-specialties">{selectedEmployee.specialties.map((specialty) => <span key={specialty}>{specialty}</span>)}</div>}</div>
               <strong>{money.format(selectedEmployee.salary)}<span>por mês · mercado {money.format(selectedEmployee.market)}</span></strong>
             </header>
             <section className="employee-profile-metrics">
@@ -13442,10 +13489,11 @@ export default function Home() {
           {(() => {
             const currentDirector = (active.directors ?? []).find((item) => item.area === directorArea);
             const internalCandidates = active.employees
-              .filter((employee) => !(active.directors ?? []).some((director) => director.employeeId === employee.id) && !employee.role.startsWith("Diretor"))
+              .filter((employee) => !(active.directors ?? []).some((director) => director.employeeId === employee.id) && !employee.role.startsWith("Diretor") && (employee.department ?? inferDepartment(employee.role)) === directorArea)
               .sort((a, b) => b.skill + b.loyalty * .25 - (a.skill + a.loyalty * .25))
               .slice(0, 5);
-            const externalCandidates = createLaborMarket(active.sector, active.id + 37, game.week, active.employees.map((employee) => employee.name), 7, active)
+            const externalRole = directorArea === "pessoas" ? "Pessoas e Cultura" : laborRoles[active.sector].find((role) => inferDepartment(role) === directorArea) ?? directorAreaLabels[directorArea];
+            const externalCandidates = createLaborMarket(active.sector, active.id + 37, game.week, active.employees.map((employee) => employee.name), 7, active, externalRole)
               .sort((a, b) => b.skill - a.skill)
               .slice(0, 4);
             return currentDirector ? <section className="current-director-detail">
@@ -13475,12 +13523,13 @@ export default function Home() {
         <GameModal onClose={() => setDialog(null)}>
           <ModalTitle
             label="MERCADO DE TALENTOS"
-            title="Uma contratação muda o grupo."
-            text={`A lista é própria do setor e da região da ${active?.name ?? "empresa"}, com novos perfis a cada duas semanas. Talentos melhores observam reputação, estrutura, benefícios, clima e porte antes de aceitar uma conversa.`}
+            title={hireRole ? `Vaga: ${hireRole}` : "Escolha a vaga antes de procurar alguém."}
+            text={`Cada busca mostra somente candidatos da função selecionada, com novos nomes e perfis a cada duas semanas. Talentos melhores observam reputação, estrutura, benefícios, clima e porte antes de aceitar uma conversa.`}
           />
+          {active && <section className="hire-role-selector"><small>QUAL VAGA VOCÊ PRECISA PREENCHER?</small><div>{[...new Set([hireRole, ...laborRoles[active.sector], ...(game.staffAlerts ?? []).filter((alert) => alert.companyId === active.id && !alert.resolved).map((alert) => alert.role)].filter(Boolean))].map((role) => <button className={hireRole === role ? "active" : ""} key={role} onClick={() => setHireRole(role)}>{role}<b>{active.employees.filter((employee) => employee.role === role).length} na equipe</b></button>)}</div></section>}
           {active && (() => { const attraction = employerAttraction(active); return <section className="talent-market-summary"><div><small>MARCA EMPREGADORA</small><b>{attraction.score}/100</b><span>{attraction.label}</span></div><div><small>CLIMA PERCEBIDO</small><b>{attraction.morale}%</b><span>Estresse médio {attraction.stress}%</span></div><div><small>FAIXA MAIS PROVÁVEL</small><b>{attraction.score >= 82 ? "Sênior e elite" : attraction.score >= 62 ? "Pleno e sênior" : attraction.score >= 42 ? "Júnior e pleno" : "Iniciante e júnior"}</b><span>Melhore benefícios, treinamento e reputação para avançar</span></div></section>; })()}
           <div className="hire-list">
-            {(active ? createLaborMarket(active.sector, active.id, game.week, active.employees.map((employee) => employee.name), 10, active) : [])
+            {(active && hireRole ? createLaborMarket(active.sector, active.id, game.week, active.employees.map((employee) => employee.name), 10, active, hireRole) : [])
               .map((c) => { const acceptance = active ? candidateAcceptance(active, c) : 0; const onboarding = 2500 + (c.signingBonus ?? 0); return (
                 <button disabled={!active || active.cash < onboarding} key={c.name} onClick={() => hire(c)}>
                   <Avatar initials={c.initials} color={c.color} />
@@ -13490,6 +13539,7 @@ export default function Home() {
                       {c.role} · {c.trait} · {talentTierLabels[c.talentTier ?? talentTierFor(c.skill)]}
                     </small>
                     <em>“{c.ambition}.”</em>
+                    <span className="candidate-specialties">{(c.specialties ?? []).map((specialty) => <i key={specialty}>{specialty}</i>)}{c.workStyle && <i>estilo {c.workStyle}</i>}</span>
                     <i className={`candidate-chance ${acceptance < 50 ? "low" : acceptance >= 80 ? "high" : ""}`}>{acceptance}% de chance de aceitar · competência {c.skill}</i>
                   </span>
                   <strong>{money.format(c.salary)}<small>/mês<br />+ {money.format(onboarding)} integração</small></strong>

@@ -1316,6 +1316,16 @@ button {
   font: 700 11px var(--font-geist-mono);
 }
 .hire-list > button > strong small { display: block; margin-top: 5px; color: #777; font: 400 7px Arial; text-align: right; line-height: 1.4; }
+.hire-role-selector { margin-top: 18px; padding: 15px; border: 1px solid var(--line); background: #f3eadc; }
+.hire-role-selector > small { display: block; margin-bottom: 10px; color: #765536; font: 800 10px var(--font-geist-mono); letter-spacing: .1em; }
+.hire-role-selector > div { display: flex; gap: 7px; max-height: 150px; overflow-y: auto; flex-wrap: wrap; }
+.hire-role-selector button { display: flex; padding: 9px 11px; border: 1px solid #baad9c; background: #fff9ef; color: #37322e; font: 700 11px var(--font-geist-mono); flex-direction: column; text-align: left; }
+.hire-role-selector button b { margin-top: 3px; color: #7b7066; font-size: 9px; font-weight: 600; }
+.hire-role-selector button.active { border-color: #2f7168; outline: 2px solid rgba(47,113,104,.16); background: #dcebe5; color: #23594f; }
+.candidate-specialties,
+.employee-specialties { display: flex !important; gap: 5px; margin-top: 7px; flex-wrap: wrap; }
+.candidate-specialties i,
+.employee-specialties span { display: inline-block !important; padding: 4px 6px; background: rgba(39,87,80,.1); color: #285e56; font: 700 9px/1.2 var(--font-geist-mono) !important; font-style: normal !important; }
 .facility-room { padding: 38px; }
 .facility-overview {
   display: grid;
