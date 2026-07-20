@@ -243,8 +243,23 @@ type Project = {
   launchOutcome?: "sucesso" | "morno" | "falha" | "desastre";
   lastVersionOutcome?: "melhoria" | "ignorada" | "bugs" | "rejeitada" | "canibalizacao";
   emergencyWeeks?: number;
+  ceoPlan?: CEOProductPlan;
 };
 type ProductPreparation = "pesquisa" | "prototipo" | "testes" | "seguranca" | "qualidade" | "piloto" | "suporte";
+type CEOProductPlan = {
+  owner: string;
+  strategy: "economica" | "equilibrada" | "robusta";
+  stage: "equipe" | "producao" | "validacao" | "lancamento" | "encerrado";
+  targetPreparation: Partial<Record<ProductPreparation, number>>;
+  missingRoles: string[];
+  readiness: number;
+  invested: number;
+  lastReviewWeek: number;
+  nextMilestone: number;
+  delayCount: number;
+  launchDecision?: "lancar" | "adiar" | "reduzir" | "cancelar";
+  decisions: string[];
+};
 type ProductFeedback = { id: string; week: number; rating: number; text: string; tone: "positivo" | "neutro" | "negativo" };
 type ResearchBudget = "enxuto" | "equilibrado" | "intensivo";
 type ResearchEffects = {
@@ -2288,8 +2303,41 @@ function productBlueprint(sector: Sector, complexity: Project["complexity"] = 3)
 
 function productRoleCoverage(product: Project, company: Company) {
   const requirements = product.requiredRoles ?? productBlueprint(company.sector, product.complexity ?? 3).requiredRoles;
-  const covered = requirements.filter((requirement) => requirement.split("|").some((role) => company.employees.some((employee) => employee.role.toLowerCase().includes(role.toLowerCase()))));
+  const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const covered = requirements.filter((requirement) => requirement.split("|").some((role) => company.employees.some((employee) => {
+    const profile = normalize([employee.role, ...(employee.specialties ?? [])].join(" "));
+    const wanted = normalize(role);
+    return profile.includes(wanted) || wanted.includes(profile);
+  })));
   return { requirements, covered: covered.length, missing: requirements.filter((requirement) => !covered.includes(requirement)), ratio: requirements.length ? covered.length / requirements.length : 1 };
+}
+
+function productRequirementRole(company: Company, requirement: string) {
+  const alternatives = requirement.split("|");
+  return alternatives.find((role) => laborRoles[company.sector].includes(role)) ?? alternatives[0];
+}
+
+function ceoProductTargets(style: CEOStyle): Partial<Record<ProductPreparation, number>> {
+  if (style === "inovacao") return { pesquisa: 2, prototipo: 2, testes: 2, seguranca: 2, qualidade: 2, piloto: 1, suporte: 1 };
+  if (style === "eficiencia") return { pesquisa: 1, testes: 2, seguranca: 1, qualidade: 2, piloto: 1 };
+  if (style === "pessoas") return { pesquisa: 1, prototipo: 1, testes: 1, qualidade: 2, piloto: 1, suporte: 2 };
+  return { pesquisa: 1, prototipo: 1, testes: 1, seguranca: 1, qualidade: 1, piloto: 1 };
+}
+
+function ceoProductReadiness(product: Project, company: Company, difficulty: GameDifficulty = "executivo") {
+  const risk = productRiskProfile(product, company, difficulty);
+  const preparation = product.preparation ?? {};
+  const target = product.ceoPlan?.targetPreparation ?? ceoProductTargets(company.ceoStyle ?? "crescimento");
+  const targetPoints = Math.max(1, Object.values(target).reduce((sum, level) => sum + (level ?? 0), 0));
+  const completedPoints = (Object.entries(target) as [ProductPreparation, number][]).reduce((sum, [key, level]) => sum + Math.min(level, preparation[key] ?? 0), 0);
+  return Math.round(clamp(risk.coverage.ratio * 28 + Math.min(1, company.employees.length / Math.max(1, product.requiredTeam ?? 3)) * 16 + completedPoints / targetPoints * 24 + product.quality * .24 + (100 - risk.failureChance) * .08));
+}
+
+function buildCEOProductPlan(product: Project, company: Company, week: number, style: CEOStyle): CEOProductPlan {
+  const coverage = productRoleCoverage(product, company);
+  const strategy = style === "eficiencia" ? "economica" : style === "inovacao" || style === "pessoas" ? "robusta" : "equilibrada";
+  const plan: CEOProductPlan = { owner: company.ceo ?? "CEO", strategy, stage: coverage.missing.length ? "equipe" : "producao", targetPreparation: ceoProductTargets(style), missingRoles: coverage.missing, readiness: 0, invested: 0, lastReviewWeek: week, nextMilestone: 25, delayCount: 0, decisions: [`Semana ${week}: plano executivo criado e competências auditadas.`] };
+  return { ...plan, readiness: ceoProductReadiness({ ...product, ceoPlan: plan }, company) };
 }
 
 function productRiskProfile(product: Project, company: Company, difficulty: GameDifficulty = "executivo") {
@@ -2431,7 +2479,7 @@ function createCEOProduct(company: Company, week: number, style: CEOStyle): Proj
   const profile = profiles[style];
   const names = ceoProductNames[company.sector][style];
   const complexity = (style === "inovacao" ? 5 : style === "crescimento" ? 4 : style === "eficiencia" ? 2 : 3) as 1 | 2 | 3 | 4 | 5;
-  return {
+  const product: Project = {
     id: Date.now() + company.id * 100 + week,
     name: names[(week + company.id) % names.length],
     progress: 0,
@@ -2461,6 +2509,7 @@ function createCEOProduct(company: Company, week: number, style: CEOStyle): Proj
     supportLevel: 0,
     feedback: [],
   };
+  return { ...product, ceoPlan: buildCEOProductPlan(product, company, week, style) };
 }
 
 function ceoProductProposalMessage(company: Company, product: Project): StoryMessage {
@@ -2508,6 +2557,41 @@ function ceoProductProposalMessage(company: Company, product: Project): StoryMes
       { label: `Aprovar o projeto · ${money.format(product.budget)}`, tone: "good", result: `${company.ceo} recebeu autorização para desenvolver ${product.name}.`, effect: (state) => startProduct(state) },
       { label: "Autorizar somente um piloto", result: "O plano foi reduzido a um piloto mais barato e menos arriscado.", effect: (state) => startProduct(state, true) },
       { label: "Recusar o produto", tone: "risk", result: `${company.ceo} recebeu a ordem de manter o foco na operação atual.`, effect: (state) => ({ ...state, companies: state.companies.map((item) => item.id !== company.id ? item : ({ ...item, ceoTrust: clamp((item.ceoTrust ?? 65) - 4), ceoLoyalty: clamp((item.ceoLoyalty ?? 65) - 3), ceoProductCooldown: 10, ceoLastDecision: `Teve a proposta ${product.name} recusada`, ceoHistory: [`Semana ${state.week}: proposta de ${product.name} recusada pela holding.`, ...(item.ceoHistory ?? [])].slice(0, 8), ceoMemories: addCharacterMemory(item.ceoMemories, characterMemory(state.week, "produto", "Você recusou o produto que eu considerava importante para minha estratégia.", "magoado", -7, 72)) })) }) },
+    ],
+  };
+}
+
+function ceoProductLaunchMessage(company: Company, product: Project, readiness: number): StoryMessage {
+  const update = (state: GameState, decision: NonNullable<CEOProductPlan["launchDecision"]>): GameState => ({
+    ...state,
+    companies: state.companies.map((item) => item.id !== company.id ? item : ({
+      ...item,
+      projects: item.projects.map((candidate) => candidate.id !== product.id ? candidate : ({
+        ...candidate,
+        progress: decision === "lancar" || decision === "cancelar" ? 100 : decision === "reduzir" ? 92 : 96,
+        complexity: decision === "reduzir" ? Math.max(1, (candidate.complexity ?? 3) - 1) as Project["complexity"] : candidate.complexity,
+        recurring: decision === "reduzir" ? Math.round((candidate.recurring ?? 0) * .82) : candidate.recurring,
+        status: decision === "cancelar" ? "concluido" as const : candidate.status,
+        lifecycle: decision === "cancelar" ? "fora_de_linha" as const : candidate.lifecycle,
+        ceoPlan: candidate.ceoPlan ? { ...candidate.ceoPlan, stage: decision === "cancelar" ? "encerrado" : decision === "lancar" ? "lancamento" : "validacao", launchDecision: decision, delayCount: candidate.ceoPlan.delayCount + (decision === "adiar" ? 1 : 0), decisions: [`Semana ${state.week}: presidência decidiu ${decision} o produto.`, ...candidate.ceoPlan.decisions].slice(0, 8) } : candidate.ceoPlan,
+      })),
+      ceoTrust: clamp((item.ceoTrust ?? 65) + (decision === "lancar" ? 3 : decision === "adiar" ? 0 : decision === "reduzir" ? -1 : -4)),
+      ceoLastDecision: `Recebeu ordem para ${decision} ${product.name}`,
+    })),
+  });
+  return {
+    id: `ceo-launch-${company.id}-${product.id}-${product.ceoPlan?.delayCount ?? 0}`,
+    from: company.ceo ?? "CEO",
+    role: `CEO da ${company.name}`,
+    initials: (company.ceo ?? "CEO").split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
+    color: "#6f86a8",
+    subject: `${product.name} chegou ao comitê de lançamento`,
+    body: `O produto está tecnicamente concluído, mas a prontidão executiva é de ${readiness}%. ${product.ceoPlan?.missingRoles.length ? `Ainda faltam ${product.ceoPlan.missingRoles.join(", ")}.` : "A equipe essencial está coberta."} Lançar preserva o calendário; adiar reduz risco; reduzir escopo diminui potencial; cancelar evita custos posteriores, mas perde o investimento.`,
+    choices: [
+      { label: "Autorizar lançamento", tone: readiness >= 70 ? "good" : "risk", result: "O CEO recebeu autorização para colocar o produto no mercado.", effect: (state) => update(state, "lancar") },
+      { label: "Adiar e validar melhor", result: "O produto voltou para testes e controle de qualidade.", effect: (state) => update(state, "adiar") },
+      { label: "Reduzir o escopo", result: "A equipe simplificou o produto para aumentar a chance de entrega.", effect: (state) => update(state, "reduzir") },
+      { label: "Cancelar o projeto", tone: "risk", result: "O projeto foi encerrado antes de chegar ao mercado.", effect: (state) => update(state, "cancelar") },
     ],
   };
 }
@@ -7794,7 +7878,35 @@ export default function Home() {
         let productReputationImpact = 0;
         let productCustomerImpact = 0;
         let productEmergencyCost = 0;
-        let nextProjects: Project[] = company.projects.map((p) => {
+        let productStaffingRole: string | undefined;
+        let executiveProjects = company.projects.map((project) => {
+          if (!delegated || project.kind !== "produto" || project.status !== "ativo") return project;
+          const plan = project.ceoPlan ?? buildCEOProductPlan(project, company, nextWeek, ceoStyle);
+          const coverage = productRoleCoverage(project, company);
+          const targetEntries = (Object.entries(plan.targetPreparation) as [ProductPreparation, number][]);
+          const pendingPreparation = targetEntries.find(([key, target]) => (project.preparation?.[key] ?? 0) < target);
+          const readiness = ceoProductReadiness({ ...project, ceoPlan: plan }, company, current.difficulty ?? "executivo");
+          const stage: CEOProductPlan["stage"] = coverage.missing.length ? "equipe" : project.progress >= 85 ? "validacao" : "producao";
+          if (coverage.missing[0]) productStaffingRole = productRequirementRole(company, coverage.missing[0]);
+          let nextProject = { ...project, ceoPlan: { ...plan, missingRoles: coverage.missing, readiness, stage } };
+          const reviewDue = nextWeek - plan.lastReviewWeek >= 3 || project.progress >= plan.nextMilestone;
+          if (reviewDue && pendingPreparation && company.autonomy !== "centralizada") {
+            const [key] = pendingPreparation;
+            const levels = project.preparation?.[key] ?? 0;
+            const baseCosts: Record<ProductPreparation, number> = { pesquisa: 9000, prototipo: 12000, testes: 14000, seguranca: 16000, qualidade: 13000, piloto: 18000, suporte: 10000 };
+            const cost = baseCosts[key] * (levels + 1);
+            if (company.cash - ceoExtraCost >= cost + 45000 && cost <= Math.max(18000, (company.ceoBudget ?? 15000) * 1.5)) {
+              ceoExtraCost += cost;
+              const preparation = { ...(project.preparation ?? {}), [key]: levels + 1 };
+              const milestone = project.progress >= plan.nextMilestone ? Math.min(100, plan.nextMilestone + 25) : plan.nextMilestone;
+              nextProject = { ...nextProject, preparation, ceoPlan: { ...nextProject.ceoPlan!, invested: plan.invested + cost, lastReviewWeek: nextWeek, nextMilestone: milestone, decisions: [`Semana ${nextWeek}: ${company.ceo} investiu ${money.format(cost)} em ${productPreparationLabels[key].label.toLowerCase()}.`, ...plan.decisions].slice(0, 8) } };
+              ceoLastDecision = `Financiou ${productPreparationLabels[key].label.toLowerCase()} de ${project.name}`;
+              weeklyNews.push({ id: Date.now() + project.id + nextWeek, week: nextWeek, category: "negocios", headline: `${company.ceo} libera nova etapa de ${project.name}`, body: `O plano executivo destinou ${money.format(cost)} a ${productPreparationLabels[key].label.toLowerCase()}. O gasto reduz riscos, mas protege uma reserva mínima de caixa.`, impact: "neutro" });
+            }
+          }
+          return nextProject;
+        });
+        let nextProjects: Project[] = executiveProjects.map((p) => {
           if (p.status === "concluido") {
             if (p.kind !== "produto" || p.lifecycle !== "mercado")
               return {
@@ -7884,6 +7996,31 @@ export default function Home() {
                 if (p.kind !== "produto") return {
                   ...p, progress: 100, status: "concluido" as const,
                 };
+                if (p.ceoPlan && delegated) {
+                  const readiness = ceoProductReadiness(p, { ...company, projects: executiveProjects }, current.difficulty ?? "executivo");
+                  const approved = ["lancar", "reduzir"].includes(p.ceoPlan.launchDecision ?? "");
+                  if (company.autonomy === "independente" && !approved && readiness < 65 && p.ceoPlan.delayCount < 2) {
+                    const delayCount = p.ceoPlan.delayCount + 1;
+                    weeklyNews.push({ id: Date.now() + p.id + 2191, week: nextWeek, category: "negocios", headline: `${company.ceo} segura o lançamento de ${p.name}`, body: `A auditoria marcou ${readiness}% de prontidão. O CEO adiou o produto para corrigir lacunas antes de expor a empresa ao mercado.`, impact: "neutro" });
+                    ceoLastDecision = `Adiou ${p.name} por prontidão insuficiente`;
+                    return { ...p, progress: 96, delayWeeks: 1, quality: clamp(p.quality + 2), ceoPlan: { ...p.ceoPlan, readiness, stage: "validacao", launchDecision: "adiar", delayCount, lastReviewWeek: nextWeek, decisions: [`Semana ${nextWeek}: lançamento adiado com ${readiness}% de prontidão.`, ...p.ceoPlan.decisions].slice(0, 8) } };
+                  }
+                  if (company.autonomy === "independente" && !approved && readiness < 42) {
+                    weeklyNews.push({ id: Date.now() + p.id + 2192, week: nextWeek, category: "negocios", headline: `${company.ceo} cancela ${p.name} antes do lançamento`, body: `Depois de duas revisões, a prontidão permaneceu em ${readiness}%. O investimento foi perdido, mas a empresa evitou manutenção e uma possível crise com clientes.`, impact: "negativo" });
+                    ceoLastDecision = `Cancelou ${p.name} após auditoria`;
+                    return { ...p, progress: 100, status: "concluido" as const, lifecycle: "fora_de_linha" as const, recurring: 0, ceoPlan: { ...p.ceoPlan, readiness, stage: "encerrado", launchDecision: "cancelar", decisions: [`Semana ${nextWeek}: projeto cancelado com ${readiness}% de prontidão.`, ...p.ceoPlan.decisions].slice(0, 8) } };
+                  }
+                  if (company.autonomy === "independente" && !approved && readiness < 65) {
+                    const reducedComplexity = Math.max(1, (p.complexity ?? 3) - 1) as Project["complexity"];
+                    weeklyNews.push({ id: Date.now() + p.id + 2193, week: nextWeek, category: "negocios", headline: `${company.ceo} reduz o escopo de ${p.name}`, body: `O CEO trocou potencial de receita por uma entrega mais viável. A complexidade caiu para ${reducedComplexity}/5 antes da decisão final.`, impact: "neutro" });
+                    return { ...p, progress: 92, complexity: reducedComplexity, ...productBlueprint(company.sector, reducedComplexity), recurring: Math.round((p.recurring ?? 0) * .82), risk: clamp(p.risk - 8), ceoPlan: { ...p.ceoPlan, readiness, stage: "validacao", launchDecision: "reduzir", decisions: [`Semana ${nextWeek}: escopo reduzido para viabilizar o lançamento.`, ...p.ceoPlan.decisions].slice(0, 8) } };
+                  }
+                  if (company.autonomy !== "independente" && !approved) {
+                    if (!ceoProposalMessage && current.unread.length === 0) ceoProposalMessage = ceoProductLaunchMessage({ ...company, ceoStyle }, { ...p, ceoPlan: { ...p.ceoPlan, readiness, stage: "lancamento" } }, readiness);
+                    ceoLastDecision = `Aguardando decisão de lançamento para ${p.name}`;
+                    return { ...p, progress: 99, ceoPlan: { ...p.ceoPlan, readiness, stage: "lancamento", decisions: [`Semana ${nextWeek}: comitê de lançamento acionado.`, ...p.ceoPlan.decisions].slice(0, 8) } };
+                  }
+                }
                 const launchRoll = Math.random() * 100;
                 const failureChance = riskProfile?.failureChance ?? 35;
                 const launchOutcome: Project["launchOutcome"] = launchRoll < failureChance * .22 ? "desastre" : launchRoll < failureChance ? "falha" : launchRoll < failureChance + 22 ? "morno" : "sucesso";
@@ -7915,6 +8052,7 @@ export default function Home() {
                 supportLevel: p.supportLevel ?? 0,
                 feedback: p.feedback ?? [],
                 emergencyWeeks: launchData.emergency,
+                ceoPlan: p.ceoPlan ? { ...p.ceoPlan, readiness: ceoProductReadiness(p, company, current.difficulty ?? "executivo"), stage: "encerrado", launchDecision: "lancar", decisions: [`Semana ${nextWeek}: produto lançado no mercado.`, ...p.ceoPlan.decisions].slice(0, 8) } : p.ceoPlan,
               };
               })()
             : {
@@ -8110,7 +8248,7 @@ export default function Home() {
           }
         }
         const reward = newlyCompleted.reduce(
-          (sum, p) => sum + Math.round(p.reward * (p.quality / 100)),
+          (sum, p) => sum + (p.lifecycle === "fora_de_linha" ? 0 : Math.round(p.reward * (p.quality / 100))),
           0,
         );
         const rivalPressure =
@@ -8335,9 +8473,11 @@ export default function Home() {
         const demandTeamSize = Math.min(10, Math.max(3, 2 + activeProjectCount * 2 + Math.floor(marketProductCount / 2) + Math.floor(company.customers / demandDivisor)));
         const previousWorkforceTarget = Math.max(company.workforceTarget ?? company.employees.length, company.employees.length);
         const replacementVacancy = employees.length < previousWorkforceTarget;
-        const workforceTarget = Math.min(10, Math.max(3, previousWorkforceTarget, Math.min(demandTeamSize, employees.length + 1)));
+        const workforceTarget = Math.min(10, Math.max(3, previousWorkforceTarget, Math.min(demandTeamSize, employees.length + 1), productStaffingRole ? employees.length + 1 : 0));
         const averageStress = employees.length ? employees.reduce((sum, employee) => sum + (employee.stress ?? 0), 0) / employees.length : 100;
-        const hireReason = replacementVacancy
+        const hireReason = productStaffingRole
+          ? `${company.ceo} identificou que ${productStaffingRole} é uma competência essencial ausente no plano do produto.`
+          : replacementVacancy
           ? `A saída de um funcionário deixou ${previousWorkforceTarget - employees.length} vaga${previousWorkforceTarget - employees.length > 1 ? "s" : ""} aberta${previousWorkforceTarget - employees.length > 1 ? "s" : ""} no plano da equipe.`
           : employees.length < 3
           ? "A equipe ficou pequena demais para sustentar a operação."
@@ -8347,23 +8487,23 @@ export default function Home() {
               ? `Temos ${activeProjectCount} projetos ativos para uma equipe de ${employees.length} pessoas.`
               : "A demanda cresceu além da capacidade segura da equipe.";
         const unresolvedVacancyRole = current.staffAlerts?.find((alert) => alert.companyId === company.id && !alert.resolved)?.role;
-        const plannedHire = createCEOHireCandidate({ ...company, employees }, nextWeek, ceoStyle, replacementVacancy ? departedRole ?? unresolvedVacancyRole : undefined);
+        const plannedHire = createCEOHireCandidate({ ...company, employees }, nextWeek, ceoStyle, productStaffingRole ?? (replacementVacancy ? departedRole ?? unresolvedVacancyRole : undefined));
         const ceoOnboardingCost = 2500 + (plannedHire.signingBonus ?? 0);
         const hiringReserve = replacementVacancy
           ? 15000 + plannedHire.salary * 2 + ceoOnboardingCost
           : 45000 + plannedHire.salary * 8 + ceoOnboardingCost;
-        const hiringReviewDue = replacementVacancy
+        const hiringReviewDue = replacementVacancy || productStaffingRole
           ? true
           : (nextWeek + company.id) % (ceoStyle === "crescimento" ? 9 : ceoStyle === "pessoas" ? 10 : 12) === 0;
         const canHire =
           delegated &&
           (company.ceoTenure ?? 0) >= (replacementVacancy ? 0 : 4) &&
-          (replacementVacancy || ceoHireCooldown === 0) &&
+          (replacementVacancy || productStaffingRole || ceoHireCooldown === 0) &&
           employees.length < workforceTarget &&
           employees.length < 10 &&
           company.cash - ceoExtraCost >= hiringReserve &&
-          (cm.profit >= -plannedHire.salary || replacementVacancy || employees.length < 3) &&
-          (replacementVacancy || averageStress > 58 || activeProjectCount >= Math.max(1, Math.ceil(employees.length / 2)) || employees.length < 3) &&
+          (cm.profit >= -plannedHire.salary || replacementVacancy || productStaffingRole || employees.length < 3) &&
+          (replacementVacancy || productStaffingRole || averageStress > 58 || activeProjectCount >= Math.max(1, Math.ceil(employees.length / 2)) || employees.length < 3) &&
           hiringReviewDue;
         if (canHire && company.autonomy === "independente") {
           const badHireChance = .08 + (ceoTrust < 45 ? .08 : 0) + (ceoStyle === "crescimento" ? .03 : 0);
@@ -14393,6 +14533,13 @@ export default function Home() {
                   <div><small>RISCO DE ATRASO</small><b>{managedProductRisk?.delayChance ?? 0}%</b></div>
                   <div><small>RISCO DE FALHA</small><b>{managedProductRisk?.failureChance ?? 0}%</b></div>
                 </section>
+                {managedProduct.ceoPlan && <section className="ceo-product-plan">
+                  <div className="ceo-plan-heading"><div><small>PLANO EXECUTIVO DE PRODUTO</small><h3>{managedProduct.ceoPlan.owner} está conduzindo esta entrega</h3></div><strong>{managedProduct.ceoPlan.readiness}% pronto</strong></div>
+                  <div className="ceo-plan-progress"><i style={{ width: `${managedProduct.ceoPlan.readiness}%` }} /></div>
+                  <div className="ceo-plan-facts"><span>Estratégia <b>{managedProduct.ceoPlan.strategy}</b></span><span>Etapa <b>{managedProduct.ceoPlan.stage}</b></span><span>Investimento adicional <b>{money.format(managedProduct.ceoPlan.invested)}</b></span><span>Próximo marco <b>{managedProduct.ceoPlan.nextMilestone}%</b></span></div>
+                  {managedProduct.ceoPlan.missingRoles.length > 0 && <p className="ceo-plan-warning"><b>Contratação em andamento:</b> {managedProduct.ceoPlan.missingRoles.map((role) => role.replaceAll("|", " ou ")).join(", ")}.</p>}
+                  <div className="ceo-plan-history">{managedProduct.ceoPlan.decisions.slice(0, 3).map((decision) => <span key={decision}>{decision}</span>)}</div>
+                </section>}
                 <div className="product-role-check"><small>COMPETÊNCIAS NECESSÁRIAS</small>{managedProductRisk?.coverage.requirements.map((role) => <span className={managedProductRisk.coverage.missing.includes(role) ? "missing" : "covered"} key={role}>{managedProductRisk.coverage.missing.includes(role) ? "FALTA" : "OK"} · {role.replaceAll("|", " ou ")}</span>)}</div>
                 <section className="product-preparation-grid">
                   {(Object.entries(productPreparationLabels) as [ProductPreparation, typeof productPreparationLabels[ProductPreparation]][]).map(([key, item]) => {
