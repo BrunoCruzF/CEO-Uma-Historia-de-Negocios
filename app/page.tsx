@@ -462,6 +462,30 @@ type HoldingAssemblyRecord = {
   support: number;
   outcome: string;
 };
+type HostileTakeoverStatus = "ativo" | "defendido" | "perdido" | "acordo";
+type HostileTakeoverStage = "rumores" | "oferta" | "votacao" | "concluida";
+type HostileTakeover = {
+  id: string;
+  rivalId: number;
+  rivalName: string;
+  rivalLeader: string;
+  startedWeek: number;
+  weeksLeft: number;
+  stage: HostileTakeoverStage;
+  status: HostileTakeoverStatus;
+  offer: number;
+  attackerSupport: number;
+  originalSupport: number;
+  actions: string[];
+  outcome?: string;
+};
+type HostileTakeoverRecord = {
+  id: string;
+  week: number;
+  rivalName: string;
+  result: "defendido" | "perdido" | "acordo";
+  outcome: string;
+};
 type Competitor = {
   id: number;
   name: string;
@@ -830,6 +854,9 @@ type GameState = {
   holdingAssembly?: HoldingAssembly;
   holdingAssemblyHistory?: HoldingAssemblyRecord[];
   lastHoldingAssemblyWeek?: number;
+  hostileTakeover?: HostileTakeover;
+  hostileTakeoverHistory?: HostileTakeoverRecord[];
+  lastHostileTakeoverWeek?: number;
   dynastyHistory?: string[];
   formerPresidents?: FormerPresident[];
   lastDynastyTransition?: DynastyTransition;
@@ -938,7 +965,7 @@ const pageGuides: Record<View, PageGuideDefinition> = {
   cidade: { eyebrow: "MERCADO E CONCORRÊNCIA", title: "Mercado", summary: "Esta é a visão externa do jogo: concorrentes, clientes, oportunidades de aquisição e movimentos do setor.", actions: ["Investigar e enfrentar concorrentes", "Comprar empresas ou observar possíveis falências", "Comparar força, produtos e reputação no setor"], watch: "Concorrentes administram caixa e produtos próprios. Um rival em crise pode se recuperar, ser vendido ou virar oportunidade de compra.", firstStep: "Identifique o concorrente mais forte do seu setor antes de alterar preço ou lançar um produto." },
   noticias: { eyebrow: "O MUNDO REAGE", title: "Noticiário", summary: "As notícias mostram como mercado, clientes, funcionários e rivais interpretam os acontecimentos da sua história.", actions: ["Ler repercussões e comentários do mercado", "Entender quais setores e empresas foram afetados", "Antecipar mudanças de confiança e demanda"], watch: "Uma manchete não é apenas decoração: notícias alteram confiança econômica e podem influenciar as semanas seguintes.", firstStep: "Abra notícias negativas ligadas ao seu setor e leia especialmente o trecho ‘O que observar agora’." },
   jornada: { eyebrow: "VIDA DO FUNDADOR", title: "Jornada", summary: "Aqui você acompanha a história pessoal do fundador, missões, escolhas de vida e os caminhos possíveis para seu legado.", actions: ["Acompanhar capítulos e missões da carreira", "Equilibrar saúde, família, satisfação e ambição", "Preparar aposentadoria e observar futuros possíveis"], watch: "Construir o maior patrimônio nem sempre produz o melhor final. Família, integridade e sucessão também entram no desfecho.", firstStep: "Veja qual é a próxima missão da jornada e quais aspectos da vida do fundador estão mais baixos." },
-  portfolio: { eyebrow: "SUA HOLDING", title: "Meu grupo", summary: "Esta é a visão do império: empresas, CEOs, patrimônio, controle familiar, investidores e modo Dinastia.", actions: ["Alternar e administrar empresas da holding", "Negociar participação e enfrentar assembleias de acionistas", "Abrir, vender, fundir empresas e conduzir sucessões"], watch: "Empresas delegadas continuam decidindo sozinhas, enquanto investidores com voto podem convocar propostas obrigatórias a cada 13 semanas.", firstStep: "Confira o lucro das empresas, o poder dos CEOs e os votos externos antes de avançar várias semanas." },
+  portfolio: { eyebrow: "SUA HOLDING", title: "Meu grupo", summary: "Esta é a visão do império: empresas, CEOs, patrimônio, controle familiar, investidores e modo Dinastia.", actions: ["Alternar e administrar empresas da holding", "Negociar participação, assembleias e disputas pelo controle", "Abrir, vender, fundir empresas e conduzir sucessões"], watch: "Investidores com voto podem convocar propostas; concorrentes também exploram acionistas insatisfeitos e famílias divididas para tentar uma aquisição hostil.", firstStep: "Confira lucro, união familiar e votos externos antes de avançar várias semanas. Esses três fatores definem sua vulnerabilidade." },
 };
 
 const characterMemory = (
@@ -3003,6 +3030,8 @@ const initialState: GameState = {
   lastHoldingCapitalWeek: 0,
   holdingAssemblyHistory: [],
   lastHoldingAssemblyWeek: 0,
+  hostileTakeoverHistory: [],
+  lastHostileTakeoverWeek: 0,
   dynastyHistory: [],
   formerPresidents: [],
   generationArcHistory: [],
@@ -5218,6 +5247,115 @@ function resolveHoldingAssembly(state: GameState, approved: boolean, compromise 
   };
 }
 
+function holdingGroupValuation(state: GameState): number {
+  return Math.max(100000, (state.holdingCash ?? 0) + state.companies
+    .filter((company) => !company.sold && !company.bankrupt && !company.closed)
+    .reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0));
+}
+
+function createHostileTakeover(state: GameState): HostileTakeover | undefined {
+  const rivals = state.competitors.filter((rival) => !["fechada", "vendida"].includes(rival.status));
+  if (!rivals.length) return undefined;
+  const rival = [...rivals].sort((a, b) => (b.score + (b.cash ?? 0) / 50000 + (b.personality === "agressivo" ? 18 : 0)) - (a.score + (a.cash ?? 0) / 50000 + (a.personality === "agressivo" ? 18 : 0)))[0];
+  const outsideVotes = state.outsideVotingPower ?? state.outsideFamilyEquity ?? 0;
+  const dissatisfiedVotes = (state.holdingInvestors ?? []).reduce((sum, investor) => sum + investor.votingPower * (100 - investor.support) / 100, 0);
+  const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+  const lossPressure = operating.filter((company) => companyMetrics(company, state.economy).profit < 0).length * 4;
+  const familyFracture = Math.max(0, 50 - (state.familyUnity ?? 70)) * .35;
+  const legitimacyPressure = Math.max(0, 55 - (state.dynastyLegitimacy ?? 75)) * .28;
+  const rivalPressure = rival.score * .11 + (rival.personality === "agressivo" ? 9 : rival.personality === "oportunista" ? 6 : 2);
+  const attackerSupport = clamp(outsideVotes * .32 + dissatisfiedVotes * .72 + familyFracture + legitimacyPressure + lossPressure + rivalPressure, 9, 79);
+  const valuation = holdingGroupValuation(state);
+  const premium = 1.12 + Math.min(.28, rival.score / 500) + (state.economy.cycle === "recessao" ? -.06 : .04);
+  return {
+    id: `hostil-${state.week}-${rival.id}`,
+    rivalId: rival.id,
+    rivalName: rival.name,
+    rivalLeader: rival.founder,
+    startedWeek: state.week,
+    weeksLeft: 6,
+    stage: "rumores",
+    status: "ativo",
+    offer: Math.round(valuation * premium / 1000) * 1000,
+    attackerSupport: Math.round(attackerSupport),
+    originalSupport: Math.round(attackerSupport),
+    actions: [],
+  };
+}
+
+function resolveHostileTakeover(state: GameState, takeoverWins: boolean, agreement = false): GameState {
+  const takeover = state.hostileTakeover;
+  if (!takeover || takeover.status !== "ativo") return state;
+  const currentLeader = state.playerExecutive ?? state.founder;
+  let companies = state.companies;
+  let competitors = state.competitors;
+  let founderEquity = state.founderHoldingEquity ?? 0;
+  let foundationEquity = state.familyFoundationEquity ?? 0;
+  let heirs = state.heirs ?? [];
+  let outsideEquity = state.outsideFamilyEquity ?? 0;
+  let outsideVoting = state.outsideVotingPower ?? outsideEquity;
+  let holdingCash = state.holdingCash ?? 0;
+  let personalCash = state.personalCash;
+  let investors = state.holdingInvestors ?? [];
+  let status: HostileTakeoverStatus = takeoverWins ? "perdido" : "defendido";
+  let outcome = `${takeover.rivalName} não conseguiu reunir votos suficientes e retirou a oferta.`;
+  if (agreement) {
+    status = "acordo";
+    const soldStake = Math.max(0, Math.min(20, 85 - outsideEquity));
+    const familyBefore = Math.max(1, 100 - outsideEquity);
+    const retention = Math.max(0, familyBefore - soldStake) / familyBefore;
+    const votingGranted = Math.max(1, Math.round(soldStake * .7));
+    const proceeds = Math.round(takeover.offer * soldStake / 100 * .94);
+    founderEquity *= retention;
+    foundationEquity *= retention;
+    heirs = heirs.map((heir) => ({ ...heir, equity: (heir.equity ?? 0) * retention, resentment: clamp((heir.resentment ?? 0) + 7) }));
+    outsideEquity = clamp(outsideEquity + soldStake);
+    outsideVoting = clamp(outsideVoting + votingGranted);
+    holdingCash += proceeds;
+    investors = [...investors, { providerId: `rival-${takeover.rivalId}`, name: takeover.rivalName, representative: takeover.rivalLeader, equity: soldStake, votingPower: votingGranted, boardSeats: 2, support: 42, invested: proceeds, shareClass: "ordinaria", enteredWeek: state.week }];
+    companies = companies.map((company) => company.sold || company.bankrupt || company.closed ? company : { ...company, boardSupport: clamp((company.boardSupport ?? 50) - 6) });
+    outcome = `${takeover.rivalName} recebeu ${soldStake}% da holding, dois assentos no conselho e encerrou a ofensiva. A família manteve a presidência, mas ganhou um sócio rival.`;
+  } else if (takeoverWins) {
+    const acquiredStake = Math.max(0, 51 - outsideEquity);
+    const votingNeeded = Math.max(0, 51 - outsideVoting);
+    const familyBefore = Math.max(1, 100 - outsideEquity);
+    const retention = Math.max(0, familyBefore - acquiredStake) / familyBefore;
+    const familySettlement = Math.round(takeover.offer * acquiredStake / 100 * .82);
+    founderEquity *= retention;
+    foundationEquity *= retention;
+    heirs = heirs.map((heir) => ({ ...heir, equity: (heir.equity ?? 0) * retention, resentment: clamp((heir.resentment ?? 0) + 16), support: clamp((heir.support ?? 50) - 10) }));
+    outsideEquity = clamp(outsideEquity + acquiredStake);
+    outsideVoting = clamp(outsideVoting + votingNeeded);
+    personalCash += familySettlement;
+    investors = [...investors, { providerId: `rival-${takeover.rivalId}`, name: takeover.rivalName, representative: takeover.rivalLeader, equity: acquiredStake, votingPower: votingNeeded, boardSeats: 3, support: 28, invested: familySettlement, shareClass: "ordinaria", enteredWeek: state.week }];
+    companies = companies.map((company) => company.sold || company.bankrupt || company.closed ? company : company.ceo === currentLeader ? { ...company, ceo: takeover.rivalLeader, ceoTrust: 35, ceoInfluence: 84, boardSupport: 26, autonomy: "independente", ceoLastDecision: `Assumiu após a aquisição hostil conduzida pela ${takeover.rivalName}.` } : { ...company, boardSupport: clamp((company.boardSupport ?? 50) - 12) });
+    competitors = competitors.map((rival) => rival.id === takeover.rivalId ? { ...rival, relation: -100, relationship: "rival", lastDecision: `Conquistou o controle da ${state.holdingName}.`, history: [`Semana ${state.week}: assumiu o controle da ${state.holdingName}.`, ...(rival.history ?? [])].slice(0, 8) } : rival);
+    outcome = `${takeover.rivalName} conquistou 51% dos votos. ${takeover.rivalLeader} substituiu ${currentLeader} nas operações controladas diretamente, enquanto a família permaneceu acionista minoritária.`;
+  } else {
+    competitors = competitors.map((rival) => rival.id === takeover.rivalId ? { ...rival, cash: Math.max(0, (rival.cash ?? 0) - Math.round(takeover.offer * .025)), score: Math.max(10, rival.score - 8), relation: -85, relationship: "rival", lastDecision: `Fracassou na tentativa de assumir a ${state.holdingName}.` } : rival);
+    investors = investors.map((investor) => ({ ...investor, support: clamp(investor.support + 5) }));
+  }
+  const result: HostileTakeoverRecord["result"] = status === "perdido" ? "perdido" : status === "acordo" ? "acordo" : "defendido";
+  return {
+    ...state,
+    companies,
+    competitors,
+    founderHoldingEquity: founderEquity,
+    familyFoundationEquity: foundationEquity,
+    heirs,
+    outsideFamilyEquity: outsideEquity,
+    outsideVotingPower: outsideVoting,
+    holdingCash,
+    personalCash,
+    holdingInvestors: investors,
+    dynastyLegitimacy: clamp((state.dynastyLegitimacy ?? 70) + (status === "defendido" ? 12 : status === "acordo" ? -3 : -22)),
+    familyUnity: clamp((state.familyUnity ?? 70) + (status === "defendido" ? 7 : status === "acordo" ? -4 : -14)),
+    hostileTakeover: { ...takeover, status, stage: "concluida", weeksLeft: 0, outcome },
+    hostileTakeoverHistory: [{ id: takeover.id, week: state.week, rivalName: takeover.rivalName, result, outcome }, ...(state.hostileTakeoverHistory ?? [])].slice(0, 10),
+    news: [{ id: Date.now() + 4620, week: state.week, category: "negocios", headline: status === "perdido" ? `${takeover.rivalName} assume o controle da ${state.holdingName}` : status === "acordo" ? `${state.holdingName} e ${takeover.rivalName} encerram disputa com acordo` : `${state.holdingName} derrota oferta hostil da ${takeover.rivalName}`, body: outcome, impact: status === "defendido" ? "positivo" : status === "acordo" ? "neutro" : "negativo" }, ...state.news].slice(0, 60),
+  };
+}
+
 function competitorAcquisitionPrice(rival: Competitor, buyer: Company, economy: Economy, difficulty: GameDifficulty = "executivo") {
   const productValue = (rival.products ?? []).reduce((sum, product) => {
     const stageMultiplier = product.stage === "crescimento" ? 1.25 : product.stage === "maduro" ? 1.05 : product.stage === "declínio" ? .62 : .88;
@@ -5909,6 +6047,7 @@ export default function Home() {
     | "capital"
     | "holding-capital"
     | "assembly"
+    | "takeover"
     | "board"
     | "holding-company"
     | "legacy"
@@ -6100,6 +6239,9 @@ export default function Home() {
           holdingAssembly: parsed.holdingAssembly,
           holdingAssemblyHistory: parsed.holdingAssemblyHistory ?? [],
           lastHoldingAssemblyWeek: parsed.lastHoldingAssemblyWeek ?? 0,
+          hostileTakeover: parsed.hostileTakeover,
+          hostileTakeoverHistory: parsed.hostileTakeoverHistory ?? [],
+          lastHostileTakeoverWeek: parsed.lastHostileTakeoverWeek ?? 0,
           dynastyHistory: parsed.dynastyHistory ?? [],
           formerPresidents: (parsed.formerPresidents ?? (parsed.dynastyMode ? [
             {
@@ -6443,6 +6585,9 @@ export default function Home() {
       .reduce((sum, company) => sum + companyMetrics(company, game.economy).valuation, 0) +
       (game.holdingCash ?? 0),
   );
+  const takeoverRepurchaseCost = Math.round(Math.max(120000, Math.min(1500000, holdingValuation * .055)) / 1000) * 1000;
+  const takeoverSaleCandidate = game.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed).sort((a, b) => companyMetrics(a, game.economy).valuation - companyMetrics(b, game.economy).valuation)[0];
+  const takeoverAlly = [...game.providers].filter((provider) => provider.kind !== "banco").sort((a, b) => b.patience - a.patience)[0];
   const outsideVotingPower = game.outsideVotingPower ?? game.outsideFamilyEquity ?? 0;
   const holdingCapitalCooldown = (game.lastHoldingCapitalWeek ?? 0) > 0
     ? Math.max(0, 6 - (game.week - (game.lastHoldingCapitalWeek ?? 0)))
@@ -7299,6 +7444,7 @@ export default function Home() {
       const nextWeek = current.week + 1;
       const controlledExecutive = current.playerExecutive ?? current.founder;
       let assemblyOpened = false;
+      let takeoverOpened = false;
       const directorBefore = current.narrativeDirector ?? initialState.narrativeDirector!;
       const eventPressure = directorBefore.mode === "recuperacao" ? .52 : directorBefore.mode === "calma" ? .72 : directorBefore.mode === "escalada" ? 1.38 : directorBefore.mode === "foco" ? .68 : 1;
       const difficulty = difficultyProfiles[current.difficulty ?? "executivo"];
@@ -9774,6 +9920,7 @@ export default function Home() {
       }
       const assemblyDue = (nextState.holdingInvestors ?? []).some((investor) => investor.votingPower > 0) &&
         (!nextState.holdingAssembly || nextState.holdingAssembly.status !== "negociacao") &&
+        nextState.hostileTakeover?.status !== "ativo" &&
         nextWeek - (nextState.lastHoldingAssemblyWeek ?? 0) >= 13;
       if (assemblyDue) {
         const createdAssembly = createHoldingAssembly(nextState);
@@ -9784,6 +9931,40 @@ export default function Home() {
             holdingAssembly: createdAssembly,
             lastHoldingAssemblyWeek: nextWeek,
             news: [{ id: Date.now() + 4490, week: nextWeek, category: "negocios", headline: `${createdAssembly.sponsor} convoca assembleia extraordinária`, body: `${createdAssembly.title}. A presidência terá quatro semanas para negociar antes da votação.`, impact: "neutro" }, ...nextState.news].slice(0, 60),
+          };
+        }
+      }
+      if (nextState.hostileTakeover?.status === "ativo") {
+        const previousStage = nextState.hostileTakeover.stage;
+        const weeksLeft = Math.max(0, nextState.hostileTakeover.weeksLeft - 1);
+        const operating = nextState.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+        const lossPressure = operating.filter((company) => companyMetrics(company, nextState.economy).profit < 0).length * 1.15;
+        const investorPressure = (nextState.holdingInvestors ?? []).reduce((sum, investor) => sum + Math.max(0, 48 - investor.support) * investor.votingPower / 700, 0);
+        const familyDefense = Math.max(0, (nextState.familyUnity ?? 70) - 55) / 18;
+        const stage: HostileTakeoverStage = weeksLeft <= 1 ? "votacao" : weeksLeft <= 4 ? "oferta" : "rumores";
+        nextState = { ...nextState, hostileTakeover: { ...nextState.hostileTakeover, weeksLeft, stage, attackerSupport: clamp(nextState.hostileTakeover.attackerSupport + lossPressure + investorPressure - familyDefense + Math.random() * 2.4 - 1.2, 4, 96) } };
+        if (stage !== previousStage) nextState = { ...nextState, news: [{ id: Date.now() + 4680 + weeksLeft, week: nextWeek, category: "negocios", headline: stage === "oferta" ? `${nextState.hostileTakeover.rivalName} formaliza oferta pela ${nextState.holdingName}` : `Disputa pelo controle da ${nextState.holdingName} chega à votação`, body: stage === "oferta" ? `A proposta avalia o grupo em ${money.format(nextState.hostileTakeover.offer)}. Acionistas e familiares agora precisam escolher um lado.` : `A ofensiva reúne apoio estimado em ${Math.round(nextState.hostileTakeover.attackerSupport)}%. A presidência tem pouco tempo para reagir.`, impact: "negativo" }, ...nextState.news].slice(0, 60) };
+        if (weeksLeft === 0) nextState = resolveHostileTakeover(nextState, Math.random() * 100 < nextState.hostileTakeover.attackerSupport);
+      }
+      const takeoverDifficulty = nextState.difficulty ?? "executivo";
+      const takeoverCooldown = takeoverDifficulty === "relaxado" ? 38 : takeoverDifficulty === "implacavel" ? 20 : 28;
+      const takeoverStartWeek = takeoverDifficulty === "relaxado" ? 40 : takeoverDifficulty === "implacavel" ? 20 : 28;
+      const takeoverCadence = takeoverDifficulty === "relaxado" ? 7 : takeoverDifficulty === "implacavel" ? 4 : 6;
+      const takeoverDue = nextWeek >= takeoverStartWeek &&
+        nextState.hostileTakeover?.status !== "ativo" &&
+        nextState.holdingAssembly?.status !== "negociacao" &&
+        nextWeek - (nextState.lastHostileTakeoverWeek ?? 0) >= takeoverCooldown &&
+        ((nextState.outsideVotingPower ?? 0) >= 8 || (nextState.familyUnity ?? 70) < 45) &&
+        nextWeek % takeoverCadence === (nextState.nemesisId ?? 0) % takeoverCadence;
+      if (takeoverDue) {
+        const hostileTakeover = createHostileTakeover(nextState);
+        if (hostileTakeover) {
+          takeoverOpened = true;
+          nextState = {
+            ...nextState,
+            hostileTakeover,
+            lastHostileTakeoverWeek: nextWeek,
+            news: [{ id: Date.now() + 4670, week: nextWeek, category: "negocios", headline: `${hostileTakeover.rivalName} inicia cerco à ${nextState.holdingName}`, body: `Acionistas receberam contatos reservados e uma oferta avaliada em ${money.format(hostileTakeover.offer)} começou a circular. A disputa poderá mudar o controlador em seis semanas.`, impact: "negativo" }, ...nextState.news].slice(0, 60),
           };
         }
       }
@@ -9890,6 +10071,11 @@ export default function Home() {
       else if (assemblyOpened)
         setTimeout(() => {
           setDialog("assembly");
+          setSpeed(0);
+        }, 100);
+      else if (takeoverOpened)
+        setTimeout(() => {
+          setDialog("takeover");
           setSpeed(0);
         }, 100);
       else if (completedAnnualReview)
@@ -10937,6 +11123,112 @@ export default function Home() {
     setDialog(null);
     setView(mode === "subsidiary" ? "portfolio" : "escritorio");
     notify("Aquisição concluída. Agora começa a integração.");
+  };
+
+  const hostileTakeoverAction = (action: "recomprar" | "aliado" | "juridico" | "vender" | "familia" | "contraoferta" | "acordo" | "votar") => {
+    const takeover = game.hostileTakeover;
+    if (!takeover || takeover.status !== "ativo") return;
+    if (action === "acordo") {
+      setGame((state) => resolveHostileTakeover(state, false, true));
+      notify("A presidência aceitou dividir o controle para encerrar a ofensiva.");
+      return;
+    }
+    if (action === "votar") {
+      const lost = Math.random() * 100 < takeover.attackerSupport;
+      setGame((state) => resolveHostileTakeover(state, lost));
+      notify(lost ? "O rival conquistou a maioria dos votos." : "A defesa da holding venceu a votação.");
+      return;
+    }
+    const labels = {
+      recomprar: "Recomprou 5% das ações externas antes da votação.",
+      aliado: "Trouxe um investidor aliado para formar um bloco de defesa.",
+      juridico: "Acionou defesa jurídica e regulatória contra a oferta.",
+      vender: "Vendeu uma empresa do grupo para financiar a resistência.",
+      familia: "Convocou a família para formar um bloco único de votos.",
+      contraoferta: "Pagou R$ 60 mil para renovar compromissos com acionistas.",
+    };
+    if (takeover.actions.includes(labels[action])) return;
+    const groupValue = holdingGroupValuation(game);
+    const repurchaseCost = Math.round(Math.max(120000, Math.min(1500000, groupValue * .055)) / 1000) * 1000;
+    const cost = action === "recomprar" ? repurchaseCost : action === "juridico" ? 80000 : action === "contraoferta" ? 60000 : 0;
+    if ((game.holdingCash ?? 0) + game.personalCash < cost) return;
+    if (action === "recomprar" && (game.outsideFamilyEquity ?? 0) < 5) return;
+    if (action === "aliado" && (game.outsideFamilyEquity ?? 0) >= 85) return;
+    const saleCandidate = action === "vender" ? game.companies
+      .filter((company) => !company.sold && !company.bankrupt && !company.closed)
+      .sort((a, b) => companyMetrics(a, game.economy).valuation - companyMetrics(b, game.economy).valuation)[0] : undefined;
+    if (action === "vender" && game.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed).length <= 1) return;
+    const ally = game.providers.filter((provider) => provider.kind !== "banco").sort((a, b) => b.patience - a.patience)[0];
+    setGame((state) => {
+      const treasuryPayment = Math.min(cost, state.holdingCash ?? 0);
+      const familyBackfire = action === "familia" && (state.familyUnity ?? 70) < 42;
+      let supportDelta = action === "recomprar" ? -14 : action === "aliado" ? -16 : action === "juridico" ? -9 : action === "vender" ? -12 : action === "familia" ? familyBackfire ? 10 : -Math.max(7, Math.round((state.familyUnity ?? 70) / 7)) : -11;
+      let companies = state.companies;
+      let holdingCash = Math.max(0, (state.holdingCash ?? 0) - treasuryPayment);
+      let personalCash = Math.max(0, state.personalCash - (cost - treasuryPayment));
+      let outsideEquity = state.outsideFamilyEquity ?? 0;
+      let outsideVoting = state.outsideVotingPower ?? outsideEquity;
+      let founderEquity = state.founderHoldingEquity ?? 0;
+      let foundationEquity = state.familyFoundationEquity ?? 0;
+      let heirs = state.heirs ?? [];
+      let investors = state.holdingInvestors ?? [];
+      let legacy = state.legacy;
+      if (action === "recomprar") {
+        const retention = Math.max(0, outsideEquity - 5) / Math.max(1, outsideEquity);
+        outsideEquity = Math.max(0, outsideEquity - 5);
+        outsideVoting *= retention;
+        investors = investors.map((investor) => ({ ...investor, equity: investor.equity * retention, votingPower: investor.votingPower * retention, support: clamp(investor.support - 5) }));
+        if (!state.founderDeceased) founderEquity += 5;
+        else {
+          const leaderIsHeir = heirs.some((heir) => heir.name === (state.playerExecutive ?? state.founder));
+          heirs = heirs.map((heir) => heir.name === (state.playerExecutive ?? state.founder) ? { ...heir, equity: (heir.equity ?? 0) + 5 } : heir);
+          if (!leaderIsHeir) foundationEquity += 5;
+        }
+      }
+      if (action === "aliado" && ally) {
+        const soldStake = Math.min(5, Math.max(0, 85 - outsideEquity));
+        const familyBefore = Math.max(1, 100 - outsideEquity);
+        const retention = Math.max(0, familyBefore - soldStake) / familyBefore;
+        const investment = Math.round(groupValue * soldStake / 100 * .82);
+        founderEquity *= retention;
+        foundationEquity *= retention;
+        heirs = heirs.map((heir) => ({ ...heir, equity: (heir.equity ?? 0) * retention }));
+        outsideEquity += soldStake;
+        outsideVoting += 1;
+        holdingCash += investment;
+        investors = [...investors, { providerId: `ally-${takeover.id}`, name: ally.name, representative: ally.representative, equity: soldStake, votingPower: 1, boardSeats: 1, support: 90, invested: investment, shareClass: "preferencial", enteredWeek: state.week }];
+      }
+      if (action === "vender" && saleCandidate) {
+        const gross = Math.round(companyMetrics(saleCandidate, state.economy).valuation * .78);
+        const settlement = saleSettlement(gross);
+        holdingCash += settlement.net;
+        legacy -= 5;
+        companies = companies.map((company) => company.id === saleCandidate.id ? { ...company, sold: true, buyer: "Consórcio de defesa" } : company);
+      }
+      return {
+        ...state,
+        companies,
+        holdingCash,
+        personalCash,
+        outsideFamilyEquity: outsideEquity,
+        outsideVotingPower: outsideVoting,
+        founderHoldingEquity: founderEquity,
+        familyFoundationEquity: foundationEquity,
+        heirs,
+        holdingInvestors: investors.map((investor) => action === "contraoferta" ? { ...investor, support: clamp(investor.support + 9) } : investor),
+        legacy,
+        reputation: state.reputation + (action === "juridico" ? 1 : action === "vender" ? -3 : 0),
+        familyUnity: clamp((state.familyUnity ?? 70) + (action === "familia" ? familyBackfire ? -9 : 8 : 0)),
+        hostileTakeover: {
+          ...takeover,
+          weeksLeft: action === "juridico" ? takeover.weeksLeft + 2 : takeover.weeksLeft,
+          attackerSupport: clamp(takeover.attackerSupport + supportDelta, 4, 96),
+          actions: [...takeover.actions, labels[action]],
+        },
+        news: action === "vender" && saleCandidate ? [{ id: Date.now() + 4650, week: state.week, category: "negocios", headline: `${state.holdingName} vende ${saleCandidate.name} durante guerra pelo controle`, body: "A operação reforçou o caixa da defesa, mas mostrou ao mercado o custo de permanecer independente.", impact: "negativo" }, ...state.news].slice(0, 60) : state.news,
+      };
+    });
+    notify(action === "familia" && (game.familyUnity ?? 70) < 42 ? "A família se dividiu e fortaleceu a ofensiva rival." : "A defesa alterou a projeção da disputa pelo controle.");
   };
 
   const holdingAssemblyAction = (action: "campanha" | "dividendos" | "assento" | "investigar" | "acordo" | "votar") => {
@@ -13410,6 +13702,7 @@ export default function Home() {
               {game.dynastyMode && <button onClick={() => setDialog("dynasty")}>Conselho da dinastia</button>}
               <button onClick={() => setDialog("holding-capital")}>Vender participação</button>
               <button className={game.holdingAssembly?.status === "negociacao" ? "urgent" : ""} disabled={!(game.holdingInvestors ?? []).length} onClick={() => setDialog("assembly")}>{game.holdingAssembly?.status === "negociacao" ? `Assembleia · ${Math.max(0, game.holdingAssembly.voteWeek - game.week)} sem.` : "Assembleias"}</button>
+              <button className={game.hostileTakeover?.status === "ativo" ? "takeover-alert" : ""} disabled={!game.hostileTakeover && !(game.hostileTakeoverHistory ?? []).length} onClick={() => setDialog("takeover")}>{game.hostileTakeover?.status === "ativo" ? `Disputa · ${game.hostileTakeover.weeksLeft} sem.` : "Disputas de controle"}</button>
               <button onClick={() => setDialog("factions")}>Mapa de poder</button>
               <button onClick={() => setDialog("annual-plan")}>{game.annualPlan ? "Plano anual" : "Definir plano anual"}</button>
               <button onClick={() => setDialog("new-company")}>Abrir nova empresa</button>
@@ -14697,6 +14990,31 @@ export default function Home() {
                 </article>
               ))}
             </div>
+          </div>
+        </GameModal>
+      )}
+      {dialog === "takeover" && (
+        <GameModal onClose={() => setDialog(null)} wide>
+          <div className="takeover-room">
+            <header><div><small>DISPUTA PELO CONTROLE</small><h2>A holding está sob ataque.</h2><p>O rival tenta comprar acionistas insatisfeitos, explorar divisões familiares e conquistar votos suficientes para substituir a presidência.</p></div>{game.hostileTakeover?.status === "ativo" && <span>{game.hostileTakeover.weeksLeft} SEMANA(S) RESTANTES</span>}</header>
+            {game.hostileTakeover ? <>
+              <section className={`takeover-threat ${game.hostileTakeover.status}`}>
+                <div><small>OFERTA HOSTIL DE {game.hostileTakeover.rivalName.toUpperCase()}</small><h3>{game.hostileTakeover.rivalLeader} quer controlar {game.holdingName}</h3><p>A proposta avalia a holding em <b>{money.format(game.hostileTakeover.offer)}</b>, equivalente a {Math.round(game.hostileTakeover.offer / Math.max(1, holdingValuation) * 100)}% do valor estimado atual.</p></div><strong>{Math.round(game.hostileTakeover.attackerSupport)}%<small>apoio ao rival</small></strong>
+              </section>
+              <div className="takeover-stages">{(["rumores", "oferta", "votacao"] as HostileTakeoverStage[]).map((stage, index) => { const current = ["rumores", "oferta", "votacao", "concluida"].indexOf(game.hostileTakeover!.stage); return <div className={current > index ? "done" : current === index ? "current" : "pending"} key={stage}><b>{index + 1}</b><span>{stage === "rumores" ? "Compra de influência" : stage === "oferta" ? "Oferta formal" : "Votação final"}</span></div>; })}</div>
+              <div className="takeover-meter"><span><i style={{ width: `${game.hostileTakeover.attackerSupport}%` }} /></span><div><b>{Math.round(game.hostileTakeover.attackerSupport)}% pelo rival</b><b>{Math.round(100 - game.hostileTakeover.attackerSupport)}% pela independência</b></div><p>{game.hostileTakeover.attackerSupport >= 50 ? "Se a votação fosse hoje, você perderia o controle." : "A defesa venceria hoje, mas o rival continuará negociando votos."}</p></div>
+              <div className="takeover-scoreboard"><div><small>VOTOS EXTERNOS</small><b>{Math.round(outsideVotingPower)}%</b><span>podem mudar de lado</span></div><div><small>UNIÃO FAMILIAR</small><b>{Math.round(game.familyUnity ?? 0)}%</b><span>força do bloco controlador</span></div><div><small>TESOURARIA</small><b>{money.format(game.holdingCash ?? 0)}</b><span>recursos para a defesa</span></div><div><small>PATRIMÔNIO PESSOAL</small><b>{money.format(game.personalCash)}</b><span>última reserva do controlador</span></div></div>
+              {game.hostileTakeover.status === "ativo" ? <section className="takeover-defenses"><header><small>ESTRATÉGIAS DE DEFESA</small><h3>Sobreviver tem um preço</h3></header><div>
+                <button disabled={(game.holdingCash ?? 0) + game.personalCash < takeoverRepurchaseCost || (game.outsideFamilyEquity ?? 0) < 5 || game.hostileTakeover.actions.some((action) => action.startsWith("Recomprou"))} onClick={() => hostileTakeoverAction("recomprar")}><b>Recomprar 5% · {money.format(takeoverRepurchaseCost)}</b><span>Recupera ações e votos externos. O preço acompanha o tamanho da holding.</span></button>
+                <button disabled={(game.outsideFamilyEquity ?? 0) >= 85 || !takeoverAlly || game.hostileTakeover.actions.some((action) => action.startsWith("Trouxe"))} onClick={() => hostileTakeoverAction("aliado")}><b>Buscar investidor aliado</b><span>{takeoverAlly?.name ?? "Nenhum aliado disponível"} injeta capital em troca de 5% preferenciais e um assento.</span></button>
+                <button disabled={(game.holdingCash ?? 0) + game.personalCash < 80000 || game.hostileTakeover.actions.some((action) => action.startsWith("Acionou"))} onClick={() => hostileTakeoverAction("juridico")}><b>Defesa jurídica · R$ 80 mil</b><span>Reduz apoio rival e acrescenta duas semanas, mas não resolve o conflito.</span></button>
+                <button disabled={activeCompanies.length <= 1 || !takeoverSaleCandidate || game.hostileTakeover.actions.some((action) => action.startsWith("Vendeu"))} onClick={() => hostileTakeoverAction("vender")}><b>Vender {takeoverSaleCandidate?.name ?? "um ativo"}</b><span>Levanta caixa e demonstra capacidade de resistência, sacrificando parte do império.</span></button>
+                <button disabled={game.hostileTakeover.actions.some((action) => action.startsWith("Convocou"))} onClick={() => hostileTakeoverAction("familia")}><b>Mobilizar a família</b><span>União alta forma um bloco. Família dividida pode usar a crise contra você.</span></button>
+                <button disabled={(game.holdingCash ?? 0) + game.personalCash < 60000 || game.hostileTakeover.actions.some((action) => action.startsWith("Pagou"))} onClick={() => hostileTakeoverAction("contraoferta")}><b>Contraoferta aos acionistas · R$ 60 mil</b><span>Renova compromissos e reduz votos disponíveis ao rival.</span></button>
+              </div><footer><button className="takeover-agreement" onClick={() => hostileTakeoverAction("acordo")}>Negociar venda parcial de 20%</button><button className="takeover-vote" onClick={() => hostileTakeoverAction("votar")}>Levar à votação agora</button></footer></section> : <section className={`takeover-outcome ${game.hostileTakeover.status}`}><small>DESFECHO DA DISPUTA</small><h3>{game.hostileTakeover.status === "defendido" ? "A holding permaneceu independente" : game.hostileTakeover.status === "acordo" ? "O rival entrou no conselho" : "O controle mudou de mãos"}</h3><p>{game.hostileTakeover.outcome}</p>{game.hostileTakeover.status === "perdido" && <span>Você continua como acionista e poderá reconstruir influência, recomprar ações e disputar o comando no futuro.</span>}</section>}
+              {!!game.hostileTakeover.actions.length && <section className="takeover-action-log"><small>CRÔNICA DA DEFESA</small>{game.hostileTakeover.actions.map((action, index) => <p key={`${action}-${index}`}><b>{index + 1}</b>{action}</p>)}</section>}
+            </> : <section className="takeover-empty"><small>NENHUMA OFENSIVA ATIVA</small><h3>A holding ainda não sofreu uma aquisição hostil</h3><p>Rivais podem atacar quando encontram votos externos, acionistas insatisfeitos ou uma família dividida.</p></section>}
+            {!!game.hostileTakeoverHistory?.length && <section className="takeover-history"><header><small>GUERRAS PELO CONTROLE</small><h3>Quem tentou tomar o império</h3></header>{game.hostileTakeoverHistory.map((record) => <article className={record.result} key={record.id}><b>SEMANA {record.week}</b><div><h4>{record.rivalName}</h4><p>{record.outcome}</p></div><strong>{record.result}</strong></article>)}</section>}
           </div>
         </GameModal>
       )}
