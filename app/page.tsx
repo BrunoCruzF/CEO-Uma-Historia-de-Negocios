@@ -428,6 +428,40 @@ type HoldingSaleProposal = {
   ousterRisk: number;
   feeRate: number;
 };
+type HoldingAssemblyProposalKind =
+  | "trocar-presidente"
+  | "vender-empresa"
+  | "dividendos"
+  | "paralisar-produto"
+  | "cortar-custos"
+  | "vetar-herdeiro";
+type HoldingAssemblyStatus = "negociacao" | "aprovada" | "rejeitada" | "acordo";
+type HoldingAssembly = {
+  id: string;
+  kind: HoldingAssemblyProposalKind;
+  title: string;
+  summary: string;
+  sponsorId: string;
+  sponsor: string;
+  representative: string;
+  startedWeek: number;
+  voteWeek: number;
+  support: number;
+  status: HoldingAssemblyStatus;
+  targetCompanyId?: number;
+  targetProductId?: number;
+  targetHeirId?: number;
+  playerActions: string[];
+  outcome?: string;
+};
+type HoldingAssemblyRecord = {
+  id: string;
+  week: number;
+  title: string;
+  result: "aprovada" | "rejeitada" | "acordo";
+  support: number;
+  outcome: string;
+};
 type Competitor = {
   id: number;
   name: string;
@@ -793,6 +827,9 @@ type GameState = {
   holdingCash?: number;
   holdingInvestors?: HoldingInvestorStake[];
   lastHoldingCapitalWeek?: number;
+  holdingAssembly?: HoldingAssembly;
+  holdingAssemblyHistory?: HoldingAssemblyRecord[];
+  lastHoldingAssemblyWeek?: number;
   dynastyHistory?: string[];
   formerPresidents?: FormerPresident[];
   lastDynastyTransition?: DynastyTransition;
@@ -901,7 +938,7 @@ const pageGuides: Record<View, PageGuideDefinition> = {
   cidade: { eyebrow: "MERCADO E CONCORRÊNCIA", title: "Mercado", summary: "Esta é a visão externa do jogo: concorrentes, clientes, oportunidades de aquisição e movimentos do setor.", actions: ["Investigar e enfrentar concorrentes", "Comprar empresas ou observar possíveis falências", "Comparar força, produtos e reputação no setor"], watch: "Concorrentes administram caixa e produtos próprios. Um rival em crise pode se recuperar, ser vendido ou virar oportunidade de compra.", firstStep: "Identifique o concorrente mais forte do seu setor antes de alterar preço ou lançar um produto." },
   noticias: { eyebrow: "O MUNDO REAGE", title: "Noticiário", summary: "As notícias mostram como mercado, clientes, funcionários e rivais interpretam os acontecimentos da sua história.", actions: ["Ler repercussões e comentários do mercado", "Entender quais setores e empresas foram afetados", "Antecipar mudanças de confiança e demanda"], watch: "Uma manchete não é apenas decoração: notícias alteram confiança econômica e podem influenciar as semanas seguintes.", firstStep: "Abra notícias negativas ligadas ao seu setor e leia especialmente o trecho ‘O que observar agora’." },
   jornada: { eyebrow: "VIDA DO FUNDADOR", title: "Jornada", summary: "Aqui você acompanha a história pessoal do fundador, missões, escolhas de vida e os caminhos possíveis para seu legado.", actions: ["Acompanhar capítulos e missões da carreira", "Equilibrar saúde, família, satisfação e ambição", "Preparar aposentadoria e observar futuros possíveis"], watch: "Construir o maior patrimônio nem sempre produz o melhor final. Família, integridade e sucessão também entram no desfecho.", firstStep: "Veja qual é a próxima missão da jornada e quais aspectos da vida do fundador estão mais baixos." },
-  portfolio: { eyebrow: "SUA HOLDING", title: "Meu grupo", summary: "Esta é a visão do império: empresas fundadas ou adquiridas, CEOs, patrimônio, controle familiar e modo Dinastia.", actions: ["Alternar e administrar empresas da holding", "Definir autonomia, metas e orçamento dos CEOs", "Abrir, vender, fundir empresas e conduzir sucessões"], watch: "Uma empresa delegada continua tomando decisões. Autonomia reduz seu trabalho, mas aumenta o poder político do CEO.", firstStep: "Confira quais empresas estão no lucro e quais CEOs precisam de orientação antes de avançar várias semanas." },
+  portfolio: { eyebrow: "SUA HOLDING", title: "Meu grupo", summary: "Esta é a visão do império: empresas, CEOs, patrimônio, controle familiar, investidores e modo Dinastia.", actions: ["Alternar e administrar empresas da holding", "Negociar participação e enfrentar assembleias de acionistas", "Abrir, vender, fundir empresas e conduzir sucessões"], watch: "Empresas delegadas continuam decidindo sozinhas, enquanto investidores com voto podem convocar propostas obrigatórias a cada 13 semanas.", firstStep: "Confira o lucro das empresas, o poder dos CEOs e os votos externos antes de avançar várias semanas." },
 };
 
 const characterMemory = (
@@ -2964,6 +3001,8 @@ const initialState: GameState = {
   holdingCash: 0,
   holdingInvestors: [],
   lastHoldingCapitalWeek: 0,
+  holdingAssemblyHistory: [],
+  lastHoldingAssemblyWeek: 0,
   dynastyHistory: [],
   formerPresidents: [],
   generationArcHistory: [],
@@ -5039,6 +5078,146 @@ function companyMetrics(
   return { payroll, morale, skill, revenue, preliminaryRevenue, baseCosts, costs, profit, preTaxProfit, taxes, complexityCost, idleCashCost, requiredReserve, cashCoverage, liquidityFactor, scale, scaleProfile, valuation, productMaintenance, facilityMaintenance, customerCapacity: commercial.customerCapacity, productRevenueCapacity: commercial.productRevenueCapacity };
 }
 
+function createHoldingAssembly(state: GameState): HoldingAssembly | undefined {
+  const sponsors = [...(state.holdingInvestors ?? [])].filter((investor) => investor.votingPower > 0).sort((a, b) => b.votingPower - a.votingPower);
+  const sponsor = sponsors[0];
+  if (!sponsor) return undefined;
+  const leader = state.playerExecutive ?? state.founder;
+  const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+  if (!operating.length) return undefined;
+  const controlled = operating.filter((company) => company.ceo === leader);
+  const weakest = [...operating].sort((a, b) => companyMetrics(a, state.economy).profit - companyMetrics(b, state.economy).profit)[0];
+  const saleTarget = [...operating].sort((a, b) => companyMetrics(a, state.economy).valuation - companyMetrics(b, state.economy).valuation)[0];
+  const productTargets = operating.flatMap((company) => company.projects
+    .filter((product) => product.kind === "produto" && product.lifecycle === "mercado")
+    .map((product) => ({ company, product })))
+    .sort((a, b) => ((b.product.bugLevel ?? 0) + (b.product.marketStage === "declinio" ? 35 : 0)) - ((a.product.bugLevel ?? 0) + (a.product.marketStage === "declinio" ? 35 : 0)));
+  const heirs = (state.heirs ?? []).filter((heir) => heir.status !== "rompido");
+  const availableKinds: HoldingAssemblyProposalKind[] = ["dividendos", "cortar-custos"];
+  if (controlled.length) availableKinds.push("trocar-presidente");
+  if (operating.length > 1) availableKinds.push("vender-empresa");
+  if (productTargets.length) availableKinds.push("paralisar-produto");
+  if (heirs.length && state.chosenSuccessorId) availableKinds.push("vetar-herdeiro");
+  const seed = state.week + Math.round(sponsor.votingPower * 7) + (state.generation ?? 1) * 11;
+  const kind = availableKinds[seed % availableKinds.length];
+  const targetCompany = kind === "trocar-presidente" ? controlled[0] : kind === "vender-empresa" ? saleTarget : kind === "cortar-custos" ? weakest : kind === "paralisar-produto" ? productTargets[0]?.company : undefined;
+  const targetProduct = kind === "paralisar-produto" ? productTargets[0]?.product : undefined;
+  const targetHeir = kind === "vetar-herdeiro" ? heirs.find((heir) => heir.id === state.chosenSuccessorId) : undefined;
+  const definitions: Record<HoldingAssemblyProposalKind, { title: string; summary: string }> = {
+    "trocar-presidente": { title: `Substituir ${leader} na ${targetCompany?.name}`, summary: `${sponsor.name} afirma que a gestão perdeu velocidade e propõe entregar a operação a ${sponsor.representative}.` },
+    "vender-empresa": { title: `Colocar ${targetCompany?.name} à venda`, summary: `Os acionistas consideram que a empresa consome atenção e capital que poderiam ser usados nas operações mais fortes.` },
+    dividendos: { title: "Aprovar distribuição extraordinária", summary: "O bloco externo exige retorno imediato, mesmo que a tesouraria perca parte da reserva para novas aquisições." },
+    "paralisar-produto": { title: `Retirar ${targetProduct?.name} do mercado`, summary: `Bugs, risco e maturidade comercial levaram os acionistas a questionar se ainda vale sustentar o produto.` },
+    "cortar-custos": { title: `Impor cortes na ${targetCompany?.name}`, summary: "A proposta reduz marketing e quadro de pessoal para recuperar margem rapidamente, com risco de abalar a equipe." },
+    "vetar-herdeiro": { title: `Vetar ${targetHeir?.name} na sucessão`, summary: "Investidores alegam que o herdeiro ainda não provou competência suficiente para controlar o patrimônio do grupo." },
+  };
+  const baseSupport = (state.outsideVotingPower ?? state.outsideFamilyEquity ?? 0) + sponsor.votingPower * .35 + (100 - sponsor.support) * .18 + (100 - (state.dynastyLegitimacy ?? 70)) * .12 + (100 - (state.familyUnity ?? 70)) * .08;
+  const performancePressure = weakest && companyMetrics(weakest, state.economy).profit < 0 ? 9 : 0;
+  return {
+    id: `assembleia-${state.week}-${sponsor.providerId}`,
+    kind,
+    ...definitions[kind],
+    sponsorId: sponsor.providerId,
+    sponsor: sponsor.name,
+    representative: sponsor.representative,
+    startedWeek: state.week,
+    voteWeek: state.week + 4,
+    support: clamp(baseSupport + performancePressure, 12, 82),
+    status: "negociacao",
+    targetCompanyId: targetCompany?.id,
+    targetProductId: targetProduct?.id,
+    targetHeirId: targetHeir?.id,
+    playerActions: [],
+  };
+}
+
+function resolveHoldingAssembly(state: GameState, approved: boolean, compromise = false): GameState {
+  const assembly = state.holdingAssembly;
+  if (!assembly || assembly.status !== "negociacao") return state;
+  const company = state.companies.find((item) => item.id === assembly.targetCompanyId);
+  const investor = (state.holdingInvestors ?? []).find((item) => item.providerId === assembly.sponsorId);
+  let companies = state.companies;
+  let heirs = state.heirs ?? [];
+  let personalCash = state.personalCash;
+  let holdingCash = state.holdingCash ?? 0;
+  let chosenSuccessorId = state.chosenSuccessorId;
+  let staffAlerts = state.staffAlerts ?? [];
+  let outcome = approved ? "A maioria aprovou a proposta integralmente." : "A presidência reuniu votos suficientes para rejeitar a proposta.";
+  if (compromise) outcome = "As partes aceitaram uma solução intermediária antes da votação final.";
+  if ((approved || compromise) && assembly.kind === "trocar-presidente" && company) {
+    companies = companies.map((item) => item.id !== company.id ? item : approved
+      ? { ...item, ceo: assembly.representative, ceoTrust: 46, ceoInfluence: 62, boardSupport: 38, autonomy: "supervisionada", ceoLastDecision: "Foi nomeado pela assembleia de acionistas." }
+      : { ...item, boardSupport: clamp((item.boardSupport ?? 50) - 7), autonomy: "supervisionada", ceoLastDecision: "Aceitou fiscalização reforçada para evitar a substituição." });
+    outcome = approved ? `${assembly.representative} substituiu ${state.playerExecutive ?? state.founder} na ${company.name}.` : `${company.name} manteve a liderança, mas passou a operar sob fiscalização reforçada.`;
+  }
+  if ((approved || compromise) && assembly.kind === "vender-empresa" && company) {
+    if (approved) {
+      const gross = Math.round(companyMetrics(company, state.economy).valuation * .86);
+      const settlement = saleSettlement(gross);
+      holdingCash += settlement.net;
+      companies = companies.map((item) => item.id === company.id ? { ...item, sold: true, buyer: assembly.sponsor } : item);
+      outcome = `${company.name} foi vendida para ${assembly.sponsor}; ${money.format(settlement.net)} entraram na tesouraria.`;
+    } else {
+      companies = companies.map((item) => item.id === company.id ? { ...item, dividendRate: Math.max(20, item.dividendRate ?? 0), boardSupport: clamp((item.boardSupport ?? 50) + 4) } : item);
+      outcome = `${company.name} permaneceu no grupo e prometeu distribuir 20% do lucro aos acionistas.`;
+    }
+  }
+  if ((approved || compromise) && assembly.kind === "dividendos") {
+    const rate = approved ? .06 : .03;
+    let payout = 0;
+    companies = companies.map((item) => {
+      if (item.sold || item.bankrupt || item.closed) return item;
+      const amount = Math.max(0, Math.round(item.cash * rate));
+      payout += amount;
+      return { ...item, cash: item.cash - amount, boardSupport: clamp((item.boardSupport ?? 50) + 5) };
+    });
+    const familyShare = 1 - (state.outsideFamilyEquity ?? 0) / 100;
+    personalCash += Math.round(payout * familyShare * .88);
+    outcome = `${money.format(payout)} foram distribuídos; a parcela familiar líquida entrou no patrimônio pessoal.`;
+  }
+  if ((approved || compromise) && assembly.kind === "paralisar-produto" && company) {
+    companies = companies.map((item) => item.id !== company.id ? item : {
+      ...item,
+      productRevenue: approved ? Math.round((item.productRevenue ?? 0) * .65) : item.productRevenue,
+      projects: item.projects.map((product) => product.id !== assembly.targetProductId ? product : approved
+        ? { ...product, lifecycle: "fora_de_linha", recurring: 0, productMarketing: 0 }
+        : { ...product, productMarketing: 0, risk: clamp(product.risk - 8), bugLevel: clamp((product.bugLevel ?? 0) - 10), updateNeed: clamp((product.updateNeed ?? 0) + 8) }),
+    });
+    outcome = approved ? "O produto foi retirado do mercado por decisão dos acionistas." : "O produto ganhou uma última auditoria, sem marketing, antes de nova votação.";
+  }
+  if ((approved || compromise) && assembly.kind === "cortar-custos" && company) {
+    const dismissed = approved ? [...company.employees].sort((a, b) => a.skill - b.skill)[0] : undefined;
+    companies = companies.map((item) => item.id !== company.id ? item : {
+      ...item,
+      marketing: Math.round(item.marketing * (approved ? .55 : .8)),
+      employees: item.employees.filter((employee) => employee.id !== dismissed?.id).map((employee) => ({ ...employee, morale: clamp(employee.morale - (approved ? 9 : 3)), stress: clamp((employee.stress ?? 0) + (approved ? 7 : 2)) })),
+      boardSupport: clamp((item.boardSupport ?? 50) + 6),
+    });
+    if (dismissed) staffAlerts = [{ id: `assembleia-${state.week}-${dismissed.id}`, companyId: company.id, companyName: company.name, employeeName: dismissed.name, role: dismissed.role, reason: "desligamento", week: state.week, responsible: company.ceo ?? state.founder, headcountAfter: Math.max(0, company.employees.length - 1), roleCountAfter: Math.max(0, company.employees.filter((employee) => employee.role === dismissed.role).length - 1) }, ...staffAlerts];
+    outcome = approved ? `${company.name} reduziu marketing e desligou ${dismissed?.name ?? "um colaborador"}.` : `${company.name} aceitou um corte moderado de despesas, sem demissões.`;
+  }
+  if ((approved || compromise) && assembly.kind === "vetar-herdeiro") {
+    if (approved) chosenSuccessorId = undefined;
+    heirs = heirs.map((heir) => heir.id !== assembly.targetHeirId ? heir : { ...heir, readiness: clamp(heir.readiness - (approved ? 12 : 4)), resentment: clamp((heir.resentment ?? 0) + (approved ? 18 : 7)), support: clamp((heir.support ?? 50) - (approved ? 12 : 4)), role: approved ? "formacao" : heir.role });
+    outcome = approved ? "O sucessor indicado perdeu a nomeação e voltou ao período de formação." : "O herdeiro manteve a indicação, mas terá de cumprir novas metas de preparação.";
+  }
+  const result: HoldingAssemblyRecord["result"] = compromise ? "acordo" : approved ? "aprovada" : "rejeitada";
+  return {
+    ...state,
+    companies,
+    heirs,
+    chosenSuccessorId,
+    personalCash,
+    holdingCash,
+    staffAlerts,
+    dynastyLegitimacy: clamp((state.dynastyLegitimacy ?? 70) + (approved ? -6 : compromise ? 1 : 5)),
+    holdingInvestors: (state.holdingInvestors ?? []).map((item) => item.providerId === assembly.sponsorId ? { ...item, support: clamp(item.support + (approved ? 10 : compromise ? 4 : -9)) } : item),
+    holdingAssembly: { ...assembly, status: result, outcome },
+    holdingAssemblyHistory: [{ id: assembly.id, week: state.week, title: assembly.title, result, support: Math.round(assembly.support), outcome }, ...(state.holdingAssemblyHistory ?? [])].slice(0, 12),
+    news: [{ id: Date.now() + 4510, week: state.week, category: "negocios", headline: `Assembleia ${result}: ${assembly.title}`, body: outcome, impact: approved ? "negativo" : compromise ? "neutro" : "positivo" }, ...state.news].slice(0, 50),
+  };
+}
+
 function competitorAcquisitionPrice(rival: Competitor, buyer: Company, economy: Economy, difficulty: GameDifficulty = "executivo") {
   const productValue = (rival.products ?? []).reduce((sum, product) => {
     const stageMultiplier = product.stage === "crescimento" ? 1.25 : product.stage === "maduro" ? 1.05 : product.stage === "declínio" ? .62 : .88;
@@ -5729,6 +5908,7 @@ export default function Home() {
     | "rival"
     | "capital"
     | "holding-capital"
+    | "assembly"
     | "board"
     | "holding-company"
     | "legacy"
@@ -5917,6 +6097,9 @@ export default function Home() {
           holdingCash: parsed.holdingCash ?? 0,
           holdingInvestors: parsed.holdingInvestors ?? [],
           lastHoldingCapitalWeek: parsed.lastHoldingCapitalWeek ?? 0,
+          holdingAssembly: parsed.holdingAssembly,
+          holdingAssemblyHistory: parsed.holdingAssemblyHistory ?? [],
+          lastHoldingAssemblyWeek: parsed.lastHoldingAssemblyWeek ?? 0,
           dynastyHistory: parsed.dynastyHistory ?? [],
           formerPresidents: (parsed.formerPresidents ?? (parsed.dynastyMode ? [
             {
@@ -7115,6 +7298,7 @@ export default function Home() {
       if (current.unread.length > 0 || current.dynastyConcluded) return current;
       const nextWeek = current.week + 1;
       const controlledExecutive = current.playerExecutive ?? current.founder;
+      let assemblyOpened = false;
       const directorBefore = current.narrativeDirector ?? initialState.narrativeDirector!;
       const eventPressure = directorBefore.mode === "recuperacao" ? .52 : directorBefore.mode === "calma" ? .72 : directorBefore.mode === "escalada" ? 1.38 : directorBefore.mode === "foco" ? .68 : 1;
       const difficulty = difficultyProfiles[current.difficulty ?? "executivo"];
@@ -9585,6 +9769,24 @@ export default function Home() {
         news: [...achievementUnlocks.map((achievement, index): NewsItem => ({ id: Date.now() + 2300 + index, week: nextWeek, category: "negocios", headline: `Conquista desbloqueada: ${achievement.title}`, body: "Uma nova marca permanente foi adicionada à história desta holding.", impact: "positivo" })), ...nextState.news].slice(0, 60),
         log: achievementUnlocks.map((achievement) => `Conquista: ${achievement.title}.`).concat(nextState.log).slice(0, 12),
       };
+      if (nextState.holdingAssembly?.status === "negociacao" && nextWeek >= nextState.holdingAssembly.voteWeek) {
+        nextState = resolveHoldingAssembly(nextState, Math.random() * 100 < nextState.holdingAssembly.support);
+      }
+      const assemblyDue = (nextState.holdingInvestors ?? []).some((investor) => investor.votingPower > 0) &&
+        (!nextState.holdingAssembly || nextState.holdingAssembly.status !== "negociacao") &&
+        nextWeek - (nextState.lastHoldingAssemblyWeek ?? 0) >= 13;
+      if (assemblyDue) {
+        const createdAssembly = createHoldingAssembly(nextState);
+        if (createdAssembly) {
+          assemblyOpened = true;
+          nextState = {
+            ...nextState,
+            holdingAssembly: createdAssembly,
+            lastHoldingAssemblyWeek: nextWeek,
+            news: [{ id: Date.now() + 4490, week: nextWeek, category: "negocios", headline: `${createdAssembly.sponsor} convoca assembleia extraordinária`, body: `${createdAssembly.title}. A presidência terá quatro semanas para negociar antes da votação.`, impact: "neutro" }, ...nextState.news].slice(0, 60),
+          };
+        }
+      }
       if (nextWeek > 12) setTimeout(
         () => storyBeat(nextState, activeCompany, activeMetrics.valuation),
         0,
@@ -9683,6 +9885,11 @@ export default function Home() {
         setTimeout(() => {
           setSelectedMessage(narrativeMessage);
           setDialog("inbox");
+          setSpeed(0);
+        }, 100);
+      else if (assemblyOpened)
+        setTimeout(() => {
+          setDialog("assembly");
           setSpeed(0);
         }, 100);
       else if (completedAnnualReview)
@@ -10730,6 +10937,54 @@ export default function Home() {
     setDialog(null);
     setView(mode === "subsidiary" ? "portfolio" : "escritorio");
     notify("Aquisição concluída. Agora começa a integração.");
+  };
+
+  const holdingAssemblyAction = (action: "campanha" | "dividendos" | "assento" | "investigar" | "acordo" | "votar") => {
+    const assembly = game.holdingAssembly;
+    if (!assembly || assembly.status !== "negociacao") return;
+    if (action === "acordo") {
+      setGame((state) => resolveHoldingAssembly(state, false, true));
+      notify("Um acordo intermediário encerrou a assembleia antes da votação.");
+      return;
+    }
+    if (action === "votar") {
+      const approved = Math.random() * 100 < assembly.support;
+      setGame((state) => resolveHoldingAssembly(state, approved));
+      notify(approved ? "A proposta conquistou a maioria dos votos." : "A presidência venceu a votação.");
+      return;
+    }
+    const labels = {
+      campanha: "Articulou votos com família, CEOs e conselheiros.",
+      dividendos: "Reservou R$ 50 mil em dividendos para reduzir a pressão.",
+      assento: "Entregou mais um assento no conselho ao investidor patrocinador.",
+      investigar: "Contratou uma investigação sobre os interesses do patrocinador.",
+    };
+    if (assembly.playerActions.includes(labels[action])) return;
+    const cost = action === "campanha" ? 30000 : action === "dividendos" ? 50000 : action === "investigar" ? 40000 : 0;
+    if ((game.holdingCash ?? 0) + game.personalCash < cost) return;
+    const investigationBackfires = action === "investigar" && (game.week + assembly.sponsor.length) % 4 === 0;
+    const supportDelta = action === "campanha" ? -9 : action === "dividendos" ? -12 : action === "assento" ? -15 : investigationBackfires ? 13 : -13;
+    setGame((state) => {
+      const treasuryPayment = Math.min(cost, state.holdingCash ?? 0);
+      const personalPayment = cost - treasuryPayment;
+      return {
+        ...state,
+        holdingCash: Math.max(0, (state.holdingCash ?? 0) - treasuryPayment),
+        personalCash: Math.max(0, state.personalCash - personalPayment),
+        reputation: state.reputation + (investigationBackfires ? -3 : action === "investigar" ? 2 : 0),
+        holdingInvestors: (state.holdingInvestors ?? []).map((investor) => investor.providerId === assembly.sponsorId ? {
+          ...investor,
+          boardSeats: action === "assento" ? Math.min(4, investor.boardSeats + 1) : investor.boardSeats,
+          support: clamp(investor.support + (action === "dividendos" ? 8 : action === "assento" ? 10 : action === "investigar" ? -7 : -2)),
+        } : investor),
+        holdingAssembly: {
+          ...assembly,
+          support: clamp(assembly.support + supportDelta, 5, 95),
+          playerActions: [...assembly.playerActions, labels[action]],
+        },
+      };
+    });
+    notify(investigationBackfires ? "A investigação repercutiu mal e fortaleceu a proposta." : "A negociação alterou a projeção dos votos.");
   };
 
   const acceptHoldingCapital = (proposal: HoldingSaleProposal) => {
@@ -13154,6 +13409,7 @@ export default function Home() {
             action={<div className="page-actions">
               {game.dynastyMode && <button onClick={() => setDialog("dynasty")}>Conselho da dinastia</button>}
               <button onClick={() => setDialog("holding-capital")}>Vender participação</button>
+              <button className={game.holdingAssembly?.status === "negociacao" ? "urgent" : ""} disabled={!(game.holdingInvestors ?? []).length} onClick={() => setDialog("assembly")}>{game.holdingAssembly?.status === "negociacao" ? `Assembleia · ${Math.max(0, game.holdingAssembly.voteWeek - game.week)} sem.` : "Assembleias"}</button>
               <button onClick={() => setDialog("factions")}>Mapa de poder</button>
               <button onClick={() => setDialog("annual-plan")}>{game.annualPlan ? "Plano anual" : "Definir plano anual"}</button>
               <button onClick={() => setDialog("new-company")}>Abrir nova empresa</button>
@@ -14441,6 +14697,35 @@ export default function Home() {
                 </article>
               ))}
             </div>
+          </div>
+        </GameModal>
+      )}
+      {dialog === "assembly" && (
+        <GameModal onClose={() => setDialog(null)} wide>
+          <div className="assembly-room">
+            <header>
+              <div><small>ASSEMBLEIA DE ACIONISTAS</small><h2>O controle será decidido em votos.</h2><p>Resultados, concessões, poder econômico e alianças determinam se a presidência consegue impor sua vontade.</p></div>
+              <span>{game.holdingAssembly?.status === "negociacao" ? `VOTAÇÃO EM ${Math.max(0, game.holdingAssembly.voteWeek - game.week)} SEMANA(S)` : "LIVRO DE ATAS"}</span>
+            </header>
+            {game.holdingAssembly ? <>
+              <section className={`assembly-motion ${game.holdingAssembly.status}`}>
+                <div><small>MOÇÃO PATROCINADA POR {game.holdingAssembly.sponsor.toUpperCase()}</small><h3>{game.holdingAssembly.title}</h3><p>{game.holdingAssembly.summary}</p><span>{game.holdingAssembly.representative} conduz a articulação.</span></div>
+                <strong>{Math.round(game.holdingAssembly.support)}%<small>apoio à proposta</small></strong>
+              </section>
+              <div className="assembly-vote-meter"><span><i style={{ width: `${game.holdingAssembly.support}%` }} /></span><div><b>{Math.round(game.holdingAssembly.support)}% a favor</b><b>{Math.round(100 - game.holdingAssembly.support)}% contra</b></div><p>{game.holdingAssembly.support >= 50 ? "Neste momento, a proposta seria aprovada." : "Neste momento, a presidência venceria a votação."}</p></div>
+              {game.holdingAssembly.status === "negociacao" ? <section className="assembly-negotiation">
+                <header><small>NEGOCIAÇÃO ANTES DO VOTO</small><h3>Cada concessão resolve um problema e cria outro</h3></header>
+                <div>
+                  <button disabled={(game.holdingCash ?? 0) + game.personalCash < 30000 || game.holdingAssembly.playerActions.some((action) => action.startsWith("Articulou"))} onClick={() => holdingAssemblyAction("campanha")}><b>Articular votos · R$ 30 mil</b><span>Converse com família, CEOs e conselheiros para reduzir o apoio à moção.</span></button>
+                  <button disabled={(game.holdingCash ?? 0) + game.personalCash < 50000 || game.holdingAssembly.playerActions.some((action) => action.startsWith("Reservou"))} onClick={() => holdingAssemblyAction("dividendos")}><b>Prometer dividendos · R$ 50 mil</b><span>Compra tempo e boa vontade, mas consome capital que poderia financiar as empresas.</span></button>
+                  <button disabled={game.holdingAssembly.playerActions.some((action) => action.startsWith("Entregou"))} onClick={() => holdingAssemblyAction("assento")}><b>Oferecer assento no conselho</b><span>É uma concessão forte e permanente. O investidor ganha mais poder político.</span></button>
+                  <button disabled={(game.holdingCash ?? 0) + game.personalCash < 40000 || game.holdingAssembly.playerActions.some((action) => action.startsWith("Contratou"))} onClick={() => holdingAssemblyAction("investigar")}><b>Investigar o patrocinador · R$ 40 mil</b><span>Pode enfraquecê-lo ou parecer intimidação e fortalecer a proposta.</span></button>
+                </div>
+                <footer><button className="compromise" onClick={() => holdingAssemblyAction("acordo")}>Aceitar solução intermediária</button><button className="call-vote" onClick={() => holdingAssemblyAction("votar")}>Convocar votação agora</button></footer>
+              </section> : <section className={`assembly-outcome ${game.holdingAssembly.status}`}><small>RESULTADO REGISTRADO</small><h3>{game.holdingAssembly.status === "aprovada" ? "A proposta venceu" : game.holdingAssembly.status === "rejeitada" ? "A presidência venceu" : "Acordo aprovado"}</h3><p>{game.holdingAssembly.outcome}</p></section>}
+              {!!game.holdingAssembly.playerActions.length && <section className="assembly-actions-log"><small>NEGOCIAÇÕES DESTA ASSEMBLEIA</small>{game.holdingAssembly.playerActions.map((action, index) => <p key={`${action}-${index}`}><b>{index + 1}</b>{action}</p>)}</section>}
+            </> : <section className="assembly-empty"><small>SEM CONVOCAÇÃO ATIVA</small><h3>Nenhuma assembleia foi convocada</h3><p>Depois que investidores comprarem ações com voto, propostas poderão surgir a cada 13 semanas.</p></section>}
+            {!!game.holdingAssemblyHistory?.length && <section className="assembly-history"><header><small>LIVRO DE ATAS</small><h3>Decisões que mudaram o controle</h3></header>{game.holdingAssemblyHistory.slice(0, 8).map((record) => <article className={record.result} key={record.id}><b>SEMANA {record.week}</b><div><h4>{record.title}</h4><p>{record.outcome}</p></div><strong>{record.support}%<small>{record.result}</small></strong></article>)}</section>}
           </div>
         </GameModal>
       )}
