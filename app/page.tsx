@@ -762,6 +762,27 @@ type GenerationProfile = {
   health: number;
 };
 type MandateReview = { generation: number; leader: string; week: number; score: number; verdict: string; profitCompanies: number; legitimacy: number; familyUnity: number };
+type GenerationLegacyRecord = {
+  generation: number;
+  leader: string;
+  startWeek: number;
+  endWeek: number;
+  valueDelivered: number;
+  revenueGenerated: number;
+  activeCompanies: number;
+  employees: number;
+  peopleImpacted: number;
+  products: number;
+  familyUnity: number;
+  control: number;
+  mandateScore: number;
+  verdict: string;
+  definingConflict?: string;
+  conflictOutcome?: string;
+  conflictTone?: GenerationArcRecord["tone"];
+  bestDecision: string;
+  worstDecision: string;
+};
 type DynastyEnding = {
   type: "centenario" | "imperio" | "fragmentacao" | "queda";
   title: string;
@@ -776,6 +797,20 @@ type DynastyEnding = {
   futureCompanies: number;
   futurePeople: number;
   futureNarrative: string;
+  businessFate?: string;
+  familyFate?: string;
+  founderMemory?: string;
+  founderMemoryDetail?: string;
+  continuityScore?: number;
+  cumulativeRevenue?: number;
+  totalProducts?: number;
+  acquisitions?: number;
+  bankruptcies?: number;
+  soldCompanies?: number;
+  generationRecords?: GenerationLegacyRecord[];
+  futureProbabilities?: { continuidade: number; transformacao: number; ruptura: number };
+  founderProjectionVerdict?: string;
+  decisiveMoments?: string[];
   secretEndingTitle?: string;
   secretEndingNarrative?: string;
 };
@@ -874,6 +909,7 @@ type GameState = {
   lastHostileTakeoverWeek?: number;
   dynastyHistory?: string[];
   formerPresidents?: FormerPresident[];
+  generationLegacies?: GenerationLegacyRecord[];
   lastDynastyTransition?: DynastyTransition;
   politicalArc?: PoliticalArc;
   generationArc?: GenerationNarrativeArc;
@@ -912,6 +948,9 @@ type GameState = {
   founderEnding?: FounderEnding;
   founderEndingWeek?: number;
   founderLegacyOutcome?: FounderLegacyOutcome;
+  endingSeed?: number;
+  lifetimeRevenue?: number;
+  lifetimePeopleImpact?: number;
 };
 type Mission = {
   id: string;
@@ -1280,7 +1319,8 @@ function founderLegacyChances(state: GameState): Record<FounderLegacyPath, numbe
 
 function createFounderLegacyOutcome(state: GameState): FounderLegacyOutcome {
   const chances = founderLegacyChances(state);
-  const roll = Math.random() * 100;
+  const seed = state.endingSeed ?? endingHash(`${state.founder}|${state.holdingName}|primeira-geracao|${state.week}|${state.legacy}`);
+  const roll = endingRandom(seed, 20) * 100;
   const path: FounderLegacyPath = roll < chances.duradouro
     ? "duradouro"
     : roll < chances.duradouro + chances.ambivalente
@@ -1294,24 +1334,24 @@ function createFounderLegacyOutcome(state: GameState): FounderLegacyOutcome {
   const bankruptcies = state.companies.filter((company) => company.bankrupt).length;
   const baseValue = Math.max(100000, state.personalCash + (state.holdingCash ?? 0) + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0));
   const generation = path === "duradouro"
-    ? currentGeneration + 2 + Math.floor(Math.random() * 3) + Math.min(1, readyHeirs)
+    ? currentGeneration + 2 + Math.floor(endingRandom(seed, 21) * 3) + Math.min(1, readyHeirs)
     : path === "ambivalente"
-      ? currentGeneration + 1 + Math.floor(Math.random() * 3)
-      : currentGeneration + (Math.random() < .38 ? 1 : 0);
+      ? currentGeneration + 1 + Math.floor(endingRandom(seed, 21) * 3)
+      : currentGeneration + (endingRandom(seed, 21) < .38 ? 1 : 0);
   const multiplier = path === "duradouro"
-    ? 2.2 + Math.random() * 3.8 + readyHeirs * .35
+    ? 2.2 + endingRandom(seed, 22) * 3.8 + readyHeirs * .35
     : path === "ambivalente"
-      ? .9 + Math.random() * 2.1
-      : .18 + Math.random() * .72;
+      ? .9 + endingRandom(seed, 22) * 2.1
+      : .18 + endingRandom(seed, 22) * .72;
   const financialValue = Math.round(baseValue * multiplier / 10000) * 10000;
   const currentReach = state.companies.reduce((sum, company) => sum + company.customers + company.employees.length * 25, 0);
-  const peopleImpacted = Math.round(Math.max(250, currentReach * (generation + 1) * (path === "duradouro" ? 5 + Math.random() * 6 : path === "ambivalente" ? 2 + Math.random() * 4 : .7 + Math.random() * 1.5)) / 100) * 100;
-  const mixedImpact = (state.reputation + identity.visao + identity.integridade) / 3 - personal.regrets * .55 - (100 - personal.family) * .24 + Math.random() * 16 - 8;
+  const peopleImpacted = Math.round(Math.max(250, currentReach * (generation + 1) * (path === "duradouro" ? 5 + endingRandom(seed, 23) * 6 : path === "ambivalente" ? 2 + endingRandom(seed, 23) * 4 : .7 + endingRandom(seed, 23) * 1.5)) / 100) * 100;
+  const mixedImpact = (state.reputation + identity.visao + identity.integridade) / 3 - personal.regrets * .55 - (100 - personal.family) * .24 + endingRandom(seed, 24) * 16 - 8;
   const impactScore = path === "duradouro"
-    ? Math.round(clamp((state.reputation + identity.integridade + identity.pessoas + personal.family) / 4 + Math.random() * 14, 20, 95))
+    ? Math.round(clamp((state.reputation + identity.integridade + identity.pessoas + personal.family) / 4 + endingRandom(seed, 24) * 14, 20, 95))
     : path === "ambivalente"
       ? Math.round(clamp(mixedImpact, -55, 70))
-      : -Math.round(clamp((100 - personal.family) * .38 + (100 - identity.integridade) * .3 + bankruptcies * 13 + Math.random() * 20, 25, 95));
+      : -Math.round(clamp((100 - personal.family) * .38 + (100 - identity.integridade) * .3 + bankruptcies * 13 + endingRandom(seed, 24) * 20, 25, 95));
   const impactTone: FounderLegacyOutcome["impactTone"] = impactScore >= 8 ? "positivo" : "negativo";
   const drivers = [
     personal.family >= 62 ? `família próxima (${Math.round(personal.family)}%)` : `família fragilizada (${Math.round(personal.family)}%)`,
@@ -3118,6 +3158,7 @@ const initialState: GameState = {
   lastHostileTakeoverWeek: 0,
   dynastyHistory: [],
   formerPresidents: [],
+  generationLegacies: [],
   generationArcHistory: [],
   generationMissions: [],
   achievements: [],
@@ -3146,6 +3187,8 @@ const initialState: GameState = {
   lastPersonalEventWeek: 0,
   founderJourneyReady: false,
   founderJourneyComplete: false,
+  lifetimeRevenue: 0,
+  lifetimePeopleImpact: 0,
 };
 
 const missions: Mission[] = [
@@ -4345,6 +4388,7 @@ function politicalArcMessage(state: GameState, arc: PoliticalArc, challenger: Fo
       lastDynastyTransition: createDynastyTransition(game, incumbent, challenger.name, game.generation ?? 2),
       politicalArc: undefined,
       formerPresidents: [outgoing, ...(game.formerPresidents ?? []).filter((president) => president.name !== challenger.name && president.name !== incumbent)],
+      generationLegacies: [captureGenerationLegacy(game, incumbent, game.generation ?? 2, game.dynastyStartedWeek ?? game.week - 1, game.week), ...(game.generationLegacies ?? []).filter((record) => record.generation !== (game.generation ?? 2) || record.leader !== incumbent)],
       companies: game.companies.map((company) => company.ceo === incumbent ? { ...company, ceo: challenger.name, ceoStyle: challenger.style, autonomy: "supervisionada", ceoLastDecision: "Assumiu após vencer uma votação de confiança" } : company),
       dynastyHistory: [`Semana ${game.week}: ${challenger.name} derrubou ${incumbent} e retornou à presidência.`, ...(game.dynastyHistory ?? [])].slice(0, 18),
       news: [{ id: Date.now(), week: game.week, category: "negocios" as const, headline: `${challenger.name} vence votação e retorna ao comando`, body: `${incumbent} perdeu a confiança do conselho, mas a Dinastia continua sob uma presidência restaurada.`, impact: "negativo" as const }, ...game.news].slice(0, 60),
@@ -4379,6 +4423,7 @@ function leaderDeathMessage(state: GameState, profile: GenerationProfile): Story
       generationProfile: generationProfileFor(successor.name, (game.generation ?? 2) + 1, successor.style, game.week, successor.startAge + Math.round(game.week / 52)),
       lastDynastyTransition: createDynastyTransition(game, profile.leader, successor.name, (game.generation ?? 2) + 1),
       formerPresidents: [deceased, ...(game.formerPresidents ?? []).filter((president) => president.name !== profile.leader)],
+      generationLegacies: [captureGenerationLegacy(game, profile.leader, game.generation ?? 2, profile.startWeek, game.week), ...(game.generationLegacies ?? []).filter((record) => record.generation !== (game.generation ?? 2) || record.leader !== profile.leader)],
       politicalArc: undefined,
       heirs: (game.heirs ?? []).map((heir) => heir.id === successor.id ? { ...heir, role: "sucessor" as const, support: 72, resentment: 4 } : heir.name === profile.leader ? { ...heir, role: "conselho" as const } : heir),
       companies: game.companies.map((company) => company.ceo === profile.leader ? { ...company, ceo: successor.name, ceoStyle: successor.style, autonomy: "supervisionada", ceoLastDecision: "Assumiu durante uma sucessão de emergência" } : company),
@@ -5557,10 +5602,62 @@ function generationProfileFor(leader: string, generation: number, style: CEOStyl
   return { leader, generation, style, title: profile.title, doctrine: profile.doctrine, promise: profile.promise, riskTolerance: profile.risk, startWeek: week, age, health: clamp(100 - Math.max(0, age - 58) * 2) };
 }
 
+function endingHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  return Math.abs(hash >>> 0);
+}
+
+function endingRandom(seed: number, offset: number) {
+  let value = (seed + offset * 1013904223) >>> 0;
+  value ^= value << 13; value ^= value >>> 17; value ^= value << 5;
+  return (value >>> 0) / 4294967295;
+}
+
+function captureGenerationLegacy(state: GameState, leader: string, generation: number, startWeek: number, endWeek: number): GenerationLegacyRecord {
+  const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+  const valueDelivered = state.personalCash + (state.holdingCash ?? 0) + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0);
+  const traces = (state.decisionTraces ?? []).filter((trace) => trace.week >= startWeek && trace.week <= endWeek && trace.actor === leader);
+  const traceScore = (trace: DecisionTrace) => trace.impacts.reduce((score, impact) => score + (impact.tone === "positivo" ? 2 : impact.tone === "negativo" ? -2 : 0), 0) + trace.observations.reduce((score, observation) => score + (observation.tone === "positivo" ? 1 : observation.tone === "negativo" ? -1 : 0), 0);
+  const ranked = [...traces].sort((a, b) => traceScore(b) - traceScore(a));
+  const annual = (state.annualReviews ?? []).find((review) => review.year === generation) ?? (state.annualReviews ?? []).find((review) => review.year >= generation - 1);
+  const arc = (state.generationArcHistory ?? []).find((record) => record.generation === generation);
+  const mandate = (state.mandateReviews ?? []).filter((review) => review.generation === generation).sort((a, b) => b.week - a.week)[0];
+  const employees = operating.reduce((sum, company) => sum + company.employees.length, 0);
+  const customers = operating.reduce((sum, company) => sum + company.customers, 0);
+  const products = state.companies.reduce((sum, company) => sum + company.projects.filter((project) => project.kind === "produto" && project.status === "concluido").length, 0);
+  const revenueGenerated = (state.financialLedger ?? []).filter((entry) => entry.week >= startWeek && entry.week <= endWeek && entry.amount > 0).reduce((sum, entry) => sum + entry.amount, 0);
+  const score = mandate?.score ?? Math.round(clamp((state.dynastyLegitimacy ?? 50) * .35 + (state.familyUnity ?? 70) * .25 + state.reputation * .2 + Math.min(20, operating.length * 4)));
+  const verdict = score >= 75 ? `${leader} entregou uma geração forte e difícil de superar.` : score >= 55 ? `${leader} preservou a holding, mas deixou conflitos e promessas em aberto.` : `${leader} deixou o comando sob cobranças, perdas e dúvidas sobre o futuro.`;
+  return { generation, leader, startWeek, endWeek, valueDelivered, revenueGenerated, activeCompanies: operating.length, employees, peopleImpacted: customers + employees * 25, products, familyUnity: Math.round(state.familyUnity ?? 70), control: Math.round(100 - (state.outsideFamilyEquity ?? 0)), mandateScore: score, verdict, definingConflict: arc?.title, conflictOutcome: arc?.outcome, conflictTone: arc?.tone, bestDecision: ranked[0]?.decision ?? annual?.bestDecision ?? "Manteve a holding em funcionamento", worstDecision: ranked.at(-1)?.decision ?? annual?.worstDecision ?? "Deixou problemas sem uma resposta definitiva" };
+}
+
 function createDynastyEnding(state: GameState): DynastyEnding {
   const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
   const value = state.personalCash + (state.holdingCash ?? 0) + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0);
   const people = operating.reduce((sum, company) => sum + company.employees.length, 0);
+  const seed = state.endingSeed ?? endingHash(`${state.founder}|${state.holdingName}|${state.week}|${state.generation}|${Math.round(value)}|${state.legacy}`);
+  const currentRecord = captureGenerationLegacy(state, state.playerExecutive ?? state.founder, state.generation ?? 1, state.dynastyStartedWeek ?? state.retiredWeek ?? 1, state.week);
+  const recordedGenerations = state.generationLegacies ?? [];
+  const recoveredGenerations = (state.formerPresidents ?? [])
+    .filter((president) => !recordedGenerations.some((record) => record.generation === president.generation && record.leader === president.name))
+    .map((president) => ({
+      ...captureGenerationLegacy(state, president.name, president.generation, president.startWeek, president.endWeek),
+      valueDelivered: 0,
+      revenueGenerated: 0,
+      verdict: president.legacy,
+      bestDecision: president.lastMove ?? "Manteve sua influência depois de deixar a presidência",
+      worstDecision: "Os registros financeiros detalhados deste mandato não foram preservados",
+    }));
+  const generationRecords = [...recordedGenerations, ...recoveredGenerations]
+    .filter((record) => record.generation !== currentRecord.generation || record.leader !== currentRecord.leader)
+    .concat(currentRecord)
+    .sort((a, b) => a.generation - b.generation || a.startWeek - b.startWeek);
+  const cumulativeRevenue = Math.max(state.lifetimeRevenue ?? 0, generationRecords.reduce((sum, record) => sum + record.revenueGenerated, 0));
+  const totalProducts = state.companies.reduce((sum, company) => sum + company.projects.filter((project) => project.kind === "produto" && project.status === "concluido").length, 0);
+  const acquisitions = state.companies.filter((company) => company.origin === "adquirida").length;
+  const bankruptcies = state.companies.filter((company) => company.bankrupt).length;
+  const soldCompanies = state.companies.filter((company) => company.sold).length;
   const control = 100 - (state.outsideFamilyEquity ?? 0);
   const familyUnity = state.familyUnity ?? 70;
   const legitimacy = state.dynastyLegitimacy ?? 60;
@@ -5570,16 +5667,21 @@ function createDynastyEnding(state: GameState): DynastyEnding {
     : 18;
   const profitableCompanies = operating.filter((company) => companyMetrics(company, state.economy).profit > 0).length;
   const profitableRatio = operating.length ? profitableCompanies / operating.length * 100 : 0;
-  const continuityScore = clamp(familyUnity * .28 + control * .24 + legitimacy * .2 + heirReadiness * .18 + profitableRatio * .1);
-  const extraGenerations = continuityScore >= 82
-    ? 3 + Math.floor(Math.random() * 4)
-    : continuityScore >= 65
-      ? 2 + Math.floor(Math.random() * 3)
-      : continuityScore >= 45
-        ? 1 + Math.floor(Math.random() * 3)
-        : Math.floor(Math.random() * 2);
+  const arcBalance = (state.generationArcHistory ?? []).reduce((sum, arc) => sum + (arc.tone === "vitoria" ? 5 : arc.tone === "derrota" ? -7 : 1), 0);
+  const promiseAverage = (state.annualReviews ?? []).length ? (state.annualReviews ?? []).reduce((sum, review) => sum + review.score, 0) / (state.annualReviews ?? []).length : 55;
+  const continuityScore = clamp(familyUnity * .24 + control * .21 + legitimacy * .18 + heirReadiness * .15 + profitableRatio * .08 + promiseAverage * .08 + arcBalance + Math.min(6, state.legacy / 20));
+  const continuityProbability = Math.round(clamp(continuityScore - bankruptcies * 4, 8, 86));
+  const ruptureProbability = Math.round(clamp(58 - continuityScore * .55 + bankruptcies * 7 + Math.max(0, 40 - familyUnity) * .25, 6, Math.max(6, 92 - continuityProbability)));
+  const transformationProbability = 100 - continuityProbability - ruptureProbability;
+  const futureRoll = endingRandom(seed, 1) * 100;
+  const futurePath: "continuidade" | "transformacao" | "ruptura" = futureRoll < continuityProbability ? "continuidade" : futureRoll < continuityProbability + transformationProbability ? "transformacao" : "ruptura";
+  const extraGenerations = futurePath === "continuidade"
+    ? 3 + Math.floor(endingRandom(seed, 2) * 4)
+    : futurePath === "transformacao"
+      ? 1 + Math.floor(endingRandom(seed, 2) * 3)
+      : Math.floor(endingRandom(seed, 2) * 2);
   const founderLegacyEndsGeneration = (state.generation ?? 1) + extraGenerations;
-  const futureYears = Math.max(8, extraGenerations * 24 + 6 + Math.floor(Math.random() * 13));
+  const futureYears = Math.max(6, extraGenerations * 22 + 5 + Math.floor(endingRandom(seed, 3) * 14));
   const type: DynastyEnding["type"] = operating.length === 0 || value < 100000
     ? "queda"
     : control < 35 || familyUnity < 30
@@ -5587,33 +5689,48 @@ function createDynastyEnding(state: GameState): DynastyEnding {
       : continuityScore >= 78 && familyUnity >= 60 && control >= 55
         ? "centenario"
         : "imperio";
+  const businessFate = operating.length === 0
+    ? "O fim da holding"
+    : (state.outsideVotingPower ?? 0) >= 66 || control <= 15
+      ? "O império tomado por terceiros"
+      : soldCompanies >= Math.max(3, operating.length + 1)
+        ? "A grande liquidação"
+        : continuityScore >= 78 && (state.generation ?? 1) >= 4
+          ? "A dinastia centenária"
+          : control < 40
+            ? "O império sem sobrenome"
+            : "O império empresarial";
+  const brokenHeirs = (state.heirs ?? []).filter((heir) => heir.status === "rompido" || heir.status === "afastado").length;
+  const familyFate = familyUnity >= 78 ? "Uma família que permaneceu unida" : familyUnity >= 52 ? "Uma paz familiar imperfeita" : familyUnity >= 28 ? "Uma família dividida pelo poder" : brokenHeirs ? "O sobrenome que rompeu consigo mesmo" : "Uma família distante da própria obra";
+  const identity = state.leadershipIdentity ?? initialLeadershipIdentity;
+  const founderPersonal = state.founderPersonal ?? { health: 80, family: 70, satisfaction: 60, ego: 40, regrets: 10 };
+  const founderMemory = Boolean(state.founderDeceased) && familyUnity < 25 && control < 40 ? "Fundador esquecido" : identity.integridade >= 72 && founderPersonal.regrets < 35 ? "Fundador reverenciado" : identity.integridade < 42 || founderPersonal.regrets >= 58 ? "Fundador controverso" : state.founderLegacyOutcome?.impactTone === "negativo" ? "Fundador questionado" : "Fundador respeitado";
+  const founderMemoryDetail = founderMemory === "Fundador reverenciado" ? `O nome de ${state.founder} continuou associado a confiança, responsabilidade e origem.` : founderMemory === "Fundador esquecido" ? `As empresas sobreviveram por algum tempo, mas o nome de ${state.founder} desapareceu dos produtos, prédios e discursos.` : founderMemory === "Fundador controverso" ? `Resultados e feridas impediram que mercado e família chegassem a uma mesma versão sobre ${state.founder}.` : `A memória de ${state.founder} permaneceu relevante, embora cada geração tenha reinterpretado suas escolhas.`;
   const copy = {
     centenario: ["Uma dinastia centenária", `A família atravessou ${state.generation} gerações sem perder a capacidade de permanecer unida.`],
     imperio: ["O império empresarial", `A holding sobreviveu pela força dos negócios, mesmo carregando disputas que jamais desapareceram.`],
     fragmentacao: ["O sobrenome se dividiu", `A riqueza permaneceu, mas controle e afeto se espalharam entre facções que já não reconhecem uma única liderança.`],
     queda: ["O fim da holding", `Depois de gerações de decisões, o grupo perdeu suas operações e restou apenas a história do que poderia ter sido.`],
   }[type];
-  const futureMultiplier = type === "centenario"
-    ? 1.35 + extraGenerations * .42 + Math.random() * .4
-    : type === "imperio"
-      ? .9 + extraGenerations * .3 + Math.random() * .35
-      : type === "fragmentacao"
-        ? .45 + extraGenerations * .16 + Math.random() * .2
-        : .04 + Math.random() * .12;
+  const futureMultiplier = futurePath === "continuidade"
+    ? 1.25 + extraGenerations * .4 + endingRandom(seed, 4) * .42
+    : futurePath === "transformacao"
+      ? .72 + extraGenerations * .24 + endingRandom(seed, 4) * .34
+      : .08 + endingRandom(seed, 4) * .38;
   const futureValue = Math.max(0, Math.round(value * futureMultiplier));
-  const futureCompanies = type === "queda"
+  const futureCompanies = futurePath === "ruptura" && extraGenerations === 0
     ? 0
-    : Math.max(1, Math.round(operating.length * (type === "fragmentacao" ? .55 : 1 + extraGenerations * .23 + Math.random() * .25)));
-  const futurePeople = type === "queda"
-    ? Math.max(0, Math.round(people * .08))
-    : Math.max(futureCompanies, Math.round(people * (type === "fragmentacao" ? .62 : 1 + extraGenerations * .2 + Math.random() * .2)));
-  const futureNarrative = type === "centenario"
-    ? `Depois que você deixou o comando, a família preservou o controle e profissionalizou a sucessão. O nome de ${state.founder} ainda orientou decisões por ${futureYears} anos, até a geração ${founderLegacyEndsGeneration}, quando novos líderes transformaram a holding sem apagar sua origem.`
-    : type === "imperio"
-      ? `Nos ${futureYears} anos seguintes, a holding alternou expansão, crises e reconciliações. O legado empresarial de ${state.founder} resistiu até a geração ${founderLegacyEndsGeneration}; depois disso, o grupo continuou, mas já guiado por valores e ambições diferentes dos primeiros anos.`
-      : type === "fragmentacao"
-        ? `Após o capítulo encerrado por você, herdeiros dividiram empresas, patrimônio e influência. Partes do grupo sobreviveram por mais ${futureYears} anos, mas o legado comum de ${state.founder} terminou na geração ${founderLegacyEndsGeneration}, quando o sobrenome deixou de representar um único projeto.`
-        : `O futuro foi curto e duro: ativos foram vendidos, equipes se dispersaram e as últimas operações desapareceram ao longo de ${futureYears} anos. A geração ${founderLegacyEndsGeneration} foi a última a carregar o legado empresarial de ${state.founder}.`;
+    : Math.max(1, Math.round(operating.length * (futurePath === "ruptura" ? .42 : futurePath === "transformacao" ? .78 + extraGenerations * .12 : 1 + extraGenerations * .23 + endingRandom(seed, 5) * .22)));
+  const impactBase = Math.max(state.lifetimePeopleImpact ?? 0, generationRecords.reduce((sum, record) => Math.max(sum, record.peopleImpacted), 0));
+  const futurePeople = futurePath === "ruptura" ? Math.round(impactBase * (.25 + endingRandom(seed, 6) * .3)) : Math.round(impactBase * (futurePath === "continuidade" ? 1.5 + extraGenerations * .55 : .9 + extraGenerations * .3));
+  const definitiveFutureNarrative = futurePath === "continuidade"
+    ? `Nos ${futureYears} anos seguintes, sucessores profissionalizaram a holding sem romper com sua origem. O legado de ${state.founder} orientou o grupo até a geração ${founderLegacyEndsGeneration}, quando uma nova liderança transformou a empresa sem apagar sua história.`
+    : futurePath === "transformacao"
+      ? `O grupo continuou por mais ${futureYears} anos, mas mudou de identidade. Novos controladores, produtos e valores mantiveram parte do patrimônio enquanto o legado original de ${state.founder} se encerrou na geração ${founderLegacyEndsGeneration}.`
+      : `O futuro cobrou as fragilidades acumuladas. Empresas foram vendidas, equipes se dispersaram e o legado empresarial de ${state.founder} encontrou sua última geração em ${founderLegacyEndsGeneration}.`;
+  const projectionConfirmed = state.founderLegacyOutcome && ((state.founderLegacyOutcome.path === "duradouro" && futurePath === "continuidade") || (state.founderLegacyOutcome.path === "ambivalente" && futurePath === "transformacao") || (state.founderLegacyOutcome.path === "ruptura" && futurePath === "ruptura"));
+  const founderProjectionVerdict = !state.founderLegacyOutcome ? "A primeira geração terminou sem registrar uma projeção para o futuro." : projectionConfirmed ? `A projeção feita ao fim da primeira geração se confirmou: ${state.founderLegacyOutcome.title.toLowerCase()}.` : `A primeira geração previa ${state.founderLegacyOutcome.title.toLowerCase()}, mas as decisões dos sucessores mudaram esse destino.`;
+  const decisiveMoments = [...(state.generationArcHistory ?? []).map((arc) => `G${arc.generation}: ${arc.title} terminou em ${arc.tone === "vitoria" ? "vitória" : arc.tone === "acordo" ? "acordo" : "derrota"}.`), ...(state.annualReviews ?? []).slice(0, 2).map((review) => `Ano ${review.year}: ${review.verdict} (${review.score}%).`), ...(state.careerMoments ?? []).slice(0, 3).map((moment) => `S${moment.week}: ${moment.title}.`)].slice(0, 7);
   const secretEnding = Boolean(state.founderDeceased) && familyUnity < 25 && (state.outsideFamilyEquity ?? 0) > 60
     ? ["O fundador esquecido", `O grupo sobreviveu por algum tempo, mas o nome de ${state.founder} foi removido de prédios, produtos e discursos. O patrimônio continuou; a memória não.`]
     : (state.heirs ?? []).length > 0 && (state.heirs ?? []).every((heir) => heir.status === "rompido" || heir.status === "afastado")
@@ -5625,8 +5742,8 @@ function createDynastyEnding(state: GameState): DynastyEnding {
           : undefined;
   return {
     type,
-    title: copy[0],
-    narrative: copy[1],
+    title: businessFate,
+    narrative: `${copy[1]} ${familyFate}. ${founderMemoryDetail}`,
     generation: state.generation ?? 1,
     value,
     companies: operating.length,
@@ -5636,7 +5753,21 @@ function createDynastyEnding(state: GameState): DynastyEnding {
     futureValue,
     futureCompanies,
     futurePeople,
-    futureNarrative,
+    futureNarrative: definitiveFutureNarrative,
+    businessFate,
+    familyFate,
+    founderMemory,
+    founderMemoryDetail,
+    continuityScore: Math.round(continuityScore),
+    cumulativeRevenue,
+    totalProducts,
+    acquisitions,
+    bankruptcies,
+    soldCompanies,
+    generationRecords,
+    futureProbabilities: { continuidade: continuityProbability, transformacao: transformationProbability, ruptura: ruptureProbability },
+    founderProjectionVerdict,
+    decisiveMoments,
     secretEndingTitle: secretEnding?.[0],
     secretEndingNarrative: secretEnding?.[1],
   };
@@ -6374,6 +6505,7 @@ export default function Home() {
             memoir: president.memoir ?? `Memórias do mandato de ${president.name}`,
             secret: president.secret ?? "Uma decisão do mandato nunca foi explicada por completo ao conselho.",
           })),
+          generationLegacies: parsed.generationLegacies ?? [],
           lastDynastyTransition: parsed.lastDynastyTransition,
           politicalArc: parsed.politicalArc,
           generationArc: parsed.generationArc,
@@ -6420,6 +6552,9 @@ export default function Home() {
           founderEnding: parsed.founderEnding,
           founderEndingWeek: parsed.founderEndingWeek,
           founderLegacyOutcome: parsed.founderLegacyOutcome,
+          endingSeed: parsed.endingSeed,
+          lifetimeRevenue: parsed.lifetimeRevenue ?? (parsed.financialLedger ?? []).filter((entry: FinancialEntry) => entry.amount > 0).reduce((sum: number, entry: FinancialEntry) => sum + entry.amount, 0),
+          lifetimePeopleImpact: parsed.lifetimePeopleImpact ?? (parsed.companies ?? []).reduce((sum: number, company: Company) => sum + company.customers + company.employees.length * 25, 0),
           companies: (parsed.companies ?? []).map((c: Company) => ({
             ...c,
             founderEquity: c.founderEquity ?? 100,
@@ -6569,8 +6704,9 @@ export default function Home() {
   }, [game.started]);
   useEffect(() => {
     if (game.started && game.founderJourneyComplete && !game.founderLegacyOutcome) {
-      const outcome = createFounderLegacyOutcome(game);
-      setGame((state) => state.founderLegacyOutcome ? state : ({ ...state, founderLegacyOutcome: outcome }));
+      const endingSeed = game.endingSeed ?? endingHash(`${game.founder}|${game.holdingName}|primeira-geracao|${game.week}|${game.legacy}`);
+      const outcome = createFounderLegacyOutcome({ ...game, endingSeed });
+      setGame((state) => state.founderLegacyOutcome ? state : ({ ...state, endingSeed, founderLegacyOutcome: outcome }));
     }
   }, [game.started, game.founderJourneyComplete, game.founderLegacyOutcome]);
   useEffect(() => {
@@ -7155,9 +7291,11 @@ export default function Home() {
     if (game.founderJourneyComplete) return;
     const ending = determineFounderEnding(game);
     const details = endingDetails[ending];
-    const legacyOutcome = createFounderLegacyOutcome(game);
+    const endingSeed = game.endingSeed ?? endingHash(`${game.founder}|${game.holdingName}|primeira-geracao|${game.week}|${game.legacy}`);
+    const legacyOutcome = createFounderLegacyOutcome({ ...game, endingSeed });
     setGame((state) => ({
       ...state,
+      endingSeed,
       founderJourneyComplete: true,
       founderJourneyReady: true,
       founderEnding: ending,
@@ -7168,14 +7306,16 @@ export default function Home() {
       news: [{ id: Date.now(), week: state.week, category: "pessoas", headline: `${state.founder} conclui sua jornada como ${details.title}`, body: legacyOutcome.narrative, impact: legacyOutcome.impactTone }, ...state.news].slice(0, 60),
     }));
     setSpeed(0);
-    notify(`O futuro foi escrito: ${legacyOutcome.title.toLowerCase()}. Esse epílogo agora faz parte do save.`);
+    notify(`A primeira geração foi julgada: ${details.title.toLowerCase()}. A projeção ficou registrada, mas os sucessores ainda podem mudar esse destino.`);
   };
 
   const concludeDynasty = () => {
     if (!game.dynastyMode || !game.dynastyEndingReady || game.dynastyConcluded) return;
-    const ending = createDynastyEnding(game);
+    const endingSeed = game.endingSeed ?? endingHash(`${game.founder}|${game.holdingName}|${game.week}|${game.generation}|${game.legacy}`);
+    const ending = createDynastyEnding({ ...game, endingSeed });
     setGame((state) => ({
       ...state,
+      endingSeed,
       dynastyConcluded: true,
       dynastyEnding: ending,
       dynastyHistory: [`Semana ${state.week}: ${ending.title} encerrou a crônica principal da família.`, ...(state.dynastyHistory ?? [])].slice(0, 20),
@@ -10023,6 +10163,11 @@ export default function Home() {
           health: clamp((current.founderPersonal?.health ?? 82) - (nextWeek % 4 === 0 ? .35 : 0)),
         },
         founderJourneyReady: current.founderJourneyReady || nextWeek >= 130,
+        lifetimeRevenue: (current.lifetimeRevenue ?? 0) + companies.filter((company) => !company.sold && !company.bankrupt && !company.closed).reduce((sum, company) => sum + Math.max(0, companyMetrics(company, economyAfterNews).revenue), 0),
+        lifetimePeopleImpact: (current.lifetimePeopleImpact ?? 0) + companies.reduce((sum, company) => {
+          const previous = current.companies.find((item) => item.id === company.id);
+          return sum + Math.max(0, company.customers - (previous?.customers ?? 0)) + Math.max(0, company.employees.length - (previous?.employees.length ?? 0)) * 25;
+        }, 0),
         unread: leaderDeathDecision
           ? [...current.unread, leaderDeathDecision]
           : politicalArcDecision
@@ -12251,6 +12396,7 @@ export default function Home() {
         formerPresidentProfile(s, s.founder, 1, 1, s.week, "crescimento"),
         ...(s.formerPresidents ?? []).filter((president) => president.name !== s.founder),
       ],
+      generationLegacies: [captureGenerationLegacy(s, s.founder, 1, 1, s.week), ...(s.generationLegacies ?? []).filter((record) => record.generation !== 1)],
       lastDynastyTransition: createDynastyTransition(s, s.founder, chosenSuccessor.name, 2),
       generationProfile: generationProfileFor(chosenSuccessor.name, 2, chosenSuccessor.style, s.week, chosenSuccessor.startAge + Math.round(s.week / 52)),
       lastMandateReviewWeek: s.week,
@@ -12500,6 +12646,7 @@ export default function Home() {
         ),
         ...(s.formerPresidents ?? []).filter((president) => president.name !== formerLeader),
       ],
+      generationLegacies: [captureGenerationLegacy(s, formerLeader, s.generation ?? 2, s.dynastyStartedWeek ?? s.retiredWeek ?? 1, s.week), ...(s.generationLegacies ?? []).filter((record) => record.generation !== (s.generation ?? 2) || record.leader !== formerLeader)],
       lastDynastyTransition: createDynastyTransition(s, formerLeader, selectedNextLeader.name, (s.generation ?? 2) + 1),
       generationProfile: generationProfileFor(selectedNextLeader.name, (s.generation ?? 2) + 1, selectedNextLeader.style, s.week, selectedNextLeader.startAge + Math.round(dynastyTenure / 52)),
       lastMandateReviewWeek: s.week,
@@ -14097,7 +14244,7 @@ export default function Home() {
 
             {!game.founderJourneyComplete ? (
               <section className="legacy-probability-room">
-                <header><small>FUTUROS POSSÍVEIS</small><h3>O que poderá acontecer depois de você?</h3><p>As chances refletem família, sucessão, integridade, empresas, conselho e decisões acumuladas. Ao concluir, um futuro será sorteado uma única vez e ficará registrado neste save.</p></header>
+                <header><small>PROJEÇÃO DA PRIMEIRA GERAÇÃO</small><h3>Que futuro o fundador tornou possível?</h3><p>As chances refletem família, sucessão, integridade, empresas e conselho neste momento. Uma projeção será registrada, mas as gerações seguintes poderão confirmá-la ou destruí-la.</p></header>
                 <div className="legacy-probability-grid">
                   {(["duradouro", "ambivalente", "ruptura"] as FounderLegacyPath[]).map((path) => (
                     <article className={path} key={path}>
@@ -14112,7 +14259,7 @@ export default function Home() {
             ) : founderLegacyOutcome && (
               <section className={`legacy-outcome-room ${founderLegacyOutcome.impactTone}`}>
                 <header>
-                  <div><small>EPÍLOGO DA PRIMEIRA GERAÇÃO · CHANCE ORIGINAL {founderLegacyOutcome.probability}%</small><h3>{founderLegacyOutcome.title}</h3></div>
+                  <div><small>PROJEÇÃO REGISTRADA NA PRIMEIRA GERAÇÃO · CHANCE {founderLegacyOutcome.probability}%</small><h3>{founderLegacyOutcome.title}</h3></div>
                   <strong>{founderLegacyOutcome.impactScore > 0 ? "+" : ""}{founderLegacyOutcome.impactScore}</strong>
                 </header>
                 <blockquote>“{founderLegacyOutcome.narrative}”</blockquote>
@@ -15618,10 +15765,30 @@ export default function Home() {
         <GameModal onClose={() => setDialog(null)} wide>
           <div className={`dynasty-ending-room ${game.dynastyEnding.type}`}>
             <header><small>FIM DA CRÔNICA JOGÁVEL · GERAÇÃO {game.dynastyEnding.generation}</small><h2>{game.dynastyEnding.title}</h2><p>{game.dynastyEnding.narrative}</p></header>
-            <div className="dynasty-ending-numbers"><div><small>VALOR FINAL</small><b>{compact.format(game.dynastyEnding.value)}</b></div><div><small>EMPRESAS</small><b>{game.dynastyEnding.companies}</b></div><div><small>PESSOAS</small><b>{game.dynastyEnding.people}</b></div><div><small>GERAÇÕES JOGADAS</small><b>{game.dynastyEnding.generation}</b></div></div>
-            <section className="dynasty-future"><small>O FUTURO DEPOIS DE VOCÊ</small><h3>O legado de {game.founder} chegou até a geração {game.dynastyEnding.founderLegacyEndsGeneration}</h3><p>{game.dynastyEnding.futureNarrative}</p><div><span><small>ANOS SIMULADOS</small><b>{game.dynastyEnding.futureYears}</b></span><span><small>VALOR NO FUTURO</small><b>{compact.format(game.dynastyEnding.futureValue)}</b></span><span><small>EMPRESAS</small><b>{game.dynastyEnding.futureCompanies}</b></span><span><small>PESSOAS IMPACTADAS</small><b>{game.dynastyEnding.futurePeople}</b></span></div></section>
+            <div className="ending-three-fates">
+              <article><small>DESTINO DOS NEGÓCIOS</small><b>{game.dynastyEnding.businessFate ?? game.dynastyEnding.title}</b><p>{game.dynastyEnding.companies} empresa{game.dynastyEnding.companies !== 1 ? "s" : ""} chegou{game.dynastyEnding.companies !== 1 ? "aram" : ""} ao último capítulo.</p></article>
+              <article><small>DESTINO DA FAMÍLIA</small><b>{game.dynastyEnding.familyFate ?? "A família escreveu seu próprio desfecho"}</b><p>União familiar em {Math.round(game.familyUnity ?? 70)}% e controle familiar em {Math.round(100 - (game.outsideFamilyEquity ?? 0))}%.</p></article>
+              <article><small>MEMÓRIA DO FUNDADOR</small><b>{game.dynastyEnding.founderMemory ?? "Fundador respeitado"}</b><p>{game.dynastyEnding.founderMemoryDetail ?? `O nome de ${game.founder} permaneceu ligado à origem da holding.`}</p></article>
+            </div>
+            <div className="dynasty-ending-numbers"><div><small>VALOR FINAL</small><b>{compact.format(game.dynastyEnding.value)}</b></div><div><small>RECEITA GERADA</small><b>{compact.format(game.dynastyEnding.cumulativeRevenue ?? 0)}</b></div><div><small>EMPREGOS ATIVOS</small><b>{game.dynastyEnding.people}</b></div><div><small>GERAÇÕES JOGADAS</small><b>{game.dynastyEnding.generation}</b></div></div>
+            <section className="ending-generation-chronicle">
+              <small>A CRÔNICA DE CADA GERAÇÃO</small><h3>Ninguém recebeu a mesma empresa que entregou</h3>
+              {(game.dynastyEnding.generationRecords?.length ?? 0) > 0 ? <div>{game.dynastyEnding.generationRecords?.map((record, index) => <article key={`${record.generation}-${record.leader}-${record.startWeek}-${index}`}>
+                <b>G{record.generation}</b><div><header><span><small>PRESIDENTE</small><h4>{record.leader}</h4></span><strong>{record.mandateScore}%</strong></header><p className="generation-verdict">{record.verdict}</p>
+                  <div className="generation-record-stats"><span><small>MANDATO</small><b>S{record.startWeek}–{record.endWeek}</b></span><span><small>EMPRESAS</small><b>{record.activeCompanies}</b></span><span><small>PRODUTOS</small><b>{record.products}</b></span><span><small>CONTROLE</small><b>{record.control}%</b></span></div>
+                  {record.definingConflict && <p className={`generation-conflict ${record.conflictTone ?? "acordo"}`}><b>CONFLITO:</b> {record.definingConflict}{record.conflictOutcome ? ` — ${record.conflictOutcome}` : ""}</p>}
+                  <div className="generation-decisions"><p><b>✓ MELHOR MARCA</b>{record.bestDecision}</p><p><b>× FERIDA DEIXADA</b>{record.worstDecision}</p></div>
+                </div>
+              </article>)}</div> : <div>{[...(game.formerPresidents ?? []), { name: currentLeader, generation: game.generation ?? 1, legacy: "Conduziu o capítulo final.", status: "aliado" }].map((president) => <article key={`${president.name}-${president.generation}`}><b>G{president.generation}</b><div><h4>{president.name}</h4><p>{president.legacy}</p></div></article>)}</div>}
+            </section>
+            <section className="ending-legacy-balance"><small>O QUE A DINASTIA CONSTRUIU — E PERDEU</small><h3>Balanço definitivo do legado</h3><div><span><b>{game.dynastyEnding.totalProducts ?? 0}</b><small>PRODUTOS CONCLUÍDOS</small></span><span><b>{game.dynastyEnding.acquisitions ?? 0}</b><small>AQUISIÇÕES</small></span><span><b>{game.dynastyEnding.soldCompanies ?? 0}</b><small>EMPRESAS VENDIDAS</small></span><span><b>{game.dynastyEnding.bankruptcies ?? 0}</b><small>FALÊNCIAS</small></span><span><b>{game.dynastyEnding.continuityScore ?? 0}%</b><small>FORÇA DO LEGADO</small></span></div></section>
+            {(game.dynastyEnding.decisiveMoments?.length ?? 0) > 0 && <section className="ending-decisive-moments"><small>MOMENTOS QUE MUDARAM O DESTINO</small><h3>A história não foi decidida apenas na última semana</h3><div>{game.dynastyEnding.decisiveMoments?.map((moment, index) => <p key={`${moment}-${index}`}><b>{String(index + 1).padStart(2, "0")}</b>{moment}</p>)}</div></section>}
+            <section className="founder-projection-verdict"><small>O JULGAMENTO DA PRIMEIRA GERAÇÃO</small><h3>A previsão de {game.founder} encontrou a realidade</h3><p>{game.dynastyEnding.founderProjectionVerdict ?? "As escolhas das gerações seguintes definiram o resultado final."}</p></section>
+            <section className="dynasty-future"><small>O FUTURO DEPOIS DE VOCÊ</small><h3>O legado de {game.founder} chegou até a geração {game.dynastyEnding.founderLegacyEndsGeneration}</h3><p>{game.dynastyEnding.futureNarrative}</p>
+              {game.dynastyEnding.futureProbabilities && <div className="future-probabilities"><span><small>CONTINUIDADE</small><b>{game.dynastyEnding.futureProbabilities.continuidade}%</b></span><span><small>TRANSFORMAÇÃO</small><b>{game.dynastyEnding.futureProbabilities.transformacao}%</b></span><span><small>RUPTURA</small><b>{game.dynastyEnding.futureProbabilities.ruptura}%</b></span></div>}
+              <div className="future-result"><span><small>ANOS SIMULADOS</small><b>{game.dynastyEnding.futureYears}</b></span><span><small>VALOR NO FUTURO</small><b>{compact.format(game.dynastyEnding.futureValue)}</b></span><span><small>EMPRESAS</small><b>{game.dynastyEnding.futureCompanies}</b></span><span><small>PESSOAS IMPACTADAS</small><b>{game.dynastyEnding.futurePeople.toLocaleString("pt-BR")}</b></span></div>
+            </section>
             {game.dynastyEnding.secretEndingTitle && <section className="secret-dynasty-ending"><small>FINAL SECRETO DESCOBERTO</small><h3>{game.dynastyEnding.secretEndingTitle}</h3><p>{game.dynastyEnding.secretEndingNarrative}</p></section>}
-            <section><h3>Presidentes que escreveram essa história</h3>{[...(game.formerPresidents ?? []), { name: currentLeader, generation: game.generation ?? 1, legacy: "Conduziu o capítulo final.", status: "aliado" }].map((president) => <article key={`${president.name}-${president.generation}`}><b>G{president.generation}</b><div><h4>{president.name}</h4><p>{president.legacy}</p></div></article>)}</section>
             <footer><p>Este save fica registrado como concluído. Você pode consultar a holding e a crônica, mas o tempo não avançará.</p><button onClick={() => { setDialog(null); navigateToView("jornada"); }}>Ver o legado completo</button></footer>
           </div>
         </GameModal>
