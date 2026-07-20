@@ -6149,6 +6149,7 @@ export default function Home() {
     | "dynasty-transition"
     | "dynasty-ending"
     | "difficulty"
+    | "decision-center"
     | "page-guide"
     | "help"
     | null
@@ -6162,6 +6163,8 @@ export default function Home() {
     remaining: number;
     total: number;
     label: string;
+    mode: "periodo" | "decisao";
+    startedWeek: number;
   } | null>(null);
   const [targetRival, setTargetRival] = useState<Competitor | null>(null);
   const [selectedRivalId, setSelectedRivalId] = useState<number | null>(null);
@@ -6745,6 +6748,27 @@ export default function Home() {
   const activeCompanies = game.companies.filter(
     (company) => !company.sold && !company.bankrupt && !company.closed,
   );
+  const urgentStaffAlerts = pendingStaffAlerts.filter((alert) => alert.responsible === currentLeader || !alert.ceoDeadline || alert.ceoDeadline < game.week || Boolean(alert.ceoMessageId && game.unread.some((message) => message.id === alert.ceoMessageId)));
+  const decisionDigest = buildWeeklyDigest(game.weeklyReports?.[0] ?? null, game.companies);
+  const urgentDecisionAdvice = decisionDigest.filter((item) => item.kind === "urgente").slice(0, 3);
+  const delegatedDecisionUpdates = activeCompanies
+    .filter((company) => company.ceo !== currentLeader)
+    .map((company) => {
+      const commitment = pendingStaffAlerts.find((alert) => alert.companyId === company.id && alert.ceoDeadline && alert.ceoDeadline >= game.week);
+      return { company, detail: commitment?.ceoCommitment ? `${commitment.ceoCommitment}. Prazo: semana ${commitment.ceoDeadline}.` : company.ceoHistory?.[0] ?? company.ceoLastDecision ?? "Operação revisada pelo CEO." };
+    })
+    .slice(0, 4);
+  const waitingProjects = activeCompanies.flatMap((company) => company.projects
+    .filter((project) => project.status === "ativo")
+    .map((project) => ({ company, project })))
+    .sort((a, b) => b.project.progress - a.project.progress)
+    .slice(0, 4);
+  const waitingContracts = activeCompanies.flatMap((company) => (company.partners ?? [])
+    .filter((partner) => partner.status === "ativo" && partner.weeksLeft > 2 && partner.weeksLeft <= 6)
+    .map((partner) => ({ company, partner })))
+    .slice(0, 3);
+  const decisionCenterUrgentCount = game.unread.length + urgentStaffAlerts.length + urgentDecisionAdvice.length;
+  const decisionMoneyAtRisk = waitingProjects.reduce((sum, item) => sum + item.project.budget, 0) + waitingContracts.reduce((sum, item) => sum + item.partner.weeklyValue * item.partner.weeksLeft, 0);
   const delegatedCompanies = activeCompanies.filter(
     (company) => company.ceo !== currentLeader,
   ).length;
@@ -10232,7 +10256,7 @@ export default function Home() {
     });
   };
 
-  const requestTimeAdvance = (weeks: number, label: string) => {
+  const requestTimeAdvance = (weeks: number, label: string, mode: "periodo" | "decisao" = "periodo") => {
     if (!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded) {
       notify("Não existe uma empresa ativa capaz de continuar a simulação.");
       return;
@@ -10244,15 +10268,26 @@ export default function Home() {
       return;
     }
     setSpeed(0);
-    setTimeAdvance({ remaining: weeks, total: weeks, label });
+    setTimeAdvance({ remaining: weeks, total: weeks, label, mode, startedWeek: game.week });
   };
 
   useEffect(() => {
     if (!timeAdvance) return;
     const currentCompany = game.companies.find((company) => company.id === game.activeCompanyId);
+    const currentReport = game.weeklyReports?.[0];
+    const criticalReport = Boolean(
+      game.week > timeAdvance.startedWeek &&
+      currentReport?.week === game.week &&
+      currentReport.companies.some((company) => company.severity === "critico"),
+    );
+    const newStaffProblem = (game.staffAlerts ?? []).some((alert) => !alert.resolved && alert.week > timeAdvance.startedWeek);
+    const narrativeCrisis = Boolean(game.week > timeAdvance.startedWeek && (game.narrativeDirector?.tension ?? 0) >= 82);
     const interrupted =
       game.unread.length > 0 ||
       Boolean(dialog) ||
+      criticalReport ||
+      newStaffProblem ||
+      narrativeCrisis ||
       game.dynastyConcluded ||
       !currentCompany ||
       currentCompany.sold ||
@@ -10262,6 +10297,10 @@ export default function Home() {
       setTimeAdvance(null);
       if (game.unread.length > 0)
         notify(`Calendário pausado na semana ${game.week}: uma decisão precisa de você.`);
+      else if (newStaffProblem)
+        notify(`Calendário pausado na semana ${game.week}: surgiu uma vaga que exige acompanhamento.`);
+      else if (criticalReport || narrativeCrisis)
+        notify(`Calendário pausado na semana ${game.week}: a assessoria detectou uma crise.`);
       return;
     }
     const timer = window.setTimeout(() => {
@@ -12972,6 +13011,9 @@ export default function Home() {
           <button className="inbox-button" onClick={() => setDialog("inbox")}>
             Mensagens {game.unread.length > 0 && <i>{game.unread.length}</i>}
           </button>
+          <button className={`decision-center-button ${decisionCenterUrgentCount ? "urgent" : ""}`} onClick={() => setDialog("decision-center")}>
+            Central {decisionCenterUrgentCount > 0 && <i>{decisionCenterUrgentCount}</i>}
+          </button>
           <button className="difficulty-button" onClick={() => setDialog("difficulty")}>Ritmo: {difficultyProfiles[game.difficulty ?? "executivo"].title}</button>
           <button className="ui-scale-button" onClick={cycleUIScale} title="Alternar tamanho dos textos e cartões">Tela: {uiScale === "compacto" ? "Compacta" : uiScale === "confortavel" ? "Confortável" : "Ampliada"}</button>
           <button className={`report-button ${latestActiveReport?.severity ?? ""}`} disabled={!game.weeklyReports?.length} onClick={() => {
@@ -13009,8 +13051,8 @@ export default function Home() {
             ) : (
               <>
                 <button onClick={() => requestTimeAdvance(1, "semana")} disabled={!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded} title="Simular uma semana">+1 sem.</button>
-                <button onClick={() => requestTimeAdvance(4, "mês")} disabled={!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded} title="Simular quatro semanas; para se surgir uma decisão urgente">+1 mês</button>
-                <button onClick={() => requestTimeAdvance(13, "trimestre")} disabled={!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded} title="Simular treze semanas; para se surgir uma decisão urgente">+1 tri.</button>
+                <button onClick={() => requestTimeAdvance(4, "mês")} disabled={!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded} title="Simular quatro semanas; pausa em crise ou decisão">+4 sem.</button>
+                <button onClick={() => requestTimeAdvance(52, "até decisão", "decisao")} disabled={!active || active.sold || active.bankrupt || active.closed || game.dynastyConcluded} title="Avançar até surgir uma decisão, crise ou problema de equipe">Até decisão</button>
               </>
             )}
           </div>
@@ -14195,6 +14237,32 @@ export default function Home() {
       {dialog === "difficulty" && (
         <GameModal onClose={() => setDialog(null)} wide>
           <div className="difficulty-room"><header><small>DIFICULDADE DA HISTÓRIA</small><h2>Escolha quanto o mundo perdoa seus erros</h2><p>Você pode alterar o ritmo durante o save. Crises, CEOs, concorrentes, contratos, capital, produtos e alertas passam a obedecer regras próprias de cada modo. O capital inicial vale somente para novas histórias.</p></header><div>{(Object.keys(difficultyProfiles) as GameDifficulty[]).map((level) => <button className={(game.difficulty ?? "executivo") === level ? "active" : ""} onClick={() => setGame((state) => ({ ...state, difficulty: level }))} key={level}><small>{level === "relaxado" ? "MAIS TEMPO" : level === "executivo" ? "EQUILIBRADO" : "SEM PIEDADE"}</small><h3>{difficultyProfiles[level].title}</h3><p>{difficultyProfiles[level].description}</p><span>{level === "relaxado" ? "−28% estresse · parceiros mais pacientes" : level === "executivo" ? "Regras e recompensas padrão" : "+28% estresse · capital e contratos mais duros"}</span><ul>{difficultySystemSummary[level].map((item) => <li key={item}>{item}</li>)}</ul></button>)}</div><footer><button onClick={() => setDialog(null)}>Continuar a história</button></footer></div>
+        </GameModal>
+      )}
+      {dialog === "decision-center" && (
+        <GameModal onClose={() => setDialog(null)} wide>
+          <div className="decision-center-room">
+            <header className="decision-center-title"><div><small>ASSESSORIA DA PRESIDÊNCIA</small><h2>O que realmente precisa de você</h2><p>A central separa decisões urgentes, providências tomadas pelos CEOs e assuntos que ainda podem esperar.</p></div><div className="decision-risk"><small>DINHEIRO EM MOVIMENTO</small><b>{money.format(decisionMoneyAtRisk)}</b><span>projetos e contratos acompanhados</span></div></header>
+            <section className="decision-center-summary"><div className={decisionCenterUrgentCount ? "danger" : "safe"}><small>EXIGE VOCÊ AGORA</small><b>{decisionCenterUrgentCount}</b><span>{decisionCenterUrgentCount ? "O calendário pode pausar por estes assuntos." : "Nenhum bloqueio no momento."}</span></div><div><small>RESOLVIDO PELOS CEOs</small><b>{delegatedDecisionUpdates.length}</b><span>Ações executivas recentes.</span></div><div><small>PODE ESPERAR</small><b>{waitingProjects.length + waitingContracts.length}</b><span>Acompanhamento sem urgência.</span></div></section>
+            <div className="decision-center-columns">
+              <section className="decision-lane urgent"><header><small>1</small><div><b>Exige decisão agora</b><span>Problemas, escolhas e dinheiro sob risco imediato.</span></div></header>
+                {!decisionCenterUrgentCount && <p className="decision-empty">Nada urgente. Você pode avançar o tempo com segurança.</p>}
+                {game.unread.slice(0, 4).map((message) => <button className="decision-item" key={message.id} onClick={() => { setSelectedMessage(message); setDialog("inbox"); }}><small>MENSAGEM · {message.from}</small><b>{message.subject}</b><span>{message.body.slice(0, 120)}{message.body.length > 120 ? "…" : ""}</span><em>Decidir agora ›</em></button>)}
+                {urgentStaffAlerts.slice(0, 3).map((alert) => <button className="decision-item" key={alert.id} onClick={() => openStaffReplacement(alert)}><small>EQUIPE · {alert.companyName}</small><b>Repor {alert.role}</b><span>{alert.employeeName} deixou a empresa. Responsável: {alert.responsible}.</span><em>{alert.responsible === currentLeader ? "Contratar substituto" : "Cobrar CEO"} ›</em></button>)}
+                {urgentDecisionAdvice.map((advice) => <button className="decision-item" key={`${advice.companyId}-${advice.title}`} onClick={() => followWeeklyAdvice(advice, advice.companyId)}><small>ALERTA FINANCEIRO · {advice.companyName}</small><b>{advice.title}</b><span>{advice.detail}</span><em>{advice.actionLabel} ›</em></button>)}
+              </section>
+              <section className="decision-lane delegated"><header><small>2</small><div><b>Resolvido pelos CEOs</b><span>Você acompanha sem refazer o trabalho deles.</span></div></header>
+                {!delegatedDecisionUpdates.length && <p className="decision-empty">Nenhuma empresa está delegada neste momento.</p>}
+                {delegatedDecisionUpdates.map(({ company, detail }) => <button className="decision-item" key={company.id} onClick={() => { setGame((state) => ({ ...state, activeCompanyId: company.id })); setHoldingCompanyId(company.id); setView("portfolio"); setDialog("holding-company"); }}><small>{company.autonomy?.toUpperCase()} · {company.name}</small><b>{company.ceo}</b><span>{detail}</span><em>Ver gestão ›</em></button>)}
+              </section>
+              <section className="decision-lane waiting"><header><small>3</small><div><b>Pode esperar</b><span>O jogo continua acompanhando e avisará se piorar.</span></div></header>
+                {!waitingProjects.length && !waitingContracts.length && <p className="decision-empty">Nenhum prazo intermediário importante.</p>}
+                {waitingProjects.map(({ company, project }) => <button className="decision-item" key={`${company.id}-${project.id}`} onClick={() => { setGame((state) => ({ ...state, activeCompanyId: company.id })); setSelectedProduct(project); if (project.kind === "produto") setDialog("product"); else { setView("projetos"); setDialog(null); } }}><small>PROJETO · {company.name}</small><b>{project.name}</b><span>{Math.round(project.progress)}% concluído · risco {Math.round(project.risk)}% · {money.format(project.budget)} comprometidos.</span><em>Acompanhar ›</em></button>)}
+                {waitingContracts.map(({ company, partner }) => <button className="decision-item" key={`${company.id}-${partner.id}`} onClick={() => { setGame((state) => ({ ...state, activeCompanyId: company.id })); setSelectedPartnerId(partner.id); setDialog("partner"); }}><small>CONTRATO · {company.name}</small><b>{partner.name}</b><span>Vence em {partner.weeksLeft} semanas · {money.format(partner.weeklyValue)}/semana.</span><em>Ver contrato ›</em></button>)}
+              </section>
+            </div>
+            <footer className="decision-center-footer"><div><b>Quer deixar o jogo andar?</b><span>O tempo para automaticamente se surgir uma crise, vaga ou decisão narrativa.</span></div><button disabled={decisionCenterUrgentCount > 0} onClick={() => { setDialog(null); requestTimeAdvance(52, "até decisão", "decisao"); }}>Avançar até a próxima decisão</button></footer>
+          </div>
         </GameModal>
       )}
       {dialog === "inbox" && (
