@@ -404,6 +404,30 @@ type InvestorStake = {
   targetValue: number;
   lastReview: number;
 };
+type HoldingShareClass = "ordinaria" | "preferencial";
+type HoldingSaleDestination = "tesouraria" | "pessoal";
+type HoldingInvestorStake = {
+  providerId: string;
+  name: string;
+  representative: string;
+  equity: number;
+  votingPower: number;
+  boardSeats: number;
+  support: number;
+  invested: number;
+  shareClass: HoldingShareClass;
+  enteredWeek: number;
+};
+type HoldingSaleProposal = {
+  provider: CapitalProvider;
+  gross: number;
+  net: number;
+  impliedValuation: number;
+  votingPower: number;
+  boardSeats: number;
+  ousterRisk: number;
+  feeRate: number;
+};
 type Competitor = {
   id: number;
   name: string;
@@ -765,6 +789,10 @@ type GameState = {
   founderHoldingEquity?: number;
   familyFoundationEquity?: number;
   outsideFamilyEquity?: number;
+  outsideVotingPower?: number;
+  holdingCash?: number;
+  holdingInvestors?: HoldingInvestorStake[];
+  lastHoldingCapitalWeek?: number;
   dynastyHistory?: string[];
   formerPresidents?: FormerPresident[];
   lastDynastyTransition?: DynastyTransition;
@@ -1011,20 +1039,22 @@ function syncHoldingFactions(state: GameState, sourceCompanies = state.companies
   const unique = (names: (string | undefined)[]) => [...new Set(names.filter((name): name is string => Boolean(name)))];
   const employees = companies.flatMap((company) => company.employees);
   const investors = companies.flatMap((company) => company.investors ?? []);
+  const holdingInvestors = state.holdingInvestors ?? [];
   const definitions: { id: string; name: string; agenda: FactionAgenda; members: string[] }[] = [
     { id: "expansionistas", name: "Bloco Expansionista", agenda: "crescimento", members: unique([...companies.filter((company) => company.ceoStyle === "crescimento").map((company) => company.ceo), ...employees.filter((employee) => employee.trait === "Competitivo").map((employee) => employee.name)]) },
     { id: "guardioes", name: "Guardiões do Caixa", agenda: "seguranca", members: unique([...companies.filter((company) => company.ceoStyle === "eficiencia").map((company) => company.ceo), ...investors.filter((investor) => investor.name.toLowerCase().includes("banco")).map((investor) => investor.representative)]) },
     { id: "inovadores", name: "Liga da Inovação", agenda: "inovacao", members: unique([...companies.filter((company) => company.ceoStyle === "inovacao").map((company) => company.ceo), ...employees.filter((employee) => employee.trait === "Brilhante").map((employee) => employee.name)]) },
     { id: "coalizao-pessoas", name: "Coalizão de Pessoas", agenda: "pessoas", members: unique([...companies.filter((company) => company.ceoStyle === "pessoas").map((company) => company.ceo), ...employees.filter((employee) => ["Diplomático", "Leal"].includes(employee.trait)).map((employee) => employee.name)]) },
     { id: "familia", name: "Núcleo Familiar", agenda: "familia", members: unique((state.heirs ?? []).filter((heir) => heir.status !== "rompido").map((heir) => heir.name)) },
-    { id: "acionistas", name: "Frente dos Acionistas", agenda: "retorno", members: unique(investors.map((investor) => investor.representative)) },
+    { id: "acionistas", name: "Frente dos Acionistas", agenda: "retorno", members: unique([...investors.map((investor) => investor.representative), ...holdingInvestors.map((investor) => investor.representative)]) },
   ];
   return definitions.filter((definition) => definition.members.length).map((definition) => {
     const previous = old.get(definition.id);
     const politicalBonus = definition.members.reduce((sum, member) => {
       const company = companies.find((item) => item.ceo === member);
       const heir = (state.heirs ?? []).find((item) => item.name === member);
-      return sum + (company?.ceoInfluence ?? 0) / 12 + (heir?.equity ?? 0) / 4;
+      const holdingInvestor = holdingInvestors.find((item) => item.representative === member);
+      return sum + (company?.ceoInfluence ?? 0) / 12 + (heir?.equity ?? 0) / 4 + (holdingInvestor?.votingPower ?? 0) / 2;
     }, 0);
     return {
       id: definition.id,
@@ -1138,7 +1168,7 @@ function determineFounderEnding(state: GameState): FounderEnding {
   const identity = state.leadershipIdentity ?? initialLeadershipIdentity;
   const personal = state.founderPersonal ?? { health: 80, family: 70, satisfaction: 60, ego: 40, regrets: 10 };
   const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
-  const empire = state.personalCash + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0);
+  const empire = state.personalCash + (state.holdingCash ?? 0) + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0);
   const readyHeir = (state.heirs ?? []).some((heir) => heir.id === state.chosenSuccessorId && heir.readiness >= 60);
   if (readyHeir && operating.length >= 2) return "dinastia";
   if (operating.some((company) => company.ceo !== (state.playerExecutive ?? state.founder) && (company.boardSupport ?? 50) < 35)) return "deposto";
@@ -1183,7 +1213,7 @@ function createFounderLegacyOutcome(state: GameState): FounderLegacyOutcome {
   const currentGeneration = state.generation ?? 1;
   const readyHeirs = (state.heirs ?? []).filter((heir) => heir.readiness >= 55).length;
   const bankruptcies = state.companies.filter((company) => company.bankrupt).length;
-  const baseValue = Math.max(100000, state.personalCash + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0));
+  const baseValue = Math.max(100000, state.personalCash + (state.holdingCash ?? 0) + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0));
   const generation = path === "duradouro"
     ? currentGeneration + 2 + Math.floor(Math.random() * 3) + Math.min(1, readyHeirs)
     : path === "ambivalente"
@@ -2930,6 +2960,10 @@ const initialState: GameState = {
   founderHoldingEquity: 100,
   familyFoundationEquity: 0,
   outsideFamilyEquity: 0,
+  outsideVotingPower: 0,
+  holdingCash: 0,
+  holdingInvestors: [],
+  lastHoldingCapitalWeek: 0,
   dynastyHistory: [],
   formerPresidents: [],
   generationArcHistory: [],
@@ -5063,7 +5097,7 @@ function buildFinancialEntries(previous: GameState, companies: Company[], econom
 
 function createDynastyTransition(state: GameState, outgoing: string, incoming: string, generation: number): DynastyTransition {
   const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
-  const empireValue = state.personalCash + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0);
+  const empireValue = state.personalCash + (state.holdingCash ?? 0) + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0);
   const tenure = state.dynastyMode ? Math.max(1, state.week - (state.dynastyStartedWeek ?? state.retiredWeek ?? 1)) : Math.max(1, state.week);
   const performance = state.reputation + (state.dynastyLegitimacy ?? 50) + Math.min(80, operating.length * 12);
   const verdict = performance >= 205
@@ -5124,7 +5158,7 @@ function generationProfileFor(leader: string, generation: number, style: CEOStyl
 
 function createDynastyEnding(state: GameState): DynastyEnding {
   const operating = state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
-  const value = state.personalCash + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0);
+  const value = state.personalCash + (state.holdingCash ?? 0) + operating.reduce((sum, company) => sum + companyMetrics(company, state.economy).valuation, 0);
   const people = operating.reduce((sum, company) => sum + company.employees.length, 0);
   const control = 100 - (state.outsideFamilyEquity ?? 0);
   const familyUnity = state.familyUnity ?? 70;
@@ -5591,7 +5625,7 @@ function advanceGenerationMissions(missions: GenerationMission[], state: GameSta
 }
 
 const achievementDefinitions: { id: string; title: string; description: string; secret?: boolean; test: (state: GameState) => boolean }[] = [
-  { id: "primeiro-milhao", title: "O primeiro milhão", description: "Construir um patrimônio empresarial superior a R$ 1 milhão.", test: (state) => state.personalCash + state.companies.reduce((sum, company) => sum + (!company.sold && !company.bankrupt && !company.closed ? companyMetrics(company, state.economy).valuation : 0), 0) >= 1000000 },
+  { id: "primeiro-milhao", title: "O primeiro milhão", description: "Construir um patrimônio empresarial superior a R$ 1 milhão.", test: (state) => state.personalCash + (state.holdingCash ?? 0) + state.companies.reduce((sum, company) => sum + (!company.sold && !company.bankrupt && !company.closed ? companyMetrics(company, state.economy).valuation : 0), 0) >= 1000000 },
   { id: "holding-real", title: "Agora é uma holding", description: "Controlar pelo menos três empresas operacionais.", test: (state) => state.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed).length >= 3 },
   { id: "produto-icone", title: "Produto de uma geração", description: "Levar um produto com qualidade 90 ou superior ao mercado.", test: (state) => state.companies.some((company) => company.projects.some((project) => project.kind === "produto" && project.lifecycle === "mercado" && project.quality >= 90)) },
   { id: "familia-centenaria", title: "Família centenária", description: "Chegar à quarta geração com união familiar acima de 80%.", secret: true, test: (state) => (state.generation ?? 1) >= 4 && (state.familyUnity ?? 0) >= 80 },
@@ -5694,6 +5728,7 @@ export default function Home() {
     | "acquire"
     | "rival"
     | "capital"
+    | "holding-capital"
     | "board"
     | "holding-company"
     | "legacy"
@@ -5761,6 +5796,9 @@ export default function Home() {
   const [researchEmployeeIds, setResearchEmployeeIds] = useState<number[]>([]);
   const [marketTab, setMarketTab] = useState<"visao" | "contratos" | "concorrentes">("visao");
   const [portfolioTab, setPortfolioTab] = useState<"visao" | "empresas" | "governanca">("visao");
+  const [holdingSalePercent, setHoldingSalePercent] = useState(10);
+  const [holdingShareClass, setHoldingShareClass] = useState<HoldingShareClass>("ordinaria");
+  const [holdingSaleDestination, setHoldingSaleDestination] = useState<HoldingSaleDestination>("tesouraria");
 
   useEffect(() => {
     const savedScale = localStorage.getItem("ceo-ui-scale") as UIScale | null;
@@ -5875,6 +5913,10 @@ export default function Home() {
           founderHoldingEquity: parsed.founderHoldingEquity ?? (parsed.founderRetired ? 50 : 100),
           familyFoundationEquity: parsed.familyFoundationEquity ?? 0,
           outsideFamilyEquity: parsed.outsideFamilyEquity ?? 0,
+          outsideVotingPower: parsed.outsideVotingPower ?? parsed.outsideFamilyEquity ?? 0,
+          holdingCash: parsed.holdingCash ?? 0,
+          holdingInvestors: parsed.holdingInvestors ?? [],
+          lastHoldingCapitalWeek: parsed.lastHoldingCapitalWeek ?? 0,
           dynastyHistory: parsed.dynastyHistory ?? [],
           formerPresidents: (parsed.formerPresidents ?? (parsed.dynastyMode ? [
             {
@@ -6209,7 +6251,62 @@ export default function Home() {
     game.companies
       .filter((c) => !c.sold && !c.bankrupt && !c.closed)
       .reduce((sum, c) => sum + companyMetrics(c, game.economy).valuation, 0) +
-    game.personalCash;
+    game.personalCash +
+    (game.holdingCash ?? 0);
+  const holdingValuation = Math.max(
+    100000,
+    game.companies
+      .filter((company) => !company.sold && !company.bankrupt && !company.closed)
+      .reduce((sum, company) => sum + companyMetrics(company, game.economy).valuation, 0) +
+      (game.holdingCash ?? 0),
+  );
+  const outsideVotingPower = game.outsideVotingPower ?? game.outsideFamilyEquity ?? 0;
+  const holdingCapitalCooldown = (game.lastHoldingCapitalWeek ?? 0) > 0
+    ? Math.max(0, 6 - (game.week - (game.lastHoldingCapitalWeek ?? 0)))
+    : 0;
+  const holdingSaleProposals = useMemo<HoldingSaleProposal[]>(() => {
+    const operating = game.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed);
+    const averageBoardSupport = operating.length
+      ? operating.reduce((sum, company) => sum + (company.boardSupport ?? 50), 0) / operating.length
+      : 50;
+    const difficulty = difficultyProfiles[game.difficulty ?? "executivo"];
+    return game.providers
+      .filter((provider) => provider.kind !== "banco")
+      .map((provider) => {
+        const signature = `${provider.id}-${game.week}-${holdingSalePercent}-${holdingShareClass}`
+          .split("")
+          .reduce((sum, character) => sum + character.charCodeAt(0), 0);
+        const marketMood = clamp(72 + game.economy.confidence * .28 + (game.economy.demand - 1) * 18, 65, 112) / 100;
+        const proposalNoise = .91 + (signature % 19) / 100;
+        const nonVotingDiscount = holdingShareClass === "preferencial"
+          ? .72 + (100 - provider.control) * .0018
+          : 1;
+        const pressureDiscount = 1 - Math.max(0, (game.outsideFamilyEquity ?? 0) - 35) * .004;
+        const impliedValuation = Math.round(
+          holdingValuation * marketMood * proposalNoise * nonVotingDiscount * pressureDiscount,
+        );
+        const gross = Math.max(25000, Math.round(impliedValuation * holdingSalePercent / 100 / 1000) * 1000);
+        const feeRate = holdingSaleDestination === "pessoal" ? .145 : .035;
+        const net = Math.round(gross * (1 - feeRate));
+        const votingPower = holdingShareClass === "ordinaria"
+          ? holdingSalePercent
+          : Math.max(1, Math.round(holdingSalePercent * .15));
+        const boardSeats = holdingShareClass === "ordinaria"
+          ? Math.min(2, (holdingSalePercent >= 10 ? 1 : 0) + (holdingSalePercent >= 25 || provider.control > 78 ? 1 : 0))
+          : holdingSalePercent >= 20 && provider.control > 65 ? 1 : 0;
+        const projectedVotingPower = outsideVotingPower + votingPower;
+        const ousterRisk = Math.round(clamp(
+          Math.max(0, projectedVotingPower - 32) * 1.45 +
+          boardSeats * 5 +
+          Math.max(0, 52 - averageBoardSupport) * .45 +
+          provider.control * .08 * difficulty.investorPressure,
+          1,
+          88,
+        ));
+        return { provider, gross, net, impliedValuation, votingPower, boardSeats, ousterRisk, feeRate };
+      })
+      .sort((a, b) => b.net - a.net);
+  }, [game.companies, game.difficulty, game.economy, game.outsideFamilyEquity, game.providers, game.week, holdingSaleDestination, holdingSalePercent, holdingShareClass, holdingValuation, outsideVotingPower]);
   const groupCash = game.companies
     .filter((company) => !company.sold && !company.bankrupt && !company.closed)
     .reduce((sum, company) => sum + company.cash, 0);
@@ -9076,6 +9173,7 @@ export default function Home() {
       let founderDeceased = current.founderDeceased ?? false;
       let founderHoldingEquity = current.founderHoldingEquity ?? 100;
       let outsideFamilyEquity = current.outsideFamilyEquity ?? 0;
+      let outsideVotingPower = current.outsideVotingPower ?? current.outsideFamilyEquity ?? 0;
       let familyFoundationEquity = current.familyFoundationEquity ?? 0;
       let formerPresidents = (current.formerPresidents ?? []).map((president) => ({ ...president }));
       if (current.dynastyMode) {
@@ -9167,6 +9265,7 @@ export default function Home() {
               : heir,
           );
           outsideFamilyEquity = clamp(outsideFamilyEquity + 5);
+          outsideVotingPower = clamp(outsideVotingPower + 5);
           familyUnity = clamp(familyUnity - 12);
           weeklyNews.push({
             id: Date.now() + rebellious.id + 1200,
@@ -9363,7 +9462,7 @@ export default function Home() {
       const wealthDifficultyMultiplier = current.difficulty === "implacavel" ? 1.8 : current.difficulty === "relaxado" ? .7 : 1;
       const wealthManagementCost = Math.round(personalWealthCost(current.personalCash) * wealthDifficultyMultiplier);
       if (wealthManagementCost > 0 && nextWeek % 13 === 0) weeklyNews.push({ id: Date.now() + 2345, week: nextWeek, category: "economia", headline: `Fortuna de ${controlledExecutive} exige uma estrutura própria`, body: `Gestão patrimonial, impostos, seguros e assessoria consumiram ${money.format(wealthManagementCost)} nesta semana. Patrimônio muito alto continua valioso, mas deixou de ser gratuito.`, impact: "neutro" });
-      const dynastyEndingReady = current.dynastyMode && ((current.generation ?? 2) >= 4 && nextWeek - (current.dynastyStartedWeek ?? nextWeek) >= 80 || operatingDynasty.length === 0 || 100 - outsideFamilyEquity < 15);
+      const dynastyEndingReady = current.dynastyMode && ((current.generation ?? 2) >= 4 && nextWeek - (current.dynastyStartedWeek ?? nextWeek) >= 80 || operatingDynasty.length === 0 || 100 - outsideFamilyEquity <= 15 || outsideVotingPower >= 66);
       const finalWeeklyNews = dedupeNewsItems(weeklyNews, current.news);
       const weeklyReport = buildWeeklyReport(current, companies, economyAfterNews, nextWeek);
       const financialEntries = buildFinancialEntries(current, companies, economyAfterNews, nextWeek);
@@ -9375,7 +9474,7 @@ export default function Home() {
         chapter: Math.max(current.chapter, founderAct(nextWeek).id),
         difficultyApplied: current.difficulty ?? "executivo",
         difficultySafetyNetUsed: current.difficultySafetyNetUsed || relaxedSafetyNetTriggered,
-        personalCash: Math.max(0, current.personalCash + Math.round(holdingDividends * .88) + generationRewardCash - wealthManagementCost),
+        personalCash: Math.max(0, current.personalCash + Math.round(holdingDividends * .88 * (1 - outsideFamilyEquity / 100)) + generationRewardCash - wealthManagementCost),
         survivedRecessions:
           (current.survivedRecessions ?? 0) +
           (current.economy.cycle === "recessao" &&
@@ -9396,6 +9495,11 @@ export default function Home() {
         founderDeceased,
         founderHoldingEquity,
         outsideFamilyEquity,
+        outsideVotingPower,
+        holdingInvestors: (current.holdingInvestors ?? []).map((investor) => ({
+          ...investor,
+          support: clamp(investor.support + (holdingDividends > 0 ? .6 : -.18)),
+        })),
         familyFoundationEquity,
         formerPresidents,
         generationProfile,
@@ -10628,6 +10732,92 @@ export default function Home() {
     notify("Aquisição concluída. Agora começa a integração.");
   };
 
+  const acceptHoldingCapital = (proposal: HoldingSaleProposal) => {
+    const outsideEquity = game.outsideFamilyEquity ?? 0;
+    if (holdingCapitalCooldown > 0 || outsideEquity + holdingSalePercent > 85) return;
+    const wasOusted = Math.random() * 100 < proposal.ousterRisk;
+    setGame((state) => {
+      const familyEquityBefore = Math.max(1, 100 - (state.outsideFamilyEquity ?? 0));
+      const familyRetention = Math.max(0, familyEquityBefore - holdingSalePercent) / familyEquityBefore;
+      const existingStake = (state.holdingInvestors ?? []).find(
+        (stake) => stake.providerId === proposal.provider.id && stake.shareClass === holdingShareClass,
+      );
+      const nextStake: HoldingInvestorStake = existingStake
+        ? {
+            ...existingStake,
+            equity: existingStake.equity + holdingSalePercent,
+            votingPower: existingStake.votingPower + proposal.votingPower,
+            boardSeats: Math.min(3, existingStake.boardSeats + proposal.boardSeats),
+            support: clamp((existingStake.support + proposal.provider.patience) / 2),
+            invested: existingStake.invested + proposal.gross,
+          }
+        : {
+            providerId: proposal.provider.id,
+            name: proposal.provider.name,
+            representative: proposal.provider.representative,
+            equity: holdingSalePercent,
+            votingPower: proposal.votingPower,
+            boardSeats: proposal.boardSeats,
+            support: proposal.provider.patience,
+            invested: proposal.gross,
+            shareClass: holdingShareClass,
+            enteredWeek: state.week,
+          };
+      const holdingInvestors = [
+        ...(state.holdingInvestors ?? []).filter(
+          (stake) => !(stake.providerId === proposal.provider.id && stake.shareClass === holdingShareClass),
+        ),
+        nextStake,
+      ];
+      return {
+        ...state,
+        personalCash: state.personalCash + (holdingSaleDestination === "pessoal" ? proposal.net : 0),
+        holdingCash: (state.holdingCash ?? 0) + (holdingSaleDestination === "tesouraria" ? proposal.net : 0),
+        founderHoldingEquity: (state.founderHoldingEquity ?? 0) * familyRetention,
+        familyFoundationEquity: (state.familyFoundationEquity ?? 0) * familyRetention,
+        heirs: (state.heirs ?? []).map((heir) => ({ ...heir, equity: (heir.equity ?? 0) * familyRetention })),
+        outsideFamilyEquity: clamp((state.outsideFamilyEquity ?? 0) + holdingSalePercent),
+        outsideVotingPower: clamp((state.outsideVotingPower ?? state.outsideFamilyEquity ?? 0) + proposal.votingPower),
+        holdingInvestors,
+        lastHoldingCapitalWeek: state.week,
+        dynastyLegitimacy: clamp((state.dynastyLegitimacy ?? 100) - proposal.boardSeats * 3 - (wasOusted ? 14 : 0)),
+        companies: state.companies.map((company) => ({
+          ...company,
+          ceo: wasOusted && company.ceo === currentLeader ? proposal.provider.representative : company.ceo,
+          boardSupport: clamp((company.boardSupport ?? 50) - proposal.boardSeats * 4 - (wasOusted ? 12 : 0)),
+          ceoLastDecision: wasOusted && company.ceo === currentLeader
+            ? `${proposal.provider.name} articulou a substituição da presidência após a rodada da holding.`
+            : company.ceoLastDecision,
+        })),
+        news: [
+          {
+            id: Date.now(),
+            week: state.week,
+            category: "negocios",
+            headline: wasOusted
+              ? `${proposal.provider.name} usa a rodada para afastar ${currentLeader}`
+              : `${proposal.provider.name} compra ${holdingSalePercent}% da ${state.holdingName ?? `Grupo ${state.founder}`}`,
+            body: wasOusted
+              ? `A venda concedeu poder suficiente para uma ofensiva no conselho. ${proposal.provider.representative} assumiu as operações antes controladas por ${currentLeader}.`
+              : `${money.format(proposal.net)} líquidos foram destinados ${holdingSaleDestination === "tesouraria" ? "à tesouraria do grupo" : "ao patrimônio pessoal"}. As ações são ${holdingShareClass === "ordinaria" ? "ordinárias, com voto" : "preferenciais, com voto limitado"}.`,
+            impact: wasOusted ? "negativo" : "neutro",
+          },
+          ...state.news,
+        ].slice(0, 50),
+        log: [
+          `Semana ${state.week}: ${holdingSalePercent}% da holding foram vendidos para ${proposal.provider.name}.`,
+          ...state.log,
+        ].slice(0, 80),
+      };
+    });
+    setDialog(null);
+    notify(
+      wasOusted
+        ? "A rodada saiu do controle: o investidor articulou seu afastamento das operações."
+        : `${holdingSalePercent}% da holding vendidos. O novo acionista agora acompanha suas decisões.`,
+    );
+  };
+
   const acceptCapital = (
     provider: CapitalProvider,
     plan: "conservador" | "agressivo",
@@ -11329,8 +11519,8 @@ export default function Home() {
               : "preservar",
       familyUnity: 72,
       founderHealth: 92,
-      founderHoldingEquity: 50,
-      outsideFamilyEquity: 0,
+      founderHoldingEquity: 50 * (100 - (s.outsideFamilyEquity ?? 0)) / 100,
+      outsideFamilyEquity: s.outsideFamilyEquity ?? 0,
       formerPresidents: [
         formerPresidentProfile(s, s.founder, 1, 1, s.week, "crescimento"),
         ...(s.formerPresidents ?? []).filter((president) => president.name !== s.founder),
@@ -11369,13 +11559,13 @@ export default function Home() {
               ...heir,
               role: "sucessor" as const,
               readiness: clamp(heir.readiness + 8),
-              equity: 35,
+              equity: 35 * (100 - (s.outsideFamilyEquity ?? 0)) / 100,
               support: 78,
               resentment: 4,
             }
           : {
               ...heir,
-              equity: 15,
+              equity: 15 * (100 - (s.outsideFamilyEquity ?? 0)) / 100,
               support: clamp((heir.support ?? 65) - 12),
               resentment: clamp((heir.resentment ?? 10) + 20),
             },
@@ -11441,6 +11631,17 @@ export default function Home() {
         action === "recomprar"
           ? Math.max(0, (s.outsideFamilyEquity ?? 0) - 5)
           : s.outsideFamilyEquity,
+      outsideVotingPower:
+        action === "recomprar"
+          ? Math.max(0, (s.outsideVotingPower ?? s.outsideFamilyEquity ?? 0) * (Math.max(0, (s.outsideFamilyEquity ?? 0) - 5) / Math.max(1, s.outsideFamilyEquity ?? 0)))
+          : s.outsideVotingPower,
+      holdingInvestors:
+        action === "recomprar"
+          ? (s.holdingInvestors ?? []).map((investor) => {
+              const retention = Math.max(0, (s.outsideFamilyEquity ?? 0) - 5) / Math.max(1, s.outsideFamilyEquity ?? 0);
+              return { ...investor, equity: investor.equity * retention, votingPower: investor.votingPower * retention, support: clamp(investor.support - 7) };
+            })
+          : s.holdingInvestors,
       founderHoldingEquity:
         action === "recomprar"
           ? (s.founderHoldingEquity ?? 0) + 5
@@ -11664,8 +11865,21 @@ export default function Home() {
     notify(`${money.format(transferAmount)} transferidos para ${target.name}.`);
   };
 
-  const holdingCapitalAction = (kind: "aporte" | "dividendo" | "servicos") => {
+  const holdingCapitalAction = (kind: "aporte" | "aporte-tesouraria" | "dividendo" | "servicos") => {
     if (!holdingCompany) return;
+    if (kind === "aporte-tesouraria") {
+      const amount = Math.min(transferAmount, game.holdingCash ?? 0);
+      if (amount <= 0) return;
+      setGame((state) => ({
+        ...state,
+        holdingCash: Math.max(0, (state.holdingCash ?? 0) - amount),
+        companies: state.companies.map((company) =>
+          company.id === holdingCompany.id ? { ...company, cash: company.cash + amount } : company,
+        ),
+      }));
+      notify(`${money.format(amount)} saíram da tesouraria e reforçaram a ${holdingCompany.name}.`);
+      return;
+    }
     if (kind === "aporte") {
       const amount = Math.min(transferAmount, game.personalCash);
       if (amount <= 0) return;
@@ -12939,6 +13153,7 @@ export default function Home() {
             text={`Patrimônio pessoal: ${money.format(game.personalCash)}. Controladoras, subsidiárias e empresas fundadas formam uma história que pode sobreviver a cada negócio.`}
             action={<div className="page-actions">
               {game.dynastyMode && <button onClick={() => setDialog("dynasty")}>Conselho da dinastia</button>}
+              <button onClick={() => setDialog("holding-capital")}>Vender participação</button>
               <button onClick={() => setDialog("factions")}>Mapa de poder</button>
               <button onClick={() => setDialog("annual-plan")}>{game.annualPlan ? "Plano anual" : "Definir plano anual"}</button>
               <button onClick={() => setDialog("new-company")}>Abrir nova empresa</button>
@@ -14229,6 +14444,71 @@ export default function Home() {
           </div>
         </GameModal>
       )}
+      {dialog === "holding-capital" && (
+        <GameModal onClose={() => setDialog(null)} wide>
+          <div className="holding-capital-room">
+            <header>
+              <small>CAPITAL DA HOLDING</small>
+              <h2>Quanto do império você aceita dividir?</h2>
+              <p>Escolha o percentual, os direitos entregues e onde o dinheiro ficará. A melhor oferta financeira pode ser a mais perigosa politicamente.</p>
+            </header>
+            <div className="holding-capital-scoreboard">
+              <div><small>VALOR ESTIMADO</small><b>{money.format(holdingValuation)}</b><span>empresas e tesouraria</span></div>
+              <div><small>CONTROLE ECONÔMICO</small><b>{Math.round(100 - (game.outsideFamilyEquity ?? 0))}%</b><span>família e fundação</span></div>
+              <div><small>PODER DE VOTO EXTERNO</small><b>{Math.round(outsideVotingPower)}%</b><span>antes desta rodada</span></div>
+              <div><small>TESOURARIA</small><b>{money.format(game.holdingCash ?? 0)}</b><span>capital disponível ao grupo</span></div>
+            </div>
+            {holdingCapitalCooldown > 0 && <div className="holding-round-lock"><b>Mercado em período de silêncio</b><span>Uma nova rodada poderá ser assinada em {holdingCapitalCooldown} semana(s). As propostas podem ser simuladas agora.</span></div>}
+            <section className="holding-deal-builder">
+              <div>
+                <small>1 · PARTICIPAÇÃO VENDIDA</small>
+                <div className="holding-choice-row">
+                  {[5, 10, 20, 30].map((percent) => <button key={percent} disabled={(game.outsideFamilyEquity ?? 0) + percent > 85} className={holdingSalePercent === percent ? "active" : ""} onClick={() => setHoldingSalePercent(percent)}>{percent}%</button>)}
+                </div>
+                <p>Após a rodada, o capital externo chegará a {Math.round((game.outsideFamilyEquity ?? 0) + holdingSalePercent)}%.</p>
+              </div>
+              <div>
+                <small>2 · DIREITOS DAS AÇÕES</small>
+                <div className="holding-option-stack">
+                  <button className={holdingShareClass === "ordinaria" ? "active" : ""} onClick={() => setHoldingShareClass("ordinaria")}><b>Ordinárias</b><span>Maior preço, voto integral e pressão real sobre a presidência.</span></button>
+                  <button className={holdingShareClass === "preferencial" ? "active" : ""} onClick={() => setHoldingShareClass("preferencial")}><b>Preferenciais</b><span>Oferta menor, voto limitado e maior proteção do controle.</span></button>
+                </div>
+              </div>
+              <div>
+                <small>3 · DESTINO DO DINHEIRO</small>
+                <div className="holding-option-stack">
+                  <button className={holdingSaleDestination === "tesouraria" ? "active" : ""} onClick={() => setHoldingSaleDestination("tesouraria")}><b>Tesouraria da holding</b><span>Taxas menores. O valor poderá ser aportado nas empresas.</span></button>
+                  <button className={holdingSaleDestination === "pessoal" ? "active" : ""} onClick={() => setHoldingSaleDestination("pessoal")}><b>Patrimônio pessoal</b><span>Gera liquidez ao controlador, com impostos e assessoria maiores.</span></button>
+                </div>
+              </div>
+            </section>
+            <section className="holding-proposals">
+              <header><small>PROPOSTAS RECEBIDAS</small><h3>Os investidores não estão comprando apenas ações</h3></header>
+              <div>
+                {holdingSaleProposals.map((proposal) => (
+                  <article key={proposal.provider.id} style={{ "--provider": proposal.provider.color } as React.CSSProperties}>
+                    <header><div><small>{proposal.provider.kind.toUpperCase()}</small><h3>{proposal.provider.name}</h3><span>{proposal.provider.representative}</span></div><b>{money.format(proposal.net)}<small>líquidos</small></b></header>
+                    <p>{proposal.provider.profile}</p>
+                    <dl>
+                      <div><dt>Oferta bruta</dt><dd>{money.format(proposal.gross)}</dd></div>
+                      <div><dt>Valuation implícito</dt><dd>{money.format(proposal.impliedValuation)}</dd></div>
+                      <div><dt>Poder de voto recebido</dt><dd>{proposal.votingPower}%</dd></div>
+                      <div><dt>Assentos no conselho</dt><dd>{proposal.boardSeats}</dd></div>
+                      <div><dt>Impostos e custos</dt><dd>{Math.round(proposal.feeRate * 100)}%</dd></div>
+                      <div><dt>Risco de afastamento</dt><dd className={proposal.ousterRisk >= 35 ? "bad" : proposal.ousterRisk <= 12 ? "good" : ""}>{proposal.ousterRisk}%</dd></div>
+                    </dl>
+                    <button disabled={holdingCapitalCooldown > 0 || (game.outsideFamilyEquity ?? 0) + holdingSalePercent > 85} onClick={() => acceptHoldingCapital(proposal)}>Aceitar proposta de {proposal.provider.name}</button>
+                  </article>
+                ))}
+              </div>
+            </section>
+            <section className="holding-shareholders">
+              <header><small>ACIONISTAS EXTERNOS ATUAIS</small><h3>{(game.holdingInvestors ?? []).length ? "Eles já têm voz na história" : "A família ainda governa sozinha"}</h3></header>
+              {(game.holdingInvestors ?? []).map((investor) => <article key={`${investor.providerId}-${investor.shareClass}`}><div><b>{investor.name}</b><span>{investor.representative} · ações {investor.shareClass === "ordinaria" ? "ordinárias" : "preferenciais"}</span></div><strong>{Math.round(investor.equity)}%<small>{Math.round(investor.votingPower)}% de voto · {investor.boardSeats} assento(s)</small></strong></article>)}
+            </section>
+          </div>
+        </GameModal>
+      )}
       {dialog === "board" && active && (
         <GameModal onClose={() => setDialog(null)} wide>
           <div className="board-room">
@@ -14791,14 +15071,21 @@ export default function Home() {
                     }
                   />
                 </label>
+                <p className="holding-treasury-balance">Tesouraria da holding: <b>{money.format(game.holdingCash ?? 0)}</b></p>
                 <div className="holding-action-grid">
+                  <button
+                    disabled={(game.holdingCash ?? 0) < transferAmount || transferAmount <= 0}
+                    onClick={() => holdingCapitalAction("aporte-tesouraria")}
+                  >
+                    Aportar da tesouraria
+                  </button>
                   <button
                     disabled={
                       game.personalCash < transferAmount || transferAmount <= 0
                     }
                     onClick={() => holdingCapitalAction("aporte")}
                   >
-                    Aportar da holding
+                    Aportar patrimônio pessoal
                   </button>
                   <button
                     disabled={holdingCompany.cash <= 50000}
@@ -14936,6 +15223,7 @@ export default function Home() {
             <div className="finance-summary">
               <div><small>CAIXA DA EMPRESA ATIVA</small><b>{money.format(active?.cash ?? 0)}</b><span>{active?.name ?? "Nenhuma empresa ativa"}</span></div>
               <div><small>CAIXA SOMADO DO GRUPO</small><b>{money.format(groupCash)}</b><span>Empresas em operação</span></div>
+              <div><small>TESOURARIA DA HOLDING</small><b>{money.format(game.holdingCash ?? 0)}</b><span>Capital ainda não aportado</span></div>
               <div><small>PATRIMÔNIO PESSOAL</small><b>{money.format(game.personalCash)}</b><span>Recursos fora das empresas</span></div>
             </div>
             {metrics && <div className="finance-scale-summary">
