@@ -6710,6 +6710,12 @@ export default function Home() {
     }
   }, [game.started, game.founderJourneyComplete, game.founderLegacyOutcome]);
   useEffect(() => {
+    if (game.dynastyConcluded && game.dynastyEnding && !game.dynastyEnding.businessFate) {
+      const endingSeed = game.endingSeed ?? endingHash(`${game.founder}|${game.holdingName}|${game.week}|${game.generation}|${game.legacy}`);
+      setGame((state) => ({ ...state, endingSeed, dynastyEnding: createDynastyEnding({ ...state, endingSeed }) }));
+    }
+  }, [game.dynastyConcluded, game.dynastyEnding?.businessFate]);
+  useEffect(() => {
     const safe = { ...game, unread: [] };
     localStorage.setItem("ceo-historia-v2", JSON.stringify(safe));
   }, [game]);
