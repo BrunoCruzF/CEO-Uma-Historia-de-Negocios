@@ -346,6 +346,7 @@ type Company = {
   productRevenue?: number;
   efficiency?: number;
   campaignWeeks?: number;
+  valuationFactor?: number;
   marketingMultiplier?: number;
   marketingPulse?: MarketingPulse;
   marketingCampaigns?: MarketingCampaign[];
@@ -1002,14 +1003,15 @@ function normalizedFounderStartAge(state: Partial<GameState>): number {
   );
 }
 const difficultyProfiles: Record<GameDifficulty, DifficultyProfile> = {
-  relaxado: { title: "Relaxado", description: "Mais capital e avisos, parceiros pacientes e crises curtas para aprender sem perder as consequências.", stress: .72, economyDemand: 1.035, economyCosts: .975, departure: .55, rival: -.7, reward: .85, crisisFrequency: .68, crisisDuration: .78, ceoIntelligence: 1.15, rivalIntelligence: .78, partnerTolerance: 1.28, creditAccess: 1.22, investorPressure: .72, productFailure: .76, warningWeeks: 5, startingCash: 180000 },
+  relaxado: { title: "Relaxado", description: "Mais capital e avisos, parceiros pacientes e crises curtas para aprender sem perder as consequências.", stress: .72, economyDemand: 1.035, economyCosts: .975, departure: .55, rival: -.7, reward: 1.15, crisisFrequency: .68, crisisDuration: .78, ceoIntelligence: 1.15, rivalIntelligence: .78, partnerTolerance: 1.28, creditAccess: 1.22, investorPressure: .72, productFailure: .76, warningWeeks: 5, startingCash: 180000 },
   executivo: { title: "Executivo", description: "A experiência equilibrada: decisões difíceis, avisos razoáveis e consequências proporcionais.", stress: 1, economyDemand: 1, economyCosts: 1, departure: 1, rival: 0, reward: 1, crisisFrequency: 1, crisisDuration: 1, ceoIntelligence: 1, rivalIntelligence: 1, partnerTolerance: 1, creditAccess: 1, investorPressure: 1, productFailure: 1, warningWeeks: 3, startingCash: 120000 },
-  implacavel: { title: "Implacável", description: "Menos caixa e avisos, crises longas, contratos duros, capital exigente e rivais que exploram fraquezas.", stress: 1.28, economyDemand: .94, economyCosts: 1.06, departure: 1.55, rival: .9, reward: 1.3, crisisFrequency: 1.42, crisisDuration: 1.3, ceoIntelligence: 1.08, rivalIntelligence: 1.28, partnerTolerance: .72, creditAccess: .76, investorPressure: 1.35, productFailure: 1.32, warningWeeks: 1, startingCash: 85000 },
+  implacavel: { title: "Implacável", description: "Caixa curto, marketing incerto, valuation conservador e lucro pressionado por reinvestimento, contratos e concorrentes.", stress: 1.28, economyDemand: .92, economyCosts: 1.1, departure: 1.55, rival: .9, reward: .5, crisisFrequency: 1.42, crisisDuration: 1.3, ceoIntelligence: 1.08, rivalIntelligence: 1.28, partnerTolerance: .72, creditAccess: .76, investorPressure: 1.35, productFailure: 1.32, warningWeeks: 1, startingCash: 65000 },
 };
+const difficultyValuationFactor: Record<GameDifficulty, number> = { relaxado: 1, executivo: 1, implacavel: .38 };
 const difficultySystemSummary: Record<GameDifficulty, string[]> = {
   relaxado: ["R$ 180 mil iniciais + reserva única de R$ 45 mil", "crises 32% menos frequentes e 22% mais curtas", "alertas econômicos com até 5 semanas", "falhas de produto 24% menores"],
   executivo: ["R$ 120 mil iniciais", "crises e contratos no padrão", "alertas econômicos com 3 semanas", "crédito e riscos equilibrados"],
-  implacavel: ["R$ 85 mil iniciais", "crises 42% mais frequentes e 30% mais longas", "somente 1 semana de alerta", "falhas de produto 32% mais graves"],
+  implacavel: ["R$ 65 mil iniciais", "marketing exige produto, equipe e público corretos", "valuation descontado até provar resultados", "recompensas em dinheiro 50% menores"],
 };
 const narrativeModeLabels: Record<NarrativeDirectorMode, string> = { calma: "Execução tranquila", equilibrio: "Tensão equilibrada", escalada: "Algo está se formando", recuperacao: "Tempo de recuperação", foco: "Conflito em foco" };
 const pageGuides: Record<View, PageGuideDefinition> = {
@@ -2984,6 +2986,7 @@ function newCompany(sector: Sector, id = 1, week = 1): Company {
     productRevenue: 0,
     efficiency: 1,
     campaignWeeks: 0,
+    valuationFactor: 1,
     marketingCampaigns: [],
     origin: "fundada",
     autonomy: "centralizada",
@@ -5089,7 +5092,7 @@ const marketingAudienceLabels: Record<MarketingAudience, string> = { massa: "Gra
 const marketingObjectiveLabels: Record<MarketingObjective, string> = { aquisicao: "Conquistar clientes", lancamento: "Lançar produto", marca: "Fortalecer a marca", retencao: "Reter clientes" };
 const marketingOutcomeLabels: Record<MarketingCampaignOutcome, string> = { forte: "crescimento forte", moderado: "retorno moderado", ignorado: "campanha ignorada", negativo: "repercussão negativa" };
 
-function marketingCampaignForecast(company: Company, economy: Economy, competitors: Competitor[], budget: number, duration: number, audience: MarketingAudience, objective: MarketingObjective, productId?: number) {
+function marketingCampaignForecast(company: Company, economy: Economy, competitors: Competitor[], budget: number, duration: number, audience: MarketingAudience, objective: MarketingObjective, productId?: number, difficulty: GameDifficulty = "executivo") {
   const capacity = companyCommercialCapacity(company);
   const marketProducts = company.projects.filter((product) => product.kind === "produto" && product.lifecycle === "mercado");
   const targetProduct = marketProducts.find((product) => product.id === productId) ?? marketProducts[0];
@@ -5110,7 +5113,8 @@ function marketingCampaignForecast(company: Company, economy: Economy, competito
   const idealBudget = Math.max(15000, estimatedRevenue * duration * .16);
   const budgetEfficiency = clamp(1 - Math.exp(-budget / idealBudget), 0, .96);
   const overspend = Math.max(0, budget / idealBudget - 2);
-  const score = clamp(quality * .22 + company.reputation * .15 + capacity.morale * .09 + priceFit * .11 + stageFit * .11 + audienceFit * .1 + economicFit * .08 + capacityFit * .08 + competitionFit * .06 + budgetEfficiency * 18 - overspend * 9);
+  const difficultyAdjustment = difficulty === "implacavel" ? -14 : difficulty === "relaxado" ? 6 : 0;
+  const score = clamp(quality * .22 + company.reputation * .15 + capacity.morale * .09 + priceFit * .11 + stageFit * .11 + audienceFit * .1 + economicFit * .08 + capacityFit * .08 + competitionFit * .06 + budgetEfficiency * 18 - overspend * 9 + difficultyAdjustment);
   const raw = {
     forte: Math.max(6, 8 + score * .48),
     moderado: Math.max(18, 28 + score * .2),
@@ -5137,7 +5141,7 @@ function marketingCampaignForecast(company: Company, economy: Economy, competito
   };
 }
 
-function rollMarketingPulse(company: Company, metrics: ReturnType<typeof companyMetrics>, week: number): MarketingPulse {
+function rollMarketingPulse(company: Company, metrics: ReturnType<typeof companyMetrics>, week: number, difficulty: GameDifficulty = "executivo"): MarketingPulse {
   const campaigns = (company.marketingCampaigns ?? []).filter((campaign) => campaign.weeksLeft > 0);
   if (campaigns.length) {
     const customerDelta = campaigns.reduce((sum, campaign) => sum + Math.round(campaign.totalCustomerImpact / campaign.duration), 0);
@@ -5152,20 +5156,26 @@ function rollMarketingPulse(company: Company, metrics: ReturnType<typeof company
   const marketProducts = company.projects.filter((product) => product.kind === "produto" && product.lifecycle === "mercado");
   const quality = marketProducts.length ? marketProducts.reduce((sum, product) => sum + product.quality, 0) / marketProducts.length : 48;
   const idealSpend = Math.max(4500, metrics.revenue * .14);
-  const efficiency = clamp((1 - Math.exp(-company.marketing / idealSpend)) * 100);
+  const difficultyEfficiency = difficulty === "implacavel" ? .72 : difficulty === "relaxado" ? 1.12 : 1;
+  const efficiency = clamp((1 - Math.exp(-company.marketing / idealSpend)) * 100 * difficultyEfficiency);
   const overspend = Math.max(0, company.marketing / Math.max(1, idealSpend) - 1.8);
-  const score = quality * .34 + company.reputation * .28 + capacity.morale * .18 + Math.random() * 28 - overspend * 18;
+  const difficultyScore = difficulty === "implacavel" ? -16 : difficulty === "relaxado" ? 7 : 0;
+  const score = quality * .34 + company.reputation * .28 + capacity.morale * .18 + Math.random() * 28 - overspend * 18 + difficultyScore;
   const room = Math.max(0, capacity.customerCapacity - company.customers);
-  if (score >= 72) return { week, outcome: "forte", multiplier: 1.13, customerDelta: Math.max(1, Math.round(room * efficiency / 100 * .16)), efficiency: Math.round(efficiency), detail: "A campanha encontrou o público certo e converteu acima do esperado." };
-  if (score >= 52) return { week, outcome: "positivo", multiplier: 1.055, customerDelta: Math.max(0, Math.round(room * efficiency / 100 * .09)), efficiency: Math.round(efficiency), detail: "A campanha trouxe crescimento, mas parte do alcance não virou venda." };
-  if (score >= 35) return { week, outcome: "fraco", multiplier: .99, customerDelta: 0, efficiency: Math.round(efficiency), detail: "A campanha gerou atenção, porém quase nenhum retorno mensurável." };
-  return { week, outcome: "negativo", multiplier: .91, customerDelta: -Math.max(1, Math.round(company.customers * .025)), efficiency: Math.round(efficiency), detail: overspend > .4 ? "O excesso de mídia cansou o público e destruiu valor em vez de criar demanda." : "A mensagem foi rejeitada e provocou avaliações negativas." };
+  const positiveMultiplier = difficulty === "implacavel" ? 1.025 : 1.055;
+  const strongMultiplier = difficulty === "implacavel" ? 1.07 : 1.13;
+  if (score >= 72) return { week, outcome: "forte", multiplier: strongMultiplier, customerDelta: Math.max(1, Math.round(room * efficiency / 100 * (difficulty === "implacavel" ? .1 : .16))), efficiency: Math.round(efficiency), detail: "A campanha encontrou o público certo e converteu acima do esperado." };
+  if (score >= 52) return { week, outcome: "positivo", multiplier: positiveMultiplier, customerDelta: Math.max(0, Math.round(room * efficiency / 100 * (difficulty === "implacavel" ? .05 : .09))), efficiency: Math.round(efficiency), detail: "A campanha trouxe crescimento, mas parte do alcance não virou venda." };
+  if (score >= 35) return { week, outcome: "fraco", multiplier: difficulty === "implacavel" ? .975 : .99, customerDelta: 0, efficiency: Math.round(efficiency), detail: "A campanha gerou atenção, porém quase nenhum retorno mensurável." };
+  return { week, outcome: "negativo", multiplier: difficulty === "implacavel" ? .84 : .91, customerDelta: -Math.max(1, Math.round(company.customers * (difficulty === "implacavel" ? .045 : .025))), efficiency: Math.round(efficiency), detail: overspend > .4 ? "O excesso de mídia cansou o público e destruiu valor em vez de criar demanda." : "A mensagem foi rejeitada e provocou avaliações negativas." };
 }
 
 function companyMetrics(
   company: Company,
   economy: Economy = initialState.economy,
 ) {
+  const valuationFactor = company.valuationFactor ?? 1;
+  const hardEconomy = valuationFactor < .8;
   const payroll = company.employees.reduce((sum, e) => sum + e.salary, 0);
   const commercial = companyCommercialCapacity(company);
   const morale = commercial.morale;
@@ -5183,7 +5193,7 @@ function companyMetrics(
   const recurringRevenue = Math.min(company.productRevenue ?? 0, commercial.productRevenueCapacity) * (company.campaignWeeks ? 1.08 : 1);
   const contractRevenue = (company.partners ?? [])
     .filter((partner) => partner.kind === "cliente" && partner.status === "ativo")
-    .reduce((sum, partner) => sum + partner.weeklyValue * (0.78 + partner.trust / 450), 0);
+    .reduce((sum, partner) => sum + partner.weeklyValue * (hardEconomy ? .55 + partner.trust / 220 : .78 + partner.trust / 450), 0);
   const supplierCosts = (company.partners ?? [])
     .filter((partner) => partner.kind === "fornecedor" && partner.status === "ativo")
     .reduce((sum, partner) => sum + partner.weeklyValue, 0);
@@ -5195,13 +5205,19 @@ function companyMetrics(
     (multiplier, effect) => multiplier * (effect.costMultiplier ?? 1),
     1,
   );
+  const averageClientTrust = (company.partners ?? []).filter((partner) => partner.kind === "cliente" && partner.status === "ativo");
+  const clientTrust = averageClientTrust.length ? averageClientTrust.reduce((sum, partner) => sum + partner.trust, 0) / averageClientTrust.length : 40;
+  const researchDepth = clamp((company.completedResearch?.length ?? 0) / 4, 0, 1);
+  const teamReadiness = clamp((morale * .45 + skill * .55) / 100, 0, 1);
+  const operatingDiscipline = hardEconomy ? clamp(.62 + teamReadiness * .18 + clientTrust / 100 * .1 + researchDepth * .1, .65, 1) : 1;
   const preliminaryRevenue = Math.round(
     (baseRevenue + recurringRevenue + contractRevenue) *
       (0.75 + company.reputation / 250) *
       economy.demand *
       (0.9 + economy.confidence / 500) *
       campaignRevenueMultiplier *
-      effectRevenue,
+      effectRevenue *
+      operatingDiscipline,
   );
   const weeklyPayroll = payroll / 4.33;
   const weeklyOverhead = (12500 + company.employees.length * 800) / 4.33;
@@ -5232,8 +5248,12 @@ function companyMetrics(
   const idleCashCost = Math.round(Math.max(0, company.cash - idleCashThreshold) * .00035);
   const costs = baseCosts + complexityCost + taxes + idleCashCost;
   const profit = Math.round(revenue - costs);
-  const valuation = Math.max(30000, Math.round(company.cash * .58 + Math.max(0, profit) * 52 * scaleProfile.valuationMultiple + revenue * 2.4 + company.reputation * 2300 - company.debt * 1.08));
-  return { payroll, morale, skill, revenue, preliminaryRevenue, baseCosts, costs, profit, preTaxProfit, taxes, complexityCost, idleCashCost, requiredReserve, cashCoverage, liquidityFactor, scale, scaleProfile, valuation, productMaintenance, facilityMaintenance, customerCapacity: commercial.customerCapacity, productRevenueCapacity: commercial.productRevenueCapacity };
+  const provenHistory = hardEconomy ? clamp(.42 + Math.min(20, company.history.length) / 20 * .38 + researchDepth * .12 + clientTrust / 100 * .08, .42, 1) : 1;
+  const earningsValue = Math.max(0, profit) * 52 * scaleProfile.valuationMultiple * valuationFactor * provenHistory;
+  const revenueValue = revenue * 2.4 * (hardEconomy ? .55 : 1);
+  const reputationValue = company.reputation * 2300 * (hardEconomy ? .7 : 1);
+  const valuation = Math.max(30000, Math.round(company.cash * .58 + earningsValue + revenueValue + reputationValue - company.debt * 1.08));
+  return { payroll, morale, skill, revenue, preliminaryRevenue, baseCosts, costs, profit, preTaxProfit, taxes, complexityCost, idleCashCost, requiredReserve, cashCoverage, liquidityFactor, scale, scaleProfile, valuation, operatingDiscipline, valuationCredibility: valuationFactor * provenHistory, productMaintenance, facilityMaintenance, customerCapacity: commercial.customerCapacity, productRevenueCapacity: commercial.productRevenueCapacity };
 }
 
 function createHoldingAssembly(state: GameState): HoldingAssembly | undefined {
@@ -5900,6 +5920,7 @@ function buildWeeklyReport(
       if (economyChanged || Math.abs(confidenceDelta) >= 2) revenueReasons.push(reason("Ambiente econômico", `Demanda em ${Math.round(economy.demand * 100)}% e confiança em ${economy.confidence}/100${economyChanged ? ` durante ${economy.cycle}` : ""}.`, economy.demand >= previous.economy.demand && confidenceDelta >= 0 ? "positivo" : "negativo"));
       if (reputationDelta !== 0) revenueReasons.push(reason("Reputação comercial", `A reputação ${reputationDelta > 0 ? "subiu" : "caiu"} ${Math.abs(reputationDelta).toFixed(1)} ponto${Math.abs(reputationDelta) >= 2 ? "s" : ""} e alterou a conversão de vendas.`, reputationDelta > 0 ? "positivo" : "negativo"));
       if (Math.abs(after.morale - before.morale) >= 1.5 || employeeDelta !== 0) revenueReasons.push(reason("Capacidade da equipe", `A operação terminou com ${company.employees.length} pessoas e moral média de ${Math.round(after.morale)}%.`, after.morale >= before.morale && employeeDelta >= 0 ? "positivo" : "negativo"));
+      if (after.operatingDiscipline < .995) revenueReasons.push(reason("Execução no Implacável", `Equipe, confiança dos clientes e pesquisas liberaram ${Math.round(after.operatingDiscipline * 100)}% do potencial comercial. Melhorar esses pilares aumenta receita sem apenas elevar marketing.`, after.operatingDiscipline >= before.operatingDiscipline ? "positivo" : "negativo"));
 
       const costReasons: IndicatorReason[] = [
         reason("Folha e estrutura", `${money.format(after.payroll)}/mês em salários, marketing de ${money.format(company.marketing)}/semana e custos fixos da operação.`, after.payroll <= before.payroll ? "positivo" : "neutro"),
@@ -5947,7 +5968,7 @@ function buildWeeklyReport(
         { key: "reputation", label: "Reputação", before: beforeCompany.reputation, after: company.reputation, delta: reputationDelta, format: "percent", reasons: reputationReasons.length ? reputationReasons : fallback("Nenhuma entrega, crise ou evento alterou significativamente a percepção pública.") },
         { key: "morale", label: "Moral da equipe", before: before.morale, after: after.morale, delta: after.morale - before.morale, format: "percent", reasons: peopleReasons.length ? peopleReasons : fallback("Remuneração, carga e ambiente permaneceram equilibrados.") },
         { key: "stress", label: "Estresse médio", before: beforeStress, after: afterStress, delta: afterStress - beforeStress, format: "percent", reasons: peopleReasons.length ? peopleReasons : fallback("A equipe trabalhou dentro da carga habitual.") },
-        { key: "valuation", label: "Valor da empresa", before: before.valuation, after: after.valuation, delta: after.valuation - before.valuation, format: "money", reasons: [reason("Fórmula de valuation", "Combina caixa, lucro anual sustentável, faturamento, reputação e desconta integralmente a dívida.", "neutro"), ...revenueReasons.slice(0, 1), ...cashReasons.slice(0, 1)] },
+        { key: "valuation", label: "Valor da empresa", before: before.valuation, after: after.valuation, delta: after.valuation - before.valuation, format: "money", reasons: [reason("Fórmula de valuation", after.valuationCredibility < .8 ? `O Implacável reconhece ${Math.round(after.valuationCredibility * 100)}% do múltiplo potencial até a empresa provar histórico, pesquisa e confiança comercial.` : "Combina caixa, lucro anual sustentável, faturamento, reputação e desconta integralmente a dívida.", "neutro"), ...revenueReasons.slice(0, 1), ...cashReasons.slice(0, 1)] },
         { key: "board", label: "Apoio do conselho", before: beforeCompany.boardSupport ?? 50, after: company.boardSupport ?? 50, delta: (company.boardSupport ?? 50) - (beforeCompany.boardSupport ?? 50), format: "percent", reasons: boardReasons },
       ];
       const critical = changes.some((item) => {
@@ -6564,6 +6585,7 @@ export default function Home() {
             productRevenue: c.productRevenue ?? 0,
             efficiency: c.efficiency ?? 1,
             campaignWeeks: c.campaignWeeks ?? 0,
+            valuationFactor: c.valuationFactor ?? difficultyValuationFactor[parsed.difficulty ?? "executivo"],
             marketingMultiplier: c.marketingMultiplier ?? 1,
             marketingPulse: c.marketingPulse,
             marketingCampaigns: c.marketingCampaigns ?? [],
@@ -6800,7 +6822,7 @@ export default function Home() {
   );
   const activeFacilitySummary = active ? facilitySummary(active) : null;
   const marketableProducts = active?.projects.filter((product) => product.kind === "produto" && product.lifecycle === "mercado") ?? [];
-  const campaignForecast = active ? marketingCampaignForecast(active, game.economy, game.competitors, campaignBudget, campaignDuration, campaignAudience, campaignObjective, campaignProductId) : null;
+  const campaignForecast = active ? marketingCampaignForecast(active, game.economy, game.competitors, campaignBudget, campaignDuration, campaignAudience, campaignObjective, campaignProductId, game.difficulty ?? "executivo") : null;
   const empireValue =
     game.companies
       .filter((c) => !c.sold && !c.bankrupt && !c.closed)
@@ -7019,10 +7041,11 @@ export default function Home() {
     const capacity = companyCommercialCapacity(active);
     const room = Math.max(0, capacity.customerCapacity - active.customers);
     const retentionFactor = campaignObjective === "retencao" ? .45 : 1;
+    const difficultyImpact = game.difficulty === "implacavel" ? .62 : game.difficulty === "relaxado" ? 1.12 : 1;
     const totalCustomerImpact = outcome === "forte"
-      ? Math.max(1, Math.round(room * (.08 + campaignForecast.budgetEfficiency * .16) * retentionFactor))
+      ? Math.max(1, Math.round(room * (.08 + campaignForecast.budgetEfficiency * .16) * retentionFactor * difficultyImpact))
       : outcome === "moderado"
-        ? Math.max(0, Math.round(room * (.035 + campaignForecast.budgetEfficiency * .075) * retentionFactor))
+        ? Math.max(0, Math.round(room * (.035 + campaignForecast.budgetEfficiency * .075) * retentionFactor * difficultyImpact))
         : outcome === "negativo"
           ? -Math.max(1, Math.round(active.customers * (.018 + Math.max(0, campaignBudget / campaignForecast.idealBudget - 1.8) * .012)))
           : 0;
@@ -7040,7 +7063,7 @@ export default function Home() {
       outcome,
       probabilities,
       totalCustomerImpact,
-      revenueMultiplier: outcome === "forte" ? 1.18 : outcome === "moderado" ? 1.075 : outcome === "ignorado" ? .995 : .92,
+      revenueMultiplier: outcome === "forte" ? (game.difficulty === "implacavel" ? 1.1 : 1.18) : outcome === "moderado" ? (game.difficulty === "implacavel" ? 1.035 : 1.075) : outcome === "ignorado" ? (game.difficulty === "implacavel" ? .98 : .995) : (game.difficulty === "implacavel" ? .84 : .92),
       totalReputationImpact: outcome === "forte" ? 5 : outcome === "moderado" ? 2 : outcome === "negativo" ? -7 : 0,
       revealed: false,
     };
@@ -7417,7 +7440,7 @@ export default function Home() {
 
   const start = (sector: Sector, holdingName: string, founderName: string, difficulty: GameDifficulty) => {
     const startingCash = difficultyProfiles[difficulty].startingCash;
-    const company = { ...newCompany(sector), name: generateCompanyName(sector, [], Date.now()), cash: startingCash, history: [startingCash], ceo: founderName.trim() };
+    const company = { ...newCompany(sector), name: generateCompanyName(sector, [], Date.now()), cash: startingCash, history: [startingCash], marketing: difficulty === "implacavel" ? 2500 : difficulty === "relaxado" ? 7000 : 5000, valuationFactor: difficultyValuationFactor[difficulty], ceo: founderName.trim() };
     const competitors = generateCompetitors(sector);
     setGame({
       ...initialState,
@@ -7891,13 +7914,14 @@ export default function Home() {
             const activeCampaignCount = marketingCampaigns.filter((campaign) => campaign.weeksLeft > 0).length;
             if (ceoSpend >= 5000 && activeCampaignCount < 2) {
               const audience: MarketingAudience = company.sector === "Tecnologia" || company.sector === "Agência" ? "nicho" : "massa";
-              const forecast = marketingCampaignForecast(company, economyRoll.economy, current.competitors, ceoSpend, 3, audience, "aquisicao");
+              const forecast = marketingCampaignForecast(company, economyRoll.economy, current.competitors, ceoSpend, 3, audience, "aquisicao", undefined, current.difficulty ?? "executivo");
               const roll = Math.random() * 100;
               const outcome: MarketingCampaignOutcome = roll < forecast.probabilities.forte ? "forte" : roll < forecast.probabilities.forte + forecast.probabilities.moderado ? "moderado" : roll < forecast.probabilities.forte + forecast.probabilities.moderado + forecast.probabilities.ignorado ? "ignorado" : "negativo";
               const capacity = companyCommercialCapacity(company);
               const room = Math.max(0, capacity.customerCapacity - company.customers);
-              const totalCustomerImpact = outcome === "forte" ? Math.max(1, Math.round(room * (.08 + forecast.budgetEfficiency * .14))) : outcome === "moderado" ? Math.max(0, Math.round(room * .065)) : outcome === "negativo" ? -Math.max(1, Math.round(company.customers * .025)) : 0;
-              marketingCampaigns = [...marketingCampaigns, { id: `ceo-campaign-${company.id}-${nextWeek}`, name: `Expansão comercial de ${company.ceo}`, audience, objective: "aquisicao", totalBudget: ceoSpend, duration: 3, weeksLeft: 3, startedWeek: nextWeek, outcome, probabilities: forecast.probabilities, totalCustomerImpact, revenueMultiplier: outcome === "forte" ? 1.16 : outcome === "moderado" ? 1.065 : outcome === "ignorado" ? .995 : .93, totalReputationImpact: outcome === "forte" ? 4 : outcome === "moderado" ? 1 : outcome === "negativo" ? -5 : 0, revealed: false }];
+              const ceoMarketingImpact = current.difficulty === "implacavel" ? .62 : current.difficulty === "relaxado" ? 1.12 : 1;
+              const totalCustomerImpact = outcome === "forte" ? Math.max(1, Math.round(room * (.08 + forecast.budgetEfficiency * .14) * ceoMarketingImpact)) : outcome === "moderado" ? Math.max(0, Math.round(room * .065 * ceoMarketingImpact)) : outcome === "negativo" ? -Math.max(1, Math.round(company.customers * (current.difficulty === "implacavel" ? .045 : .025))) : 0;
+              marketingCampaigns = [...marketingCampaigns, { id: `ceo-campaign-${company.id}-${nextWeek}`, name: `Expansão comercial de ${company.ceo}`, audience, objective: "aquisicao", totalBudget: ceoSpend, duration: 3, weeksLeft: 3, startedWeek: nextWeek, outcome, probabilities: forecast.probabilities, totalCustomerImpact, revenueMultiplier: outcome === "forte" ? (current.difficulty === "implacavel" ? 1.085 : 1.16) : outcome === "moderado" ? (current.difficulty === "implacavel" ? 1.03 : 1.065) : outcome === "ignorado" ? (current.difficulty === "implacavel" ? .98 : .995) : (current.difficulty === "implacavel" ? .86 : .93), totalReputationImpact: outcome === "forte" ? 4 : outcome === "moderado" ? 1 : outcome === "negativo" ? -5 : 0, revealed: false }];
               weeklyNews.push({ id: Date.now() + company.id + 2035, week: nextWeek, category: "negocios", headline: `${company.ceo} autoriza campanha na ${company.name}`, body: `O CEO comprometeu ${money.format(ceoSpend)} em uma campanha de três semanas para ${marketingAudienceLabels[audience].toLowerCase()}. A chance estimada de crescimento forte era ${forecast.probabilities.forte}%.`, impact: "neutro" });
               ceoLastDecision = "Lançou uma campanha de expansão com risco calculado";
             } else {
@@ -8418,7 +8442,7 @@ export default function Home() {
           }
         }
         const reward = newlyCompleted.reduce(
-          (sum, p) => sum + (p.lifecycle === "fora_de_linha" ? 0 : Math.round(p.reward * (p.quality / 100))),
+          (sum, p) => sum + (p.lifecycle === "fora_de_linha" ? 0 : Math.round(p.reward * (p.quality / 100) * difficulty.reward)),
           0,
         );
         const rivalPressure =
@@ -8446,7 +8470,7 @@ export default function Home() {
         const campaignGain = newlyCompleted.some((p) => p.kind === "campanha")
           ? 6
           : Math.max(0, (company.campaignWeeks ?? 0) - 1);
-        const marketingPulse = rollMarketingPulse({ ...company, marketingCampaigns }, cm, nextWeek);
+        const marketingPulse = rollMarketingPulse({ ...company, marketingCampaigns }, cm, nextWeek, current.difficulty ?? "executivo");
         const runningMarketingCampaigns = marketingCampaigns.filter((campaign) => campaign.weeksLeft > 0);
         const newlyRevealedCampaign = runningMarketingCampaigns.find((campaign) => !campaign.revealed);
         const finishingCampaign = runningMarketingCampaigns.find((campaign) => campaign.weeksLeft === 1);
@@ -8764,7 +8788,7 @@ export default function Home() {
               : 0;
         const sharedSavings = company.sharedServices ? 2800 : 0;
         const hardModePressureCost = (current.difficulty ?? "executivo") === "implacavel"
-          ? Math.round(Math.max(0, cm.profit) * .26 + Math.max(0, company.cash - cm.requiredReserve * 1.5) * .0012)
+          ? Math.round(Math.max(0, cm.profit) * .45 + Math.max(0, company.cash - cm.requiredReserve * 1.25) * .0025)
           : 0;
         if (hardModePressureCost > 0 && nextWeek % 13 === company.id % 13) weeklyNews.push({ id: Date.now() + company.id + 2410, week: nextWeek, category: "economia", headline: `Escala da ${company.name} atrai custos e reação competitiva`, body: `No Implacável, fiscalização, retenção de talentos, defesa de mercado e concorrência consumiram ${money.format(hardModePressureCost)} nesta semana. Crescer continua valioso, mas margens extraordinárias atraem reação.`, impact: "negativo" });
         const grossCash =
@@ -11171,6 +11195,7 @@ export default function Home() {
     const company = {
       ...newCompany(sector, id, game.week),
       cash: Math.round(cost * 0.65),
+      valuationFactor: difficultyValuationFactor[game.difficulty ?? "executivo"],
       name: companyName.trim() || generateCompanyName(sector, game.companies.map((item) => item.name), id),
       ceo: currentLeader,
     };
@@ -11335,6 +11360,7 @@ export default function Home() {
         ...newCompany(rival.sector, Date.now(), s.week),
         name: rival.name,
         cash: Math.round(price * 0.08),
+        valuationFactor: difficultyValuationFactor[s.difficulty ?? "executivo"],
         customers: Math.round(rival.score * 14),
         reputation: rival.reputation,
         culture: "Integração",
