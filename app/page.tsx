@@ -2017,7 +2017,8 @@ const companyNameBank: Record<Sector, string[]> = {
 };
 
 function generateCompanyName(sector: Sector, existingNames: string[] = [], seed = Date.now()) {
-  const available = companyNameBank[sector].filter((name) => !existingNames.includes(name));
+  const reserved = new Set(existingNames.map((name) => name.trim().toLocaleLowerCase("pt-BR")));
+  const available = companyNameBank[sector].filter((name) => !reserved.has(name.toLocaleLowerCase("pt-BR")));
   if (available.length) return available[Math.abs(Math.floor(seed)) % available.length];
   const base = companyNameBank[sector][Math.abs(Math.floor(seed)) % companyNameBank[sector].length];
   return `${base} ${2 + Math.abs(Math.floor(seed)) % 97}`;
@@ -3508,8 +3509,8 @@ function rivalProductName(sector: Sector, seed = Math.random()): string {
   ];
 }
 
-function generateCompetitors(sector: Sector, seed = Date.now()): Competitor[] {
-  const names: string[] = [];
+function generateCompetitors(sector: Sector, seed = Date.now(), reservedNames: string[] = []): Competitor[] {
+  const names: string[] = [...reservedNames];
   return Array.from({ length: 3 }, (_, index) => {
     const name = generateCompanyName(sector, names, seed + index * 37);
     names.push(name);
@@ -3544,6 +3545,20 @@ function generateCompetitors(sector: Sector, seed = Date.now()): Competitor[] {
       lastDecision: "Consolidar a operação",
     });
   });
+}
+
+function normalizeCompetitorNames(competitors: Competitor[], reservedNames: string[] = []): Competitor[] {
+  const used = [...reservedNames];
+  return competitors.map((rival, index) => {
+    const duplicate = used.some((name) => name.trim().toLocaleLowerCase("pt-BR") === rival.name.trim().toLocaleLowerCase("pt-BR"));
+    const name = duplicate ? generateCompanyName(rival.sector, used, rival.id + index * 97) : rival.name;
+    used.push(name);
+    return name === rival.name ? rival : { ...rival, name, history: [`A empresa adotou a marca ${name} para se diferenciar no mercado.`, ...(rival.history ?? [])].slice(0, 8) };
+  });
+}
+
+function competitorReserveTarget(rival: Competitor): number {
+  return Math.round(120000 + rival.score * 18000 + (rival.products?.length ?? 0) * 160000 + (rival.researchLevel ?? 0) * 250000);
 }
 
 function generateNewCompetitor(
@@ -5505,7 +5520,7 @@ function resolveHostileTakeover(state: GameState, takeoverWins: boolean, agreeme
   };
 }
 
-function competitorAcquisitionPrice(rival: Competitor, buyer: Company, economy: Economy, difficulty: GameDifficulty = "executivo") {
+function competitorAcquisitionBreakdown(rival: Competitor, buyer: Company, economy: Economy, difficulty: GameDifficulty = "executivo") {
   const productValue = (rival.products ?? []).reduce((sum, product) => {
     const stageMultiplier = product.stage === "crescimento" ? 1.25 : product.stage === "maduro" ? 1.05 : product.stage === "declínio" ? .62 : .88;
     return sum + product.quality * 8200 * stageMultiplier;
@@ -5513,11 +5528,18 @@ function competitorAcquisitionPrice(rival: Competitor, buyer: Company, economy: 
   const statusMultiplier = rival.status === "crise" ? .72 : rival.status === "crescendo" ? 1.18 : 1;
   const ageMultiplier = 1 + Math.min(.55, (rival.age ?? 0) / 180);
   const difficultySellerMultiplier = difficulty === "relaxado" ? .9 : difficulty === "implacavel" ? 1.2 : 1;
-  const standalone = (Math.max(0, rival.cash ?? 0) * .82 + rival.score * 46000 + rival.reputation * 11500 + productValue) * statusMultiplier * ageMultiplier * difficultySellerMultiplier;
+  const cashValue = Math.max(0, rival.cash ?? 0) * .82;
+  const marketValue = rival.score * 46000 + rival.reputation * 11500;
+  const standalone = (cashValue + marketValue + productValue) * statusMultiplier * ageMultiplier * difficultySellerMultiplier;
   const buyerValue = companyMetrics(buyer, economy).valuation;
   const strategicRate = (difficulty === "relaxado" ? .07 : difficulty === "implacavel" ? .18 : .11) + rival.score / 1200;
-  const dominancePremium = buyerValue * strategicRate * (rival.relationship === "rival" ? 1.14 : 1);
-  return Math.max(250000, Math.round(Math.max(standalone, dominancePremium) / 10000) * 10000);
+  const strategicFloor = buyerValue * strategicRate * (rival.relationship === "rival" ? 1.14 : 1);
+  const total = Math.max(250000, Math.round(Math.max(standalone, strategicFloor) / 10000) * 10000);
+  return { total, cashValue: Math.round(cashValue), marketValue: Math.round(marketValue), productValue: Math.round(productValue), strategicPremium: Math.max(0, Math.round(total - standalone)), reserveTarget: competitorReserveTarget(rival) };
+}
+
+function competitorAcquisitionPrice(rival: Competitor, buyer: Company, economy: Economy, difficulty: GameDifficulty = "executivo") {
+  return competitorAcquisitionBreakdown(rival, buyer, economy, difficulty).total;
 }
 
 function buildFinancialEntries(previous: GameState, companies: Company[], economy: Economy, week: number): FinancialEntry[] {
@@ -6378,12 +6400,14 @@ export default function Home() {
           ...initialState,
           ...parsed,
           unread: [],
-          competitors: parsed.competitors?.length
+          competitors: normalizeCompetitorNames(parsed.competitors?.length
             ? parsed.competitors.map((r: Competitor, index: number) => ({
                 ...r,
                 crisisWeeks: r.crisisWeeks ?? 0,
                 age: r.age ?? 0,
-                cash: r.cash ?? 180000 + r.score * 7000,
+                cash: (parsed.balanceVersion ?? 1) < 4
+                  ? Math.max(r.cash ?? 180000 + r.score * 7000, Math.round(competitorReserveTarget(r) * .45))
+                  : r.cash ?? 180000 + r.score * 7000,
                 personality:
                   r.personality ??
                   rivalPersonalities[index % rivalPersonalities.length],
@@ -6409,9 +6433,9 @@ export default function Home() {
               }))
             : generateCompetitors(
                 parsed.companies?.[0]?.sector ?? "Tecnologia",
-              ),
+              ), (parsed.companies ?? []).map((company: Company) => company.name)),
           news: parsed.news ?? [],
-          balanceVersion: 3,
+          balanceVersion: 4,
           difficulty: parsed.difficulty ?? "executivo",
           difficultyApplied: parsed.difficultyApplied ?? "executivo",
           economy:
@@ -6753,6 +6777,7 @@ export default function Home() {
     game.companies.find((c) => c.id === holdingCompanyId) ?? null;
   const selectedRival =
     game.competitors.find((r) => r.id === selectedRivalId) ?? null;
+  const targetRivalAcquisition = targetRival && active ? competitorAcquisitionBreakdown(targetRival, active, game.economy, game.difficulty ?? "executivo") : null;
   const selectedNewsRepercussion = selectedNews
     ? newsRepercussion(selectedNews)
     : null;
@@ -6836,6 +6861,10 @@ export default function Home() {
       .reduce((sum, company) => sum + companyMetrics(company, game.economy).valuation, 0) +
       (game.holdingCash ?? 0),
   );
+  const lastMarketingReturn = active && metrics && active.marketingPulse
+    ? Math.max(0, Math.round(Math.max(0, active.marketingPulse.customerDelta) * active.price + Math.max(0, metrics.revenue - metrics.revenue / Math.max(.01, active.marketingPulse.multiplier))))
+    : 0;
+  const marketingReturnStatus = !active?.marketing ? "Sem investimento" : !active.marketingPulse ? "Aguardando resposta" : lastMarketingReturn >= active.marketing ? "Retorno semanal positivo" : lastMarketingReturn > 0 ? "Retorno ainda em maturação" : "Semana sem retorno";
   const takeoverRepurchaseCost = Math.round(Math.max(120000, Math.min(1500000, holdingValuation * .055)) / 1000) * 1000;
   const takeoverSaleCandidate = game.companies.filter((company) => !company.sold && !company.bankrupt && !company.closed).sort((a, b) => companyMetrics(a, game.economy).valuation - companyMetrics(b, game.economy).valuation)[0];
   const takeoverAlly = [...game.providers].filter((provider) => provider.kind !== "banco").sort((a, b) => b.patience - a.patience)[0];
@@ -7438,10 +7467,10 @@ export default function Home() {
     }
   }, [active?.sold, active?.bankrupt, active?.closed, view, dialog]);
 
-  const start = (sector: Sector, holdingName: string, founderName: string, difficulty: GameDifficulty) => {
+  const start = (sector: Sector, holdingName: string, firstCompanyName: string, founderName: string, difficulty: GameDifficulty) => {
     const startingCash = difficultyProfiles[difficulty].startingCash;
-    const company = { ...newCompany(sector), name: generateCompanyName(sector, [], Date.now()), cash: startingCash, history: [startingCash], marketing: difficulty === "implacavel" ? 2500 : difficulty === "relaxado" ? 7000 : 5000, valuationFactor: difficultyValuationFactor[difficulty], ceo: founderName.trim() };
-    const competitors = generateCompetitors(sector);
+    const company = { ...newCompany(sector), name: firstCompanyName.trim(), cash: startingCash, history: [startingCash], marketing: difficulty === "implacavel" ? 2500 : difficulty === "relaxado" ? 7000 : 5000, valuationFactor: difficultyValuationFactor[difficulty], ceo: founderName.trim() };
+    const competitors = generateCompetitors(sector, Date.now(), [company.name]);
     setGame({
       ...initialState,
       started: true,
@@ -9324,6 +9353,10 @@ export default function Home() {
             ].slice(0, 8);
           }
         }
+        const liquidityTarget = competitorReserveTarget({ ...rival, products, score: clamp(rival.score + change, 4, 99) });
+        const liquidityRatio = cash / Math.max(1, liquidityTarget);
+        if (liquidityRatio < .18) change -= 4;
+        else if (liquidityRatio < .42) change -= 2;
         const relation = clamp(
           (rival.relation ?? 0) +
             (rival.relationship === "parceiro"
@@ -9336,7 +9369,7 @@ export default function Home() {
         );
         const score = clamp(rival.score + change, 4, 99);
         const status =
-          score < 17 || cash < -80000
+          score < 17 || cash < -80000 || liquidityRatio < .08
             ? ("crise" as const)
             : change > 1
               ? ("crescendo" as const)
@@ -11359,7 +11392,7 @@ export default function Home() {
       const acquiredCompany = {
         ...newCompany(rival.sector, Date.now(), s.week),
         name: rival.name,
-        cash: Math.round(price * 0.08),
+        cash: Math.max(0, Math.round(rival.cash ?? price * 0.08)),
         valuationFactor: difficultyValuationFactor[s.difficulty ?? "executivo"],
         customers: Math.round(rival.score * 14),
         reputation: rival.reputation,
@@ -11372,6 +11405,8 @@ export default function Home() {
           (sum, product) => sum + Math.round(product.quality * 115),
           0,
         ),
+        researchKnowledge: 12 + (rival.researchLevel ?? 0) * 18,
+        completedResearch: researchDefinitions[rival.sector].slice(0, rival.researchLevel ?? 0).map((definition) => definition.id),
         projects: (rival.products ?? []).map((product) => ({
           id: Date.now() + product.id,
           name: product.name,
@@ -11440,8 +11475,12 @@ export default function Home() {
                   ? c
                   : {
                       ...c,
-                      cash: c.cash - price,
+                      cash: c.cash - price + acquiredCompany.cash,
                       customers: c.customers + acquiredCompany.customers,
+                      productRevenue: (c.productRevenue ?? 0) + acquiredCompany.productRevenue,
+                      projects: [...c.projects, ...acquiredCompany.projects],
+                      completedResearch: [...new Set([...(c.completedResearch ?? []), ...(acquiredCompany.completedResearch ?? [])])],
+                      researchKnowledge: (c.researchKnowledge ?? 0) + Math.round(acquiredCompany.researchKnowledge * .65),
                       reputation: clamp(
                         c.reputation + Math.round(rival.reputation * 0.18),
                       ),
@@ -13737,7 +13776,8 @@ export default function Home() {
               )
               .slice(0, 3)
               .map((rival, index) => {
-                const acquisitionPrice = competitorAcquisitionPrice(rival, active, game.economy, game.difficulty ?? "executivo");
+                const acquisitionBreakdown = competitorAcquisitionBreakdown(rival, active, game.economy, game.difficulty ?? "executivo");
+                const acquisitionPrice = acquisitionBreakdown.total;
                 return (
                   <article
                     className={`rival-building rival-${rival.status}`}
@@ -13759,8 +13799,9 @@ export default function Home() {
                     </p>
                     <div className="rival-summary">
                       <small>
-                        Caixa estimado <b>{compact.format(rival.cash ?? 0)}</b>
+                        Caixa estimado <b>{compact.format(rival.cash ?? 0)} · {Math.round(Math.max(0, rival.cash ?? 0) / Math.max(1, acquisitionPrice) * 100)}% do preço</b>
                       </small>
+                      <small>Marca e produtos <b>{compact.format(acquisitionBreakdown.marketValue + acquisitionBreakdown.productValue)}</b></small>
                       <small>
                         Produtos <b>{rival.products?.length ?? 0}</b>
                       </small>
@@ -13865,6 +13906,7 @@ export default function Home() {
                 }
               />
               <small>Manutenção contínua. Campanhas maiores são apostas separadas.</small>
+              {active.marketing > 0 && <em className={`marketing-return-note ${lastMarketingReturn >= active.marketing ? "positivo" : lastMarketingReturn > 0 ? "maturacao" : "negativo"}`}>{marketingReturnStatus} · retorno direto estimado {money.format(lastMarketingReturn)}. Clientes conquistados continuam faturando nas semanas seguintes.</em>}
             </label>
             <div>
               <span>Valor estimado</span>
@@ -15162,7 +15204,7 @@ export default function Home() {
           <ModalTitle
             label="FUSÕES E AQUISIÇÕES"
             title={`Comprar a ${targetRival.name}?`}
-            text={`${targetRival.founder} aceita negociar por ${money.format(competitorAcquisitionPrice(targetRival, active, game.economy, game.difficulty ?? "executivo"))}. O preço considera caixa, produtos, maturidade, crescimento e o prêmio estratégico cobrado de uma holding dominante.`}
+            text={`${targetRival.founder} aceita negociar por ${money.format(targetRivalAcquisition?.total ?? 0)}. Você recebe ${money.format(Math.max(0, targetRival.cash ?? 0))} em caixa; marca e posição de mercado representam ${money.format(targetRivalAcquisition?.marketValue ?? 0)}, produtos representam ${money.format(targetRivalAcquisition?.productValue ?? 0)}${(targetRivalAcquisition?.strategicPremium ?? 0) > 0 ? ` e o vendedor cobra ${money.format(targetRivalAcquisition?.strategicPremium ?? 0)} de prêmio estratégico` : ""}.`}
           />
           <div className="choice-cards acquisition-cards">
             <button onClick={() => acquireRival("subsidiary")}>
@@ -16304,13 +16346,15 @@ export default function Home() {
 function StartScreen({
   onStart,
 }: {
-  onStart: (sector: Sector, holdingName: string, founderName: string, difficulty: GameDifficulty) => void;
+  onStart: (sector: Sector, holdingName: string, firstCompanyName: string, founderName: string, difficulty: GameDifficulty) => void;
 }) {
   const [sector, setSector] = useState<Sector>("Tecnologia");
   const [holdingName, setHoldingName] = useState("");
+  const [firstCompanyName, setFirstCompanyName] = useState("");
   const [founderName, setFounderName] = useState("");
   const [difficulty, setDifficulty] = useState<GameDifficulty>("executivo");
   const validName = holdingName.trim().length >= 2;
+  const validCompanyName = firstCompanyName.trim().length >= 2;
   const validFounder = founderName.trim().length >= 2;
   return (
     <main className="start-screen">
@@ -16323,8 +16367,7 @@ function StartScreen({
           <br />E uma ideia que ninguém entende.
         </h1>
         <span>
-          Diga quem você é, dê um nome ao grupo e escolha onde sua história
-          começa.
+          Diga quem você é, dê um nome ao grupo e à primeira empresa, depois escolha onde sua história começa.
         </span>
         <div className="founder-fields">
           <label className="holding-name-field">
@@ -16350,8 +16393,8 @@ function StartScreen({
               value={holdingName}
               onChange={(e) => setHoldingName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && validName && validFounder)
-                  onStart(sector, holdingName, founderName, difficulty);
+                if (e.key === "Enter" && validName && validCompanyName && validFounder)
+                  onStart(sector, holdingName, firstCompanyName, founderName, difficulty);
               }}
             />
             <em>
@@ -16359,6 +16402,20 @@ function StartScreen({
                 ? `Sua holding será conhecida como “${holdingName.trim()}”.`
                 : "Digite pelo menos 2 caracteres."}
             </em>
+          </label>
+          <label className="holding-name-field">
+            <small>NOME DA PRIMEIRA EMPRESA</small>
+            <input
+              maxLength={36}
+              placeholder={`Ex.: ${sectorData[sector].company}`}
+              value={firstCompanyName}
+              onChange={(e) => setFirstCompanyName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && validName && validCompanyName && validFounder)
+                  onStart(sector, holdingName, firstCompanyName, founderName, difficulty);
+              }}
+            />
+            <em>{validCompanyName ? `Seu primeiro negócio será “${firstCompanyName.trim()}”.` : "Digite pelo menos 2 caracteres."}</em>
           </label>
         </div>
         <div className="sector-choice">
@@ -16383,12 +16440,12 @@ function StartScreen({
         <article className="sector-preview">
           <div>
             <small>SEU PRIMEIRO NEGÓCIO</small>
-            <h2>{sectorData[sector].title}</h2>
-            <p>{sectorData[sector].desc}</p>
+            <h2>{validCompanyName ? firstCompanyName.trim() : sectorData[sector].title}</h2>
+            <p>{sectorData[sector].title} · {sectorData[sector].desc}</p>
           </div>
           <button
-            disabled={!validName || !validFounder}
-            onClick={() => onStart(sector, holdingName, founderName, difficulty)}
+            disabled={!validName || !validCompanyName || !validFounder}
+            onClick={() => onStart(sector, holdingName, firstCompanyName, founderName, difficulty)}
           >
             Começar a história <span>›</span>
           </button>

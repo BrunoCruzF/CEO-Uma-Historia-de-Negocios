@@ -855,6 +855,7 @@ button {
   color: #777;
   font-size: 9px;
 }
+.strategy-ribbon .marketing-return-note{display:block;margin-top:10px;padding:8px;border-left:4px solid #9a7042;background:#eee2d2;color:#5f554b;font:italic 9px/1.45 Georgia,serif}.strategy-ribbon .marketing-return-note.positivo{border-color:#4f7e63;background:#e1ece4}.strategy-ribbon .marketing-return-note.negativo{border-color:#9e4b4f;background:#f0dddd}
 .economy-banner {
   display: flex;
   justify-content: space-between;
@@ -2551,9 +2552,9 @@ button {
 }
 .founder-fields {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  width: min(750px, 100%);
+  width: min(1040px, 100%);
 }
 .journey-page {
   background: linear-gradient(135deg, #e9e0d1, #d3c9b9);
