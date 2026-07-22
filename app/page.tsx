@@ -531,6 +531,8 @@ type Competitor = {
   researchLevel?: number;
   researchProgress?: number;
   researchFocus?: string;
+  researchSpent?: number;
+  marketRelations?: Record<string, number>;
 };
 type NewsItem = {
   id: number;
@@ -1101,10 +1103,10 @@ const leadershipArchetype = (identity: LeadershipIdentity | undefined) => {
 };
 
 const partnerNames: Record<Sector, [string, string][]> = {
-  Tecnologia: [["Banco Horizonte", "Carla Mello"], ["Rede Clínica Vitta", "João Peixoto"], ["Nuvem Base", "Mirela Torres"], ["DataShield", "Rui Amaral"]],
-  Alimentação: [["Mercados Boa Praça", "Sônia Matos"], ["Rede Sabor & Cia.", "Caio Lacerda"], ["AgroVale Insumos", "Nádia Freitas"], ["LogFrio", "Paulo Seixas"]],
-  Varejo: [["Galeria Central", "Amanda Luz"], ["Clube Mais", "Diego Fontes"], ["Distribuidora Ponte", "Lara Vilela"], ["Rota Express", "César Porto"]],
-  Agência: [["Grupo Aurora", "Teresa Vidal"], ["Instituto Veredas", "Fábio Lins"], ["Estúdio Frame", "Bia Salgado"], ["Mídia Sul", "André Neves"]],
+  Tecnologia: [["Banco Horizonte", "Carla Mello"], ["Rede Clínica Vitta", "João Peixoto"], ["Cooperativa Nexus", "Iara Falcão"], ["Nuvem Base", "Mirela Torres"], ["DataShield", "Rui Amaral"], ["FiberLink", "Enzo Brito"]],
+  Alimentação: [["Mercados Boa Praça", "Sônia Matos"], ["Rede Sabor & Cia.", "Caio Lacerda"], ["Hotéis Terravista", "Raquel Moura"], ["AgroVale Insumos", "Nádia Freitas"], ["LogFrio", "Paulo Seixas"], ["BioPack Brasil", "Murilo Paes"]],
+  Varejo: [["Galeria Central", "Amanda Luz"], ["Clube Mais", "Diego Fontes"], ["Rede Alameda", "Vitória Pinho"], ["Distribuidora Ponte", "Lara Vilela"], ["Rota Express", "César Porto"], ["Estoque Uno", "Rômulo Sá"]],
+  Agência: [["Grupo Aurora", "Teresa Vidal"], ["Instituto Veredas", "Fábio Lins"], ["Banco Horizonte Sul", "Malu Farias"], ["Estúdio Frame", "Bia Salgado"], ["Mídia Sul", "André Neves"], ["Produtora Prisma", "Yuri Cabral"]],
 };
 
 function createBusinessPartners(sector: Sector, seed = 1): BusinessPartner[] {
@@ -1112,9 +1114,9 @@ function createBusinessPartners(sector: Sector, seed = 1): BusinessPartner[] {
     id: `${sector}-${seed}-${index}`,
     name,
     representative,
-    kind: index < 2 ? "cliente" : "fornecedor",
+    kind: index < 3 ? "cliente" : "fornecedor",
     personality: (["leal", "exigente", "conservador", "oportunista"] as BusinessPartner["personality"][])[(seed + index) % 4],
-    weeklyValue: index < 2 ? 9000 + ((seed + index * 3) % 7) * 2200 : 3500 + ((seed + index) % 5) * 1300,
+    weeklyValue: index < 3 ? 9000 + ((seed + index * 3) % 7) * 2200 : 3500 + ((seed + index) % 5) * 1300,
     trust: 52 + ((seed * 7 + index * 11) % 28),
     dependency: 30 + ((seed * 13 + index * 9) % 50),
     weeksLeft: 10 + ((seed + index * 4) % 14),
@@ -1127,11 +1129,19 @@ function createBusinessPartners(sector: Sector, seed = 1): BusinessPartner[] {
   }));
 }
 
+function ensureBusinessPartnerVariety(sector: Sector, seed: number, partners?: BusinessPartner[]): BusinessPartner[] {
+  const current = partners ?? [];
+  const additions = createBusinessPartners(sector, seed).filter((candidate) =>
+    !current.some((partner) => partner.name.toLocaleLowerCase("pt-BR") === candidate.name.toLocaleLowerCase("pt-BR")),
+  );
+  return current.length >= 6 ? current : [...current, ...additions.slice(0, 6 - current.length)];
+}
+
 const proposalPartnerNames: Record<Sector, { clients: [string, string][]; suppliers: [string, string][] }> = {
-  Tecnologia: { clients: [["Grupo MedNova", "Helena Sá"], ["Finaxis", "Otávio Reis"], ["Rede Prisma", "Laura Couto"], ["Instituto Atlas", "Marcos Neri"]], suppliers: [["CloudForge", "Rafael Simões"], ["SecureLayer", "Tânia Braga"], ["DataCore", "Ivo Mendes"], ["LinkWave", "Paula Rios"]] },
-  Alimentação: { clients: [["Rede Mesa Brasil", "Lúcia Teles"], ["Hotéis Estação", "Renato Paz"], ["Empório Nacional", "Alice Nunes"], ["Clube Gourmet", "Vitor Diniz"]], suppliers: [["Campo Nobre", "Sérgio Vale"], ["Embalapack", "Marta Cruz"], ["FrioCerto", "Denis Luz"], ["Safra Sul", "Carla Pires"]] },
-  Varejo: { clients: [["Shopping Aurora", "Marina Leal"], ["Clube Urbano", "Heitor Lima"], ["Marketplace Uno", "Bianca Faria"], ["Rede Ponto", "Caio Luz"]], suppliers: [["Importadora Arco", "Joana Prado"], ["CentroLog", "Hugo Sales"], ["Fábrica Norte", "Nina Vaz"], ["ExpressHub", "Pedro Paiva"]] },
-  Agência: { clients: [["Banco Vereda", "Lara Moura"], ["Grupo Horizonte", "Danilo Serra"], ["Fundação Viva", "Cecília Ramos"], ["Marca Lume", "Arthur Reis"]], suppliers: [["Estúdio Sonora", "Ravi Campos"], ["Mídia Flow", "Olívia Cruz"], ["Produtora Cena", "Tiago Neves"], ["Banco de Imagens Uno", "Sofia Melo"]] },
+  Tecnologia: { clients: [["Grupo MedNova", "Helena Sá"], ["Finaxis", "Otávio Reis"], ["Rede Prisma", "Laura Couto"], ["Instituto Atlas", "Marcos Neri"], ["Logística Veloz", "Cássia Porto"], ["Universidade Delta", "Breno Luz"]], suppliers: [["CloudForge", "Rafael Simões"], ["SecureLayer", "Tânia Braga"], ["DataCore", "Ivo Mendes"], ["LinkWave", "Paula Rios"], ["ServerOne", "Elias Nobre"], ["ChipWorks", "Cíntia Vale"]] },
+  Alimentação: { clients: [["Rede Mesa Brasil", "Lúcia Teles"], ["Hotéis Estação", "Renato Paz"], ["Empório Nacional", "Alice Nunes"], ["Clube Gourmet", "Vitor Diniz"], ["Cantinas Unidas", "Elisa Vaz"], ["Rede Bom Dia", "Noel Castro"]], suppliers: [["Campo Nobre", "Sérgio Vale"], ["Embalapack", "Marta Cruz"], ["FrioCerto", "Denis Luz"], ["Safra Sul", "Carla Pires"], ["Tempero Real", "Silas Leal"], ["Fazenda Aurora", "Luna Motta"]] },
+  Varejo: { clients: [["Shopping Aurora", "Marina Leal"], ["Clube Urbano", "Heitor Lima"], ["Marketplace Uno", "Bianca Faria"], ["Rede Ponto", "Caio Luz"], ["Condomínios Viva", "Lígia Sales"], ["Cartão Pleno", "Décio Reis"]], suppliers: [["Importadora Arco", "Joana Prado"], ["CentroLog", "Hugo Sales"], ["Fábrica Norte", "Nina Vaz"], ["ExpressHub", "Pedro Paiva"], ["Atacado Vértice", "Maya Teles"], ["Porto Distribuição", "Alan Freire"]] },
+  Agência: { clients: [["Banco Vereda", "Lara Moura"], ["Grupo Horizonte", "Danilo Serra"], ["Fundação Viva", "Cecília Ramos"], ["Marca Lume", "Arthur Reis"], ["Rede Sintonia", "Nara Campos"], ["Instituto Orbe", "Gael Viana"]], suppliers: [["Estúdio Sonora", "Ravi Campos"], ["Mídia Flow", "Olívia Cruz"], ["Produtora Cena", "Tiago Neves"], ["Banco de Imagens Uno", "Sofia Melo"], ["Casting Norte", "Mila Dantas"], ["Gráfica Horizonte", "Raul Paiva"]] },
 };
 
 function createPartnerProposal(company: Company, week: number, kind: BusinessPartner["kind"]): BusinessPartner {
@@ -2010,10 +2020,10 @@ const sectorData: Record<
 };
 
 const companyNameBank: Record<Sector, string[]> = {
-  Tecnologia: ["Aurora Stack", "Quasar Sistemas", "Vértice Cloud", "Ponte Digital", "Cobalto Tech", "Nebula Software", "Íris Dados", "Farol Automação", "Tesseract Labs", "Norte Binário", "Lógica Viva", "Senda Tecnologia", "Cubo Neural", "Orion Sistemas", "Pulso Digital", "Matriz Nuvem", "Vox Tecnologia", "Prisma Code"],
-  Alimentação: ["Casa Manjericão", "Brasa & Grão", "Raiz Urbana", "Mesa Clara", "Quintal do Norte", "Sabor de Origem", "Colheita Viva", "Fogo Manso", "Estação Tempero", "Ponto da Safra", "Serra Alimentos", "Cozinha Horizonte", "Grão Nobre", "Vila do Sabor", "Terra & Mesa", "Receita Brasileira", "Pomar Cozinha", "Cais Gourmet"],
-  Varejo: ["Cais Market", "Vitrine Sete", "Ponto Central", "Lume Store", "Casa Vértice", "Rua Nova", "Clube do Bairro", "Estação Compra", "Prateleira Viva", "Norte Shop", "Origem Varejo", "Mosaico Store", "Elo Comércio", "Via Prime", "Armazém Uno", "Rota Varejo", "Pátio Digital", "Mercado Prisma"],
-  Agência: ["Trama Criativa", "Estúdio Farol", "Pauta Viva", "Casa Mosaico", "Norte Comunicação", "Lume Estratégia", "Oficina de Marca", "Pulso & Ideia", "Voz Urbana", "Estúdio Cobalto", "Clareira Criativa", "Ponto de Vista", "Rastro Comunicação", "Prisma Conteúdo", "Atlas Criativo", "Cais Estratégia", "Nexo de Marca", "Vértice Studio"],
+  Tecnologia: ["Aurora Stack", "Quasar Sistemas", "Vértice Cloud", "Ponte Digital", "Cobalto Tech", "Nebula Software", "Íris Dados", "Farol Automação", "Tesseract Labs", "Norte Binário", "Lógica Viva", "Senda Tecnologia", "Cubo Neural", "Orion Sistemas", "Pulso Digital", "Matriz Nuvem", "Vox Tecnologia", "Prisma Code", "DeltaWare", "Aster Data", "Nexo Quântico", "Lambda Works", "Via Neural", "Saturno Apps", "Core Azul", "Base Futura"],
+  Alimentação: ["Casa Manjericão", "Brasa & Grão", "Raiz Urbana", "Mesa Clara", "Quintal do Norte", "Sabor de Origem", "Colheita Viva", "Fogo Manso", "Estação Tempero", "Ponto da Safra", "Serra Alimentos", "Cozinha Horizonte", "Grão Nobre", "Vila do Sabor", "Terra & Mesa", "Receita Brasileira", "Pomar Cozinha", "Cais Gourmet", "Panela da Serra", "Campo & Sabor", "Canto da Colheita", "Mesa do Vale", "Brasa Nobre", "Raízes Brasil", "Trigo & Afeto", "Pomar Urbano"],
+  Varejo: ["Cais Market", "Vitrine Sete", "Ponto Central", "Lume Store", "Casa Vértice", "Rua Nova", "Clube do Bairro", "Estação Compra", "Prateleira Viva", "Norte Shop", "Origem Varejo", "Mosaico Store", "Elo Comércio", "Via Prime", "Armazém Uno", "Rota Varejo", "Pátio Digital", "Mercado Prisma", "Vitrine Urbana", "Ponto Nobre", "Loja Delta", "Circuito Store", "Compra Clara", "Via Sete", "Armazém Sol", "Eixo Market"],
+  Agência: ["Trama Criativa", "Estúdio Farol", "Pauta Viva", "Casa Mosaico", "Norte Comunicação", "Lume Estratégia", "Oficina de Marca", "Pulso & Ideia", "Voz Urbana", "Estúdio Cobalto", "Clareira Criativa", "Ponto de Vista", "Rastro Comunicação", "Prisma Conteúdo", "Atlas Criativo", "Cais Estratégia", "Nexo de Marca", "Vértice Studio", "Linha Editorial", "Casa do Insight", "Bússola Criativa", "Estúdio Delta", "Marca Aberta", "Ideia Central", "Onda Conteúdo", "Plano B Comunicação"],
 };
 
 function generateCompanyName(sector: Sector, existingNames: string[] = [], seed = Date.now()) {
@@ -2756,8 +2766,9 @@ function resolvePartnerStrategy(partner: BusinessPartner, strategy: PartnerStrat
   const early = partner.status === "ativo" && partner.weeksLeft > 2;
   const cooldown = week > 0 && week - (partner.lastNegotiationWeek ?? -99) < 4;
   const relationshipBlocked = (partner.relationshipCooldownUntil ?? 0) > week;
+  const renewalWindow = partner.status !== "ativo" || partner.weeksLeft <= 2;
   if (strategy === "encerrar") return { ...partner, status: "encerrado", weeksLeft: 0, trust: clamp(partner.trust - 22), lastNegotiationWeek: week, lastNegotiatedBy: actor, lastEvent: `${actor} rescindiu o contrato antes do encerramento natural.` };
-  if (cooldown || strategy === "relacionamento" && relationshipBlocked) return { ...partner, lastEvent: `A contraparte recusou reabrir a mesa tão cedo. Nova tentativa após a semana ${Math.max((partner.lastNegotiationWeek ?? week) + 4, partner.relationshipCooldownUntil ?? 0)}.` };
+  if ((cooldown && !renewalWindow && strategy !== "relacionamento") || (strategy === "relacionamento" && relationshipBlocked)) return { ...partner, lastEvent: `A contraparte recusou reabrir a mesa tão cedo. Nova tentativa após a semana ${strategy === "relacionamento" ? partner.relationshipCooldownUntil ?? 0 : (partner.lastNegotiationWeek ?? week) + 4}.` };
 
   const age = Math.max(0, week - (partner.signedWeek ?? 0));
   const earlyPenalty = early ? clamp(18 + partner.weeksLeft * 1.35 + Math.max(0, 5 - age) * 5, 18, 58) : 0;
@@ -2781,7 +2792,7 @@ function resolvePartnerStrategy(partner: BusinessPartner, strategy: PartnerStrat
   }
   if (strategy === "relacionamento") {
     const trustGain = Math.max(2, Math.round(10 * (1 - partner.trust / 125)));
-    return { ...partner, status: "ativo", weeksLeft: Math.min(20, Math.max(partner.weeksLeft, partner.proposedWeeks ?? 0) + (early ? 0 : 2)), trust: clamp(partner.trust + trustGain), weeklyValue: partner.proposedValue ?? partner.weeklyValue, disputeLevel: Math.max(0, (partner.disputeLevel ?? 0) - 12), signedWeek: early ? partner.signedWeek : week, lastNegotiationWeek: week, relationshipCooldownUntil: week + 6, failedRenegotiations: 0, lastNegotiatedBy: actor, lastEvent: `${actor} investiu na relação. O ganho de confiança foi de ${trustGain} pontos e não poderá ser repetido por seis semanas.` };
+    return { ...partner, trust: clamp(partner.trust + trustGain), disputeLevel: Math.max(0, (partner.disputeLevel ?? 0) - 12), relationshipCooldownUntil: week + 6, lastNegotiatedBy: actor, lastEvent: `${actor} investiu na relação. O ganho de confiança foi de ${trustGain} pontos; isso não impede renovar o contrato quando o prazo chegar.` };
   }
   if (strategy === "aceitar") return { ...partner, status: "ativo", weeksLeft: partner.proposedWeeks ?? 16, weeklyValue: partner.proposedValue ?? partner.weeklyValue, trust: clamp(partner.trust + 4), disputeLevel: 0, signedWeek: week, lastNegotiationWeek: week, failedRenegotiations: 0, lastNegotiatedBy: actor, lastEvent: `${actor} aceitou a proposta comercial apresentada.` };
   if (strategy === "equilibrio") return { ...partner, status: "ativo", weeksLeft: early ? Math.max(12, partner.weeksLeft) : 18, weeklyValue: Math.round((partner.proposedValue ?? partner.weeklyValue) * (partner.kind === "cliente" ? 1.025 : 1.018)), trust: clamp(partner.trust + (early ? 0 : 3)), disputeLevel: 0, signedWeek: week, lastNegotiationWeek: week, failedRenegotiations: 0, lastNegotiatedBy: actor, lastEvent: `${actor} fechou uma renovação equilibrada para os dois lados.` };
@@ -3541,6 +3552,8 @@ function generateCompetitors(sector: Sector, seed = Date.now(), reservedNames: s
       researchLevel: 0,
       researchProgress: Math.round(Math.random() * 30),
       researchFocus: researchDefinitions[sector][0].title,
+      researchSpent: 0,
+      marketRelations: {},
       history: [`${name} entrou no mercado sob comando de ${founder}.`],
       lastDecision: "Consolidar a operação",
     });
@@ -3565,8 +3578,9 @@ function generateNewCompetitor(
   sector: Sector,
   existing: Competitor[],
   seed = Date.now(),
+  reservedNames: string[] = [],
 ): Competitor {
-  const name = generateCompanyName(sector, existing.map((r) => r.name), seed);
+  const name = generateCompanyName(sector, [...reservedNames, ...existing.map((r) => r.name)], seed);
   const founders = [
     "Laura Campos",
     "André Bastos",
@@ -3604,6 +3618,8 @@ function generateNewCompetitor(
     researchLevel: 0,
     researchProgress: Math.round(Math.random() * 20),
     researchFocus: researchDefinitions[sector][0].title,
+    researchSpent: 0,
+    marketRelations: {},
     history: [
       `${name} abriu as portas para ocupar um espaço deixado no setor.`,
     ],
@@ -6430,6 +6446,8 @@ export default function Home() {
                 researchLevel: r.researchLevel ?? 0,
                 researchProgress: r.researchProgress ?? index * 8,
                 researchFocus: r.researchFocus ?? researchDefinitions[r.sector][Math.min(r.researchLevel ?? 0, researchDefinitions[r.sector].length - 1)].title,
+                researchSpent: r.researchSpent ?? 0,
+                marketRelations: r.marketRelations ?? {},
               }))
             : generateCompetitors(
                 parsed.companies?.[0]?.sector ?? "Tecnologia",
@@ -6671,7 +6689,7 @@ export default function Home() {
             ceoProductLastReview: c.ceoProductLastReview ?? "Portfólio aguardando revisão executiva.",
             ceoHireCooldown: c.ceoHireCooldown ?? 0,
             workforceTarget: c.workforceTarget ?? Math.max(3, c.employees.length),
-            partners: (c.partners ?? createBusinessPartners(c.sector, c.id)).map((partner) => ({
+            partners: ensureBusinessPartnerVariety(c.sector, c.id, c.partners).map((partner) => ({
               ...partner,
               signedWeek: partner.signedWeek ?? Math.max(1, parsed.week - Math.max(0, partner.weeksLeft)),
               lastNegotiationWeek: partner.lastNegotiationWeek ?? 0,
@@ -6804,6 +6822,7 @@ export default function Home() {
   const selectedPartner = active?.partners?.find((partner) => partner.id === selectedPartnerId) ?? null;
   const selectedPartnerCooldown = selectedPartner ? Math.max(0, (selectedPartner.lastNegotiationWeek ?? -99) + 4 - game.week) : 0;
   const selectedRelationshipCooldown = selectedPartner ? Math.max(0, (selectedPartner.relationshipCooldownUntil ?? 0) - game.week) : 0;
+  const selectedContractCooldown = selectedPartner && (selectedPartner.status !== "ativo" || selectedPartner.weeksLeft <= 2) ? 0 : selectedPartnerCooldown;
   const selectedPartnerEarly = Boolean(selectedPartner?.status === "ativo" && selectedPartner.weeksLeft > 2);
   const selectedPartnerAge = selectedPartner ? Math.max(0, game.week - (selectedPartner.signedWeek ?? 0)) : 0;
   const selectedPartnerEarlyPenalty = selectedPartnerEarly && selectedPartner ? clamp(18 + selectedPartner.weeksLeft * 1.35 + Math.max(0, 5 - selectedPartnerAge) * 5, 18, 58) : 0;
@@ -7253,7 +7272,7 @@ export default function Home() {
   const partnerAction = (action: "aceitar" | "renovar" | "pressionar" | "relacionamento" | "encerrar") => {
     if (!active || !selectedPartner || !isCEO) return;
     if (action === "relacionamento" && active.cash < 20000) return;
-    if ((action !== "encerrar" && selectedPartnerCooldown > 0) || (action === "relacionamento" && selectedRelationshipCooldown > 0)) return;
+    if ((action !== "encerrar" && action !== "relacionamento" && selectedContractCooldown > 0) || (action === "relacionamento" && selectedRelationshipCooldown > 0)) return;
     const identity = game.leadershipIdentity ?? initialLeadershipIdentity;
     const negotiationPower = identity.negociacao * 0.45 + identity.integridade * 0.2 + selectedPartner.trust * 0.35;
     const strategy: PartnerStrategy = action === "aceitar" ? "aceitar" : action === "renovar" ? "equilibrio" : action;
@@ -9245,7 +9264,7 @@ export default function Home() {
         const age = (rival.age ?? 0) + 1;
         const playerBenchmark = sectorPlayerValues.get(rival.sector) ?? 500000;
         const targetScore = clamp(28 + Math.log10(Math.max(1, playerBenchmark) / 250000) * 24, 28, 96);
-        const catchUpGrowth = Math.max(0, targetScore - rival.score) * .055 * difficulty.rivalIntelligence;
+        const catchUpGrowth = Math.max(0, targetScore - rival.score) * .072 * difficulty.rivalIntelligence;
         const cycleEffect =
           economyRoll.economy.cycle === "recessao"
             ? -1.2
@@ -9272,7 +9291,7 @@ export default function Home() {
         let cash =
           (rival.cash ?? 180000) +
           Math.round(
-            rival.score * 2100 * economyRoll.economy.demand * (.86 + difficulty.rivalIntelligence * .14) +
+            rival.score * 2350 * economyRoll.economy.demand * (.84 + difficulty.rivalIntelligence * .18) +
               (rival.products ?? []).reduce(
                 (sum, p) => sum + p.quality * 180,
                 0,
@@ -9360,10 +9379,10 @@ export default function Home() {
         const relation = clamp(
           (rival.relation ?? 0) +
             (rival.relationship === "parceiro"
-              ? 0.4
+              ? -0.25
               : rival.relationship === "rival"
-                ? -0.35
-                : 0),
+                ? -0.55
+                : -0.08),
           -100,
           100,
         );
@@ -9469,22 +9488,95 @@ export default function Home() {
       competitors = competitors.map((rival) => {
         if (["fechada", "vendida"].includes(rival.status)) return rival;
         const currentLevel = rival.researchLevel ?? 0;
-        const progress = (rival.researchProgress ?? 0) + .65 + rival.score / 115 * difficulty.rivalIntelligence;
-        if (progress < 100) return { ...rival, researchProgress: progress, researchFocus: rival.researchFocus ?? researchDefinitions[rival.sector][Math.min(currentLevel, 3)].title };
+        const reserve = competitorReserveTarget(rival);
+        const availableCash = Math.max(0, (rival.cash ?? 0) - reserve * .22);
+        const researchBudget = currentLevel >= 4 ? 0 : Math.min(
+          availableCash,
+          Math.round((14000 + rival.score * 620) * difficulty.rivalIntelligence * (rival.personality === "visionário" ? 1.28 : rival.personality === "conservador" ? .78 : 1)),
+        );
+        const focusBefore = researchDefinitions[rival.sector][Math.min(currentLevel, 3)];
+        const progress = (rival.researchProgress ?? 0) + .3 + researchBudget / 7800 * difficulty.rivalIntelligence;
+        const invested = researchBudget > 0;
+        const researchHistory = invested && (nextWeek + rival.id) % 4 === 0
+          ? [`Semana ${nextWeek}: investiu ${money.format(researchBudget)} em ${focusBefore.title}.`, ...(rival.history ?? [])].slice(0, 8)
+          : rival.history;
+        if (progress < 100) return {
+          ...rival,
+          cash: (rival.cash ?? 0) - researchBudget,
+          researchProgress: progress,
+          researchFocus: focusBefore.title,
+          researchSpent: (rival.researchSpent ?? 0) + researchBudget,
+          lastDecision: invested ? `Investiu ${money.format(researchBudget)} em pesquisa` : rival.lastDecision,
+          history: researchHistory,
+        };
         const nextLevel = Math.min(4, currentLevel + 1);
         const focus = researchDefinitions[rival.sector][Math.min(nextLevel, 3)];
         if (nextLevel > currentLevel) weeklyNews.push({ id: Date.now() + rival.id + 2470, week: nextWeek, category: "mercado", headline: `${rival.name} revela avanço em ${focus.title}`, body: `A concorrente chegou ao nível ${nextLevel} de pesquisa e seus produtos ganharam eficiência. Ignorar a corrida tecnológica pode ampliar a diferença competitiva.`, impact: "neutro" });
         return {
           ...rival,
+          cash: (rival.cash ?? 0) - researchBudget,
           researchLevel: nextLevel,
           researchProgress: nextLevel >= 4 ? 100 : progress - 100,
           researchFocus: researchDefinitions[rival.sector][Math.min(nextLevel, 3)].title,
+          researchSpent: (rival.researchSpent ?? 0) + researchBudget,
           score: clamp(rival.score + 2 + nextLevel),
           products: (rival.products ?? []).map((product) => ({ ...product, quality: clamp(product.quality + 2 + nextLevel * .4) })),
           lastDecision: `Concluiu pesquisa em ${focus.title}`,
           history: [`Semana ${nextWeek}: avanço de pesquisa em ${focus.title}.`, ...(rival.history ?? [])].slice(0, 8),
         };
       });
+      const marketRivals = competitors.filter((rival) => !["fechada", "vendida"].includes(rival.status));
+      if (marketRivals.length >= 2 && Math.random() < .16 * difficulty.rivalIntelligence * eventPressure) {
+        const first = marketRivals[Math.floor(Math.random() * marketRivals.length)];
+        const candidates = marketRivals.filter((rival) => rival.id !== first.id && rival.sector === first.sector);
+        const second = candidates[Math.floor(Math.random() * candidates.length)];
+        if (second) {
+          const stored = first.marketRelations?.[String(second.id)] ?? second.marketRelations?.[String(first.id)] ?? -12;
+          const distrust = stored > 20 ? -4 : stored > -25 ? -2 : -1;
+          const personalityFriction = first.personality === "agressivo" || second.personality === "agressivo" ? -7 : first.personality === "oportunista" || second.personality === "oportunista" ? -4 : 0;
+          const diplomaticCompatibility = first.personality === "diplomático" && second.personality === "diplomático" ? 7 : first.personality === "conservador" && second.personality === "conservador" ? 3 : 0;
+          const nextRelation = clamp(stored + distrust + personalityFriction + diplomaticCompatibility + Math.round(Math.random() * 8 - 5), -100, 100);
+          const conflictChance = clamp(.28 + Math.max(0, -nextRelation) / 135 + (difficulty.rivalIntelligence - 1) * .22, .2, .82);
+          const rareAlliance = nextRelation >= 58 && first.personality === "diplomático" && second.personality === "diplomático" && Math.random() < .16;
+          const conflict = !rareAlliance && Math.random() < conflictChance;
+          const conflictKinds = [
+            ["inicia guerra de preços contra", "Descontos agressivos comprimiram margens e obrigaram as duas empresas a gastar para defender clientes."],
+            ["acusa de copiar tecnologia da", "A disputa por propriedade intelectual chegou aos advogados e elevou o custo jurídico das duas empresas."],
+            ["rouba talentos estratégicos da", "A contratação de profissionais rivais abriu uma crise de confiança e encareceu a disputa por talentos."],
+            ["rompe negociação com", "Uma conversa comercial terminou em acusações públicas e fornecedores passaram a rever condições."],
+          ];
+          const conflictKind = conflictKinds[(nextWeek + first.id + second.id) % conflictKinds.length];
+          const firstWins = first.score + Math.random() * 24 >= second.score + Math.random() * 24;
+          const winnerId = firstWins ? first.id : second.id;
+          const loserId = firstWins ? second.id : first.id;
+          competitors = competitors.map((rival) => {
+            if (rival.id !== first.id && rival.id !== second.id) return rival;
+            const counterpart = rival.id === first.id ? second : first;
+            const relations = { ...(rival.marketRelations ?? {}), [String(counterpart.id)]: rareAlliance ? 64 : conflict ? clamp(nextRelation - 12, -100, 100) : nextRelation };
+            if (rareAlliance) return {
+              ...rival,
+              marketRelations: relations,
+              cash: (rival.cash ?? 0) - 24000,
+              score: clamp(rival.score + 2),
+              lastDecision: `Firmou aliança tecnológica com ${counterpart.name}`,
+              history: [`Semana ${nextWeek}: aliança rara com ${counterpart.name}.`, ...(rival.history ?? [])].slice(0, 8),
+            };
+            if (!conflict) return { ...rival, marketRelations: relations };
+            const won = rival.id === winnerId;
+            return {
+              ...rival,
+              marketRelations: relations,
+              cash: (rival.cash ?? 0) - (won ? 32000 : 61000),
+              score: clamp(rival.score + (won ? 2 : -3), 4, 99),
+              reputation: clamp(rival.reputation + (won ? 1 : -2)),
+              lastDecision: `${won ? "Venceu" : "Perdeu"} confronto com ${counterpart.name}`,
+              history: [`Semana ${nextWeek}: ${won ? "levou vantagem" : "saiu enfraquecida"} no confronto com ${counterpart.name}.`, ...(rival.history ?? [])].slice(0, 8),
+            };
+          });
+          if (rareAlliance) weeklyNews.push({ id: Date.now() + first.id + second.id + 3600, week: nextWeek, category: "negocios", headline: `${first.name} e ${second.name} surpreendem com aliança`, body: "A cooperação é incomum num mercado desconfiado. As duas investirão juntas, mas executivos admitem que o acordo ainda é frágil.", impact: "neutro" });
+          else if (conflict) weeklyNews.push({ id: Date.now() + first.id + second.id + 3700, week: nextWeek, category: "mercado", headline: `${first.name} ${conflictKind[0]} ${second.name}`, body: `${conflictKind[1]} ${firstWins ? first.name : second.name} levou vantagem nesta rodada, enquanto ${firstWins ? second.name : first.name} perdeu força.`, impact: "negativo" });
+        }
+      }
       const mergerBuyers = competitors.filter(
         (r) =>
           !["fechada", "vendida"].includes(r.status) &&
@@ -9563,6 +9655,7 @@ export default function Home() {
             sector,
             competitors,
             Date.now() + living.length,
+            companies.map((company) => company.name),
           );
           competitors = [...competitors, entrant];
           weeklyNews.push({
@@ -11443,25 +11536,29 @@ export default function Home() {
           royaltyRevenue: 0,
         })),
       };
+      const acquiredCompetitors = s.competitors.map((candidate) =>
+        candidate.id === rival.id
+          ? {
+              ...candidate,
+              status: "vendida" as const,
+              score: Math.round(candidate.score * 0.65),
+              acquiredBy: s.holdingName,
+              lastDecision: `Foi adquirida pela ${s.holdingName}`,
+              history: [`Semana ${s.week}: aquisição pela ${s.holdingName}.`, ...(candidate.history ?? [])].slice(0, 8),
+            }
+          : candidate,
+      );
+      const entrant = generateNewCompetitor(
+        rival.sector,
+        acquiredCompetitors,
+        Date.now() + rival.id + 7000,
+        [...s.companies.map((company) => company.name), rival.name],
+      );
       return {
         ...s,
         activeCompanyId: s.activeCompanyId,
         holdingName: s.holdingName || `Grupo ${s.founder}`,
-        competitors: s.competitors.map((r) =>
-          r.id === rival.id
-            ? {
-                ...r,
-                status: "vendida" as const,
-                score: Math.round(r.score * 0.65),
-                acquiredBy: s.holdingName,
-                lastDecision: `Foi adquirida pela ${s.holdingName}`,
-                history: [
-                  `Semana ${s.week}: aquisição pela ${s.holdingName}.`,
-                  ...(r.history ?? []),
-                ].slice(0, 8),
-              }
-            : r,
-        ),
+        competitors: [...acquiredCompetitors, entrant],
         companies:
           mode === "subsidiary"
             ? [
@@ -11732,6 +11829,14 @@ export default function Home() {
             : company.ceoLastDecision,
         })),
         news: [
+          {
+            id: Date.now() + entrant.id + 1,
+            week: s.week,
+            category: "mercado",
+            headline: `${entrant.name} entra no espaço deixado pela ${rival.name}`,
+            body: `${entrant.founder} abriu uma nova empresa no setor logo após a aquisição. O mercado não ficará vazio e a nova concorrente buscará clientes, talentos e pesquisa desde o início.`,
+            impact: "neutro",
+          },
           {
             id: Date.now(),
             week: state.week,
@@ -13040,7 +13145,7 @@ export default function Home() {
           r.id === selectedRival.id
             ? {
                 ...r,
-                relation: clamp((r.relation ?? 0) + 20, -100, 100),
+                relation: clamp((r.relation ?? 0) + (r.personality === "diplomático" ? 13 : r.personality === "agressivo" ? 7 : 10), -100, 100),
                 lastDecision: `Abriu diálogo com ${active.name}`,
                 history: [
                   `Semana ${s.week}: iniciou conversas com ${active.name}.`,
@@ -13058,12 +13163,12 @@ export default function Home() {
       const acceptance =
         (selectedRival.relation ?? 0) +
         (selectedRival.personality === "diplomático"
-          ? 25
+          ? 18
           : selectedRival.personality === "agressivo"
-            ? -20
-            : 5) +
-        Math.random() * 35;
-      const accepted = acceptance >= 25;
+            ? -25
+            : selectedRival.personality === "oportunista" ? -8 : 3) +
+        Math.random() * 28;
+      const accepted = acceptance >= 48;
       setGame((s) => ({
         ...s,
         companies: s.companies.map((c) =>
@@ -14414,12 +14519,12 @@ export default function Home() {
             <div className="partner-negotiation-facts"><div><small>CONFIANÇA</small><b>{Math.round(selectedPartner.trust)}%</b></div><div><small>DEPENDÊNCIA</small><b>{Math.round(selectedPartner.dependency)}%</b></div><div><small>CONTRATO</small><b>{selectedPartner.weeksLeft} sem.</b></div><div><small>PODER EFETIVO AGORA</small><b>{Math.round(clamp((game.leadershipIdentity?.negociacao ?? 50) * .45 + (game.leadershipIdentity?.integridade ?? 50) * .2 + selectedPartner.trust * .35 - selectedPartnerEarlyPenalty - (selectedPartner.failedRenegotiations ?? 0) * 8))}%</b></div></div>
             {selectedPartner.status === "disputa" && <div className="contract-dispute-room"><small>CONFLITO CONTRATUAL · NÍVEL {Math.round(selectedPartner.disputeLevel ?? 0)}%</small><p>{selectedPartner.disputeReason}</p></div>}<p className="partner-last-event">“{selectedPartner.lastEvent}”{selectedPartner.lastNegotiatedBy && <small> Última negociação: {selectedPartner.lastNegotiatedBy}</small>}</p>
             {selectedPartnerEarly && <div className="early-negotiation-warning"><small>RENEGOCIAÇÃO PREMATURA · PENALIDADE −{Math.round(selectedPartnerEarlyPenalty)} PONTOS</small><p>O contrato ainda possui {selectedPartner.weeksLeft} semanas. Reabrir agora pode reduzir confiança, iniciar uma disputa ou provocar rescisão.</p></div>}
-            {selectedPartnerCooldown > 0 && <div className="early-negotiation-warning cooldown"><small>MESA FECHADA</small><p>A contraparte só aceitará uma nova tentativa em {selectedPartnerCooldown} semana{selectedPartnerCooldown === 1 ? "" : "s"}.</p></div>}
+            {selectedContractCooldown > 0 && <div className="early-negotiation-warning cooldown"><small>MESA FECHADA</small><p>A contraparte só aceitará uma nova tentativa em {selectedContractCooldown} semana{selectedContractCooldown === 1 ? "" : "s"}. Se o contrato entrar nas duas semanas finais, a renovação será liberada.</p></div>}
             <section className="partner-decisions">
-              {selectedPartner.status === "proposta" && <button disabled={selectedPartnerCooldown > 0} onClick={() => partnerAction("aceitar")}><b>Aceitar proposta</b><span>{selectedPartner.proposedWeeks} semanas · ativa imediatamente a nova conta ou fornecimento.</span></button>}
-              <button disabled={selectedPartnerCooldown > 0} onClick={() => partnerAction("renovar")}><b>{selectedPartnerEarly ? "Tentar renegociar antes do prazo" : "Renovar com equilíbrio"}</b><span>{selectedPartnerEarly ? "Alto risco · poder reduzido pelo tempo restante" : "18 semanas · pequeno reajuste contratual"}.</span></button>
-              <button disabled={selectedPartnerCooldown > 0} onClick={() => partnerAction("pressionar")}><b>Pressionar por condições melhores</b><span>{selectedPartner.kind === "cliente" ? "+10% de receita" : "−9% de custo"} se funcionar; pode causar disputa ou rescisão.</span></button>
-              <button disabled={active.cash < 20000 || selectedPartnerCooldown > 0 || selectedRelationshipCooldown > 0} onClick={() => partnerAction("relacionamento")}><b>Investir na relação · R$ 20 mil</b><span>{selectedRelationshipCooldown > 0 ? `Disponível novamente em ${selectedRelationshipCooldown} semanas` : "Ganho decrescente de confiança · cooldown de 6 semanas"}.</span></button>
+              {selectedPartner.status === "proposta" && <button disabled={selectedContractCooldown > 0} onClick={() => partnerAction("aceitar")}><b>Aceitar proposta</b><span>{selectedPartner.proposedWeeks} semanas · ativa imediatamente a nova conta ou fornecimento.</span></button>}
+              <button disabled={selectedContractCooldown > 0} onClick={() => partnerAction("renovar")}><b>{selectedPartnerEarly ? "Tentar renegociar antes do prazo" : "Renovar com equilíbrio"}</b><span>{selectedPartnerEarly ? "Alto risco · poder reduzido pelo tempo restante" : "18 semanas · pequeno reajuste contratual"}.</span></button>
+              <button disabled={selectedContractCooldown > 0} onClick={() => partnerAction("pressionar")}><b>Pressionar por condições melhores</b><span>{selectedPartner.kind === "cliente" ? "+10% de receita" : "−9% de custo"} se funcionar; pode causar disputa ou rescisão.</span></button>
+              <button disabled={active.cash < 20000 || selectedRelationshipCooldown > 0} onClick={() => partnerAction("relacionamento")}><b>Investir na relação · R$ 20 mil</b><span>{selectedRelationshipCooldown > 0 ? `Disponível novamente em ${selectedRelationshipCooldown} semanas` : "Melhora a confiança sem bloquear a renovação do contrato"}.</span></button>
               <button className="danger" onClick={() => partnerAction("encerrar")}><b>Encerrar contrato</b><span>Remove imediatamente receita ou custo e pode afetar reputação.</span></button>
             </section>
           </div>
@@ -15277,7 +15382,7 @@ export default function Home() {
                   Última decisão: <b>{selectedRival.lastDecision}</b>
                 </p>
                 <p className="rival-last-decision">
-                  Laboratório: <b>{selectedRival.researchFocus ?? "Capacidade básica"}</b> · {Math.round(selectedRival.researchProgress ?? 0)}% para o próximo avanço
+                  Laboratório: <b>{selectedRival.researchFocus ?? "Capacidade básica"}</b> · {Math.round(selectedRival.researchProgress ?? 0)}% para o próximo avanço · {money.format(selectedRival.researchSpent ?? 0)} já investidos
                 </p>
               </section>
               <section>
